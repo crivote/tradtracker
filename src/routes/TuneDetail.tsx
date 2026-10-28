@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, onCleanup } from 'solid-js';
+import { Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 import { A, useNavigate, useParams } from '@solidjs/router';
 import {
   STATUS_LABELS,
@@ -13,6 +13,7 @@ import {
 } from '../lib/repertoire-model';
 import { fetchRepertoireRow, removeFromRepertoire } from '../lib/repertoire';
 import { formatDate } from '../lib/format';
+import PracticeLog from '../components/PracticeLog';
 
 /**
  * Detalle de un tune del repertorio (#7, corte 2), en ruta propia
@@ -72,6 +73,20 @@ export default function TuneDetail() {
     });
   });
 
+  /**
+   * Recarga silenciosa tras apuntar un ensayo (#10): el «Last practiced» tiene
+   * que pasar a «Practiced today» sin salir de la página. El instante se refresca
+   * con la fila para que la etiqueta de días siga hablando de ahora mismo.
+   */
+  const reload = async (id: string) => {
+    try {
+      setRow(await fetchRepertoireRow(id));
+      setNow(Date.now());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
   /** Enlace a TheSession: solo cuando el tune viene de ahí y trae referencia. */
   const sessionUrl = (item: RepertoireRow): string | null =>
     item.tune.origin === 'thesession' && item.tune.origin_ref
@@ -123,9 +138,11 @@ export default function TuneDetail() {
           }
         >
           {(item) => {
-            // Una sola pasada por el modelo puro: el JSX no calcula nada.
+            // Una sola pasada por el modelo puro: el JSX no calcula nada. La
+            // antigüedad va en un memo porque la fila se recarga al apuntar un
+            // ensayo y la etiqueta tiene que seguirlo.
             const flags = overrideFields(item());
-            const recency = practiceRecency(item(), now());
+            const recency = createMemo(() => practiceRecency(item(), now()));
             const external = sessionUrl(item());
 
             return (
@@ -201,7 +218,7 @@ export default function TuneDetail() {
                   <span>
                     Last practiced{' '}
                     <span class="text-gray-300" title={formatDate(item().last_practiced_at)}>
-                      {recency.label}
+                      {recency().label}
                     </span>
                   </span>
                   <Show when={item().rating !== null}>
@@ -242,14 +259,20 @@ export default function TuneDetail() {
                   <A href="/" class="text-sm text-gray-400 hover:text-amber-300">
                     Back to repertoire
                   </A>
-                  <button
-                    type="button"
-                    disabled={removing()}
-                    class="rounded border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:border-red-500 hover:text-red-300 disabled:opacity-60"
-                    onClick={() => void remove(item())}
-                  >
-                    {removing() ? 'Removing…' : 'Remove'}
-                  </button>
+                  <div class="flex flex-wrap items-center gap-3">
+                    <PracticeLog
+                      repertoireId={item().id}
+                      onLogged={() => reload(item().id)}
+                    />
+                    <button
+                      type="button"
+                      disabled={removing()}
+                      class="rounded border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:border-red-500 hover:text-red-300 disabled:opacity-60"
+                      onClick={() => void remove(item())}
+                    >
+                      {removing() ? 'Removing…' : 'Remove'}
+                    </button>
+                  </div>
                 </div>
               </article>
             );

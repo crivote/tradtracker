@@ -27,6 +27,7 @@ import {
 } from '../lib/catalogue';
 import { preloadCatalogue, searchCatalogue, getCatalogueStats } from '../lib/catalogue-db';
 import { normalizeTitle } from '../lib/format';
+import PracticeLog from '../components/PracticeLog';
 
 /**
  * Vista de la colección.
@@ -155,6 +156,8 @@ function GridView(props: {
   now: number;
   busyId: string | number | null;
   onRemove: (row: RepertoireRow) => void;
+  /** Recarga tras apuntar un ensayo: «Practiced» pasa a «Practiced today». */
+  onLogged: (row: RepertoireRow) => void | Promise<void>;
 }) {
   return (
     <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -214,7 +217,8 @@ function GridView(props: {
                   </div>
                 </Show>
               </dl>
-              <div class="mt-auto text-right">
+              <div class="mt-auto flex items-center justify-between gap-2">
+                <PracticeLog repertoireId={row.id} onLogged={() => props.onLogged(row)} />
                 <button
                   type="button"
                   disabled={props.busyId === row.id}
@@ -282,6 +286,19 @@ export default function Repertoire() {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(false);
+    }
+  };
+
+  /**
+   * Recarga silenciosa tras apuntar un ensayo: no vuelve a poner `loading` para
+   * que el grid no parpadee justo cuando se cierra el panel. El instante `now` no
+   * se recalcula: la etiqueta pasa a «Practiced today» con la misma referencia.
+   */
+  const reload = async () => {
+    try {
+      setRows(await fetchRepertoire());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
@@ -564,7 +581,7 @@ export default function Repertoire() {
             when={viewMode() === 'grid'}
             fallback={<RepertoireTable rows={visible()} busyId={busyId()} onRemove={remove} />}
           >
-            <GridView rows={visible()} now={now} busyId={busyId()} onRemove={remove} />
+            <GridView rows={visible()} now={now} busyId={busyId()} onRemove={remove} onLogged={reload} />
           </Show>
         </Show>
       </Show>
