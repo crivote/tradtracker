@@ -1,6 +1,7 @@
 import { Show, type ParentComponent } from 'solid-js';
 import { A, Navigate, useLocation } from '@solidjs/router';
 import { useSession } from '../lib/session';
+import { supabaseConfigError } from '../lib/supabase';
 
 /**
  * Armazón de la app y guard de rutas (issue #6): sin sesión no se ve dato alguno,
@@ -49,6 +50,12 @@ export const Layout: ParentComponent = (props) => {
           </Show>
         </div>
       </header>
+
+      <Show when={supabaseConfigError}>
+        <div class="border-b border-red-700 bg-red-900/60 px-6 py-2 text-sm text-red-100">
+          <span class="font-semibold">Configuration problem:</span> {supabaseConfigError}
+        </div>
+      </Show>
 
       <main class="max-w-7xl mx-auto px-6 py-8">{props.children}</main>
     </div>

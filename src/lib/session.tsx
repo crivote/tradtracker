@@ -36,6 +36,7 @@ export const SessionProvider: ParentComponent = (props) => {
     supabase.auth
       .getSession()
       .then(({ data }) => setSession(data.session))
+      .catch(() => setSession(null))
       .finally(() => setReady(true));
 
     // El callback corre dentro del lock de auth: solo se tocan señales, nunca se
