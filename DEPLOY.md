@@ -55,6 +55,9 @@ puede hablar con Supabase.
 - **Comprobado el 2026-10-28**: Vite sí incrusta variables que vengan del entorno del proceso (probado
   compilando sin `.env.local` y con `VITE_*` exportadas). Si la guarda salta en Cloudflare, las
   variables no están llegando al contenedor de build; no es limitación de Vite.
+- **El nombre importa al carácter**: `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`. Una variable llamada
+  `VITE_SUPABASE` no la lee nadie y el build sale mudo — fue la causa real del episodio del 2026-10-28.
+  Una barra final en la URL, en cambio, ya se tolera (se recorta y se avisa en el log).
 
 **La `service_role`/`secret` no se pone nunca aquí.** Todo el front habla con la anon key y las políticas RLS.
 
