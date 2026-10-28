@@ -5,6 +5,7 @@ import { SessionProvider } from './lib/session';
 import { Layout } from './components/Layout';
 import Login from './routes/Login';
 import Repertoire from './routes/Repertoire';
+import About from './routes/About';
 import './index.css';
 
 const root = document.getElementById('root');
@@ -25,6 +26,7 @@ render(
       <Router root={Layout}>
         <Route path="/login" component={Login} />
         <Route path="/" component={Repertoire} />
+        <Route path="/about" component={About} />
         <Route path="*" component={NotFound} />
       </Router>
     </SessionProvider>

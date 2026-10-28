@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { RepertoireRow, TuneRecord } from './repertoire-model';
+import type { RepertoireRow } from './repertoire-model';
 import { mapRepertoireRow } from './repertoire-model';
 
 export * from './repertoire-model';
@@ -18,8 +18,6 @@ const REPERTOIRE_SELECT = [
   'pr_tunes!inner(id,origin,origin_ref,name,rhythm,meter,key,abc)',
 ].join(',');
 
-const TUNE_SELECT = 'id,origin,origin_ref,name,rhythm,meter,key,abc';
-
 export async function fetchRepertoire(): Promise<RepertoireRow[]> {
   const { data, error } = await supabase
     .from('pr_repertoire')
@@ -30,14 +28,82 @@ export async function fetchRepertoire(): Promise<RepertoireRow[]> {
   return (data ?? []).map(mapRepertoireRow);
 }
 
-export async function fetchCatalogue(): Promise<TuneRecord[]> {
+/** Un tune tal y como lo entrega el catálogo SQLite. */
+export interface CatalogueTune {
+  tuneId: number;
+  name: string;
+  rhythm?: string | null;
+  meter?: string | null;
+}
+
+/**
+ * `pr_tunes` es compartida: el tune puede existir ya porque otro usuario lo dio
+ * de alta antes. `pr_tunes_select` deja leerla a cualquier autenticado, así que
+ * se busca primero y solo se inserta si no está.
+ */
+export async function findTuneByOriginRef(originRef: string): Promise<string | null> {
   const { data, error } = await supabase
     .from('pr_tunes')
-    .select(TUNE_SELECT)
-    .order('name', { ascending: true });
+    .select('id')
+    .eq('origin', 'thesession')
+    .eq('origin_ref', originRef)
+    .maybeSingle();
 
-  if (error) throw new Error(`Could not load the tune catalogue: ${error.message}`);
-  return (data ?? []) as TuneRecord[];
+  if (error) throw new Error(`Could not look up the tune in the catalogue: ${error.message}`);
+  return data?.id ?? null;
+}
+
+/**
+ * Devuelve el uuid de `pr_tunes` para un tune del catálogo, creándolo si hace
+ * falta. La identidad es `(origin='thesession', origin_ref=tune_id)` — decisión
+ * D4: nada de ids prefijados.
+ *
+ * `created_by` se envía explícito porque la política de alta exige
+ * `created_by = auth.uid()` y la columna no tiene valor por defecto. Si dos
+ * usuarios dan de alta el mismo tune a la vez, el índice único responde 23505 y
+ * se relee la fila del otro: el resultado es el mismo uuid, no un duplicado.
+ */
+export async function ensureTune(tune: CatalogueTune): Promise<string> {
+  const originRef = String(tune.tuneId);
+
+  const existing = await findTuneByOriginRef(originRef);
+  if (existing) return existing;
+
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError || !userData.user) {
+    throw new Error('Your session expired — sign in again to add tunes.');
+  }
+
+  const { data, error } = await supabase
+    .from('pr_tunes')
+    .insert({
+      origin: 'thesession',
+      origin_ref: originRef,
+      name: tune.name,
+      rhythm: tune.rhythm ?? null,
+      meter: tune.meter ?? null,
+      created_by: userData.user.id,
+    })
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === '23505') {
+      const raced = await findTuneByOriginRef(originRef);
+      if (raced) return raced;
+    }
+    throw new Error(`Could not save the tune: ${error.message}`);
+  }
+  if (!data?.id) throw new Error('The tune was saved but no id came back.');
+
+  return data.id;
+}
+
+/** Alta desde el catálogo: resuelve (o crea) el tune y lo mete en el repertorio. */
+export async function addCatalogueTune(tune: CatalogueTune): Promise<string> {
+  const tuneId = await ensureTune(tune);
+  await addToRepertoire(tuneId);
+  return tuneId;
 }
 
 /**

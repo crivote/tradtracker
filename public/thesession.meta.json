@@ -1,0 +1,22 @@
+{
+  "source_path": "/home/victor/Proyectos/tradtube/public/thesession.db",
+  "source_repo": "crivote/tradtube",
+  "source_commit": "effa46bc01e3279cef7e833caca07cb31c8674aa",
+  "source_commit_date": "2026-10-17T23:05:06+02:00",
+  "source_commit_subject": "feat(admin): tab «No disponibles» con chequeo embebido y desmarcado manual (#49)",
+  "copied_at": "2026-10-28T21:20:41.191Z",
+  "bytes": 4694016,
+  "sha256": "b77c078b7af567bdfaa1da005383f652329df756a64418e2277ed757fe7c79e2",
+  "tunes": 22775,
+  "tunes_with_aliases": 8634,
+  "columns": [
+    "tune_id",
+    "name",
+    "type",
+    "meter",
+    "composer",
+    "tunebooks",
+    "popularity_score"
+  ],
+  "note": "Copia de solo lectura del artefacto de TradTube. No se edita en tradtracker (issue #4)."
+}

@@ -1,43 +1,59 @@
-import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import {
   STATUS_LABELS,
   STATUS_STYLES,
-  addToRepertoire,
+  addCatalogueTune,
   displayKey,
   displayRhythm,
   displayTitle,
-  fetchCatalogue,
   fetchRepertoire,
   removeFromRepertoire,
   type RepertoireRow,
-  type TuneRecord,
 } from '../lib/repertoire';
+import {
+  aliasExcerpt,
+  matchedViaAlias,
+  tokenizeQuery,
+  type CatalogueEntry,
+} from '../lib/catalogue';
+import { preloadCatalogue, searchCatalogue, getCatalogueStats } from '../lib/catalogue-db';
 import { normalizeTitle } from '../lib/format';
 
 /**
- * Vista de la colección: la lectura que ejercita el join pr_repertoire → pr_tunes
- * con la RLS del usuario que ha iniciado sesión.
+ * Vista de la colección.
  *
- * El alta es deliberadamente mínima: el catálogo completo llega con la issue #4
- * (SQLite WASM + FTS5) y la vista rica de cards con la #7. Aquí solo se puede
- * añadir de entre las tunes que ya existen en pr_tunes.
+ * El alta busca en el catálogo completo (issue #4): `public/thesession.db`, un
+ * SQLite de 22.775 tunes que se descarga una vez y se consulta en el navegador.
+ * Ya no se limita a las tunes sembradas en `pr_tunes`. Al elegir un resultado se
+ * resuelve su fila compartida por `(origin='thesession', origin_ref=tune_id)` y
+ * se añade al repertorio del usuario.
+ *
+ * Los títulos alternativos cuentan: cada token se busca en el nombre y en la
+ * columna `aliases`, y cuando el acierto viene de un alias se enseña el alias,
+ * para que «Butterfly, The» al buscar «red admiral» no parezca un error.
  */
 export default function Repertoire() {
   const [rows, setRows] = createSignal<RepertoireRow[]>([]);
-  const [catalogue, setCatalogue] = createSignal<TuneRecord[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
-  const [busyId, setBusyId] = createSignal<string | null>(null);
-  const [filter, setFilter] = createSignal('');
+  const [busyId, setBusyId] = createSignal<string | number | null>(null);
   const [showCatalogue, setShowCatalogue] = createSignal(false);
+
+  const [query, setQuery] = createSignal('');
+  const [results, setResults] = createSignal<CatalogueEntry[]>([]);
+  const [searching, setSearching] = createSignal(false);
+  const [searchMs, setSearchMs] = createSignal<number | null>(null);
+  const [catalogueError, setCatalogueError] = createSignal<string | null>(null);
+  const [catalogueReady, setCatalogueReady] = createSignal(false);
+  const [tuneCount, setTuneCount] = createSignal<number | null>(null);
+
+  const tokens = createMemo(() => tokenizeQuery(query()));
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [repertoire, tunes] = await Promise.all([fetchRepertoire(), fetchCatalogue()]);
-      setRows(repertoire);
-      setCatalogue(tunes);
+      setRows(await fetchRepertoire());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -45,22 +61,82 @@ export default function Repertoire() {
     }
   };
 
-  onMount(() => void load());
-
-  const ownedIds = createMemo(() => new Set(rows().map((row) => row.tune.id)));
-
-  const available = createMemo(() => {
-    const term = filter().trim().toLowerCase();
-    return catalogue()
-      .filter((tune) => !ownedIds().has(tune.id))
-      .filter((tune) => (term ? normalizeTitle(tune.name).toLowerCase().includes(term) : true));
+  onMount(() => {
+    void load();
+    // Descarga del artefacto en segundo plano: al abrir el buscador ya está.
+    void preloadCatalogue().then(
+      async () => {
+        setCatalogueReady(true);
+        try {
+          setTuneCount((await getCatalogueStats()).tunes);
+        } catch {
+          /* el recuento es informativo: si falla, el buscador sigue */
+        }
+      },
+      (cause) => {
+        setCatalogueError(cause instanceof Error ? cause.message : String(cause));
+        setCatalogueReady(true);
+      }
+    );
   });
 
-  const add = async (tune: TuneRecord) => {
-    setBusyId(tune.id);
+  createEffect(() => {
+    const term = query();
+    if (term.trim().length === 0) {
+      setResults([]);
+      setSearchMs(null);
+      setSearching(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSearching(true);
+    const started = performance.now();
+
+    void searchCatalogue(term)
+      .then((found) => {
+        if (cancelled) return;
+        setResults(found);
+        setSearchMs(performance.now() - started);
+        setCatalogueError(null);
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        setResults([]);
+        setCatalogueError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        if (!cancelled) setSearching(false);
+      });
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  /**
+   * Los tunes que ya están en el repertorio se reconocen por `origin_ref`: el
+   * catálogo solo conoce el id de TheSession, no el uuid de `pr_tunes`.
+   */
+  const ownedRefs = createMemo(
+    () =>
+      new Set(
+        rows()
+          .filter((row) => row.tune.origin === 'thesession' && row.tune.origin_ref)
+          .map((row) => row.tune.origin_ref!)
+      )
+  );
+
+  const add = async (entry: CatalogueEntry) => {
+    setBusyId(entry.tuneId);
     setError(null);
     try {
-      await addToRepertoire(tune.id);
+      await addCatalogueTune({
+        tuneId: entry.tuneId,
+        name: entry.name,
+        rhythm: entry.type,
+        meter: entry.meter,
+      });
       setRows(await fetchRepertoire());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -110,44 +186,100 @@ export default function Repertoire() {
 
       <Show when={showCatalogue()}>
         <section class="rounded-lg border border-gray-700 bg-gray-800 p-4">
-          <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <h3 class="font-medium text-amber-300">Catalogue</h3>
+          <div class="mb-3 space-y-2">
+            <label class="block text-sm font-medium text-amber-300" for="catalogue-search">
+              Search the tune catalogue
+            </label>
             <input
+              id="catalogue-search"
               type="search"
-              placeholder="Filter tunes…"
-              value={filter()}
-              onInput={(event) => setFilter(event.currentTarget.value)}
-              class="rounded bg-gray-900 border border-gray-600 px-3 py-1.5 text-sm text-gray-100 focus:border-amber-500 focus:outline-none"
+              autocomplete="off"
+              placeholder="Name or any alternative title — e.g. butterfly, red admiral…"
+              value={query()}
+              onInput={(event) => setQuery(event.currentTarget.value)}
+              class="w-full rounded bg-gray-900 border border-gray-600 px-3 py-2 text-sm text-gray-100 focus:border-amber-500 focus:outline-none"
             />
+            <p class="text-xs text-gray-500">
+              <Show
+                when={catalogueError()}
+                fallback={
+                  <Show
+                    when={searchMs() !== null}
+                    fallback={
+                      tuneCount() === null
+                        ? 'Searches run on this device — no network per keystroke.'
+                        : `${tuneCount()!.toLocaleString()} tunes from a local database — no network per keystroke.`
+                    }
+                  >
+                    {results().length} {results().length === 1 ? 'match' : 'matches'} ·{' '}
+                    {(searchMs() ?? 0).toFixed(1)} ms · searched on this device
+                  </Show>
+                }
+              >
+                <span class="text-red-300">{catalogueError()}</span>
+              </Show>
+            </p>
           </div>
 
-          <Show
-            when={available().length > 0}
-            fallback={<p class="text-sm text-gray-400">Nothing left to add from the catalogue.</p>}
-          >
-            <ul class="divide-y divide-gray-700">
-              <For each={available()}>
-                {(tune) => (
-                  <li class="flex items-center justify-between gap-3 py-2">
-                    <div class="min-w-0">
-                      <p class="truncate text-gray-100">{normalizeTitle(tune.name)}</p>
-                      <p class="text-xs text-gray-500">
-                        {tune.rhythm ?? '—'}
-                        {tune.meter ? ` · ${tune.meter}` : ''}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={busyId() === tune.id}
-                      class="shrink-0 rounded border border-gray-600 px-3 py-1 text-sm text-gray-200 hover:border-amber-500 hover:text-amber-300 disabled:opacity-60"
-                      onClick={() => void add(tune)}
-                    >
-                      {busyId() === tune.id ? 'Adding…' : 'Add'}
-                    </button>
-                  </li>
-                )}
-              </For>
-            </ul>
+          <Show when={!catalogueReady()}>
+            <p class="text-sm text-gray-400">Loading the catalogue (4.5 MB, downloaded once)…</p>
+          </Show>
+
+          <Show when={catalogueReady() && query().trim().length > 0}>
+            <Show
+              when={results().length > 0}
+              fallback={
+                <p class="text-sm text-gray-400">
+                  {searching() ? 'Searching…' : 'No tune matches that search.'}
+                </p>
+              }
+            >
+              <ul class="divide-y divide-gray-700">
+                <For each={results()}>
+                  {(entry) => {
+                    const alias = aliasExcerpt(entry, tokens());
+                    const viaAlias = matchedViaAlias(entry, tokens());
+                    const owned = () => ownedRefs().has(String(entry.tuneId));
+                    return (
+                      <li class="flex items-start justify-between gap-3 py-2">
+                        <div class="min-w-0">
+                          <p class="truncate text-gray-100">{normalizeTitle(entry.name)}</p>
+                          <p class="text-xs text-gray-500">
+                            {entry.type ?? '—'}
+                            {entry.meter ? ` · ${entry.meter}` : ''}
+                            <span class="text-gray-600"> · thesession #{entry.tuneId}</span>
+                          </p>
+                          <Show when={viaAlias && alias}>
+                            <p class="text-xs text-gray-400">
+                              Also known as <span class="text-amber-300">{alias}</span>
+                            </p>
+                          </Show>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={busyId() === entry.tuneId || owned()}
+                          class="shrink-0 rounded border border-gray-600 px-3 py-1 text-sm text-gray-200 hover:border-amber-500 hover:text-amber-300 disabled:opacity-60"
+                          onClick={() => void add(entry)}
+                        >
+                          {owned()
+                            ? 'In repertoire'
+                            : busyId() === entry.tuneId
+                              ? 'Adding…'
+                              : 'Add'}
+                        </button>
+                      </li>
+                    );
+                  }}
+                </For>
+              </ul>
+            </Show>
+          </Show>
+
+          <Show when={catalogueReady() && query().trim().length === 0}>
+            <p class="text-sm text-gray-400">
+              Type a name — or an alternative one. The search looks at titles and at every
+              alternative title in the catalogue.
+            </p>
           </Show>
         </section>
       </Show>
@@ -185,7 +317,10 @@ export default function Repertoire() {
                     <tr class="hover:bg-gray-800/60">
                       <td class="px-4 py-3">
                         <p class="text-gray-100">{displayTitle(row)}</p>
-                        <p class="text-xs text-gray-500">{row.tune.origin}</p>
+                        <p class="text-xs text-gray-500">
+                          {row.tune.origin}
+                          {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
+                        </p>
                       </td>
                       <td class="px-4 py-3 text-gray-300">{displayRhythm(row)}</td>
                       <td class="px-4 py-3 text-gray-300">{displayKey(row)}</td>

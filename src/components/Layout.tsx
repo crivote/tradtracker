@@ -36,6 +36,9 @@ export const Layout: ParentComponent = (props) => {
               <A href="/" class="text-gray-300 hover:text-amber-300" end>
                 Repertoire
               </A>
+              <A href="/about" class="text-gray-300 hover:text-amber-300">
+                About
+              </A>
               <span class="text-gray-500 hidden sm:inline" title={session.session()!.user.email ?? ''}>
                 {session.session()!.user.email}
               </span>

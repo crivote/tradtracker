@@ -93,6 +93,30 @@ La regla clásica de Pages `/* /index.html 200` se interpreta en Workers como un
 - COEP `credentialless` solo en el worker aislado, si algún día se usa ffmpeg.wasm: `require-corp` rompería los iframes de YouTube (lección heredada de TradTube).
 - `/thesession.db` con `Cache-Control: 1 día`; `/assets/*` inmutable.
 
+## El catálogo viaja en el build (4,48 MB)
+
+`public/thesession.db` **se versiona en el repo**: el build de Cloudflare no tiene acceso al repo de
+TradTube y el navegador descarga el artefacto tal cual para abrirlo con SQLite WASM. Es la excepción
+declarada a la regla de no meter artefactos grandes (issue #4).
+
+- Límite de Workers assets: **25 MiB por fichero**. El catálogo son 4,48 MB; entra con margen.
+- Se regenera con `node scripts/fetch-catalogue.mjs [--source <ruta>]`, que además escribe
+  `public/thesession.meta.json` (fecha de copia, commit de TradTube, sha256, recuentos). La vista «About»
+  lee ese sidecar y el recuento real del artefacto abierto.
+- El wasm de SQLite (`dist/assets/sqlite3-*.wasm`, ~860 kB) lo emite Vite con hash y **solo se descarga al
+  abrir el buscador**: el paquete se importa de forma dinámica, así que no pesa en la primera pantalla.
+- `/thesession.db` se sirve con `Content-Type: application/octet-stream` y caché de un día (`_headers`).
+
+**Verificación tras desplegar** (no basta con que el build esté en verde):
+
+```bash
+curl -sI https://tradtracker.crivote.workers.dev/thesession.db | head -5   # 200 y ~4,7 MB
+curl -s  https://tradtracker.crivote.workers.dev/ | grep -oE 'assets/index-[^"]+\.js'
+```
+
+Y en la app: abrir «Add tunes» debe decir «22.775 tunes from a local database» sin esperas, y «About»
+debe mostrar la fecha de copia y el commit de origen.
+
 ## Alternativa sin espejo
 
 Si algún día se quiere desplegar sin GitHub:

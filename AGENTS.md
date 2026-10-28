@@ -86,12 +86,11 @@ parece válida). Los bloques `$$` también hay que respetarlos.
 
 ## Estado del código (2026-10-28)
 
-- `src/lib/` — cliente Supabase, sesión, acceso a datos del repertorio y modelo puro de presentación.
-- `src/routes/` — `Login` y `Repertoire` (colección con join embebido, alta y baja).
+- `src/lib/` — cliente Supabase, sesión, acceso a datos del repertorio y modelo puro de presentación; `catalogue.ts` (consulta FTS5 y orden) y `catalogue-db.ts` (apertura del artefacto con SQLite WASM).
+- `src/routes/` — `Login`, `Repertoire` (colección, alta desde el catálogo local, baja) y `About` (procedencia y tamaño del catálogo).
 - `src/components/Layout.tsx` — cabecera y guard de rutas.
 - Pruebas: `npm run test:run` (Vitest). Typecheck: `npx tsc --noEmit -p tsconfig.json`.
-- El alta solo ofrece las tunes presentes en `pr_tunes` (12 sembradas); la búsqueda sobre el catálogo
-  completo llega con la issue #4.
+- `catalogue-sql.test.ts` ejecuta las sentencias reales contra `public/thesession.db` con el SQLite nativo de Node (`node:sqlite`, cargado por `createRequire` porque Vite 5 no lo lista como builtin): es la suite que prueba los alias. Lo que no cruza es el transporte wasm, que se verifica en el navegador.
 
 ## Trampas conocidas de TradTube (medidas, no supuestas)
 
@@ -110,12 +109,17 @@ GET https://kshrrvowxibjqhsvijgh.supabase.co/rest/v1/tune_media_entries
 
 ## Catálogo de tunes
 
-Artefacto SQLite client-side (`public/thesession.db`, 4,7 MB, **22.775 tunes**, FTS5 sobre `tunes_search`). Se copia del repo de TradTube; **no se edita aquí**. Columnas: `tune_id, name, type, meter, composer, tunebooks, popularity_score`. **No contiene ABC ni tonalidad** — ver decisión abierta A7 de la spec.
+Artefacto SQLite client-side (`public/thesession.db`, 4,48 MB, **22.775 tunes**, FTS5 sobre `tunes_search`). Se copia del repo de TradTube; **no se edita aquí**. Columnas: `tune_id, name, type, meter, composer, tunebooks, popularity_score`. **No contiene ABC ni tonalidad** — ver decisión abierta A7 de la spec.
+
+- **El `.db` SÍ se versiona** (excepción a la regla de ficheros grandes, abajo): el build de Cloudflare no tiene acceso a TradTube y el navegador lo descarga tal cual. 4,48 MB frente al límite de 25 MiB por asset de Workers.
+- **Se regenera con `node scripts/fetch-catalogue.mjs [--source <ruta>]`** (por defecto lee `~/Proyectos/tradtube/public/thesession.db`): copia, mide e inspecciona el artefacto y escribe `public/thesession.meta.json` con fecha de copia, commit de TradTube, sha256 y recuentos. Ese sidecar es lo que muestra la vista «About»; **la cabecera de SQLite no tiene hueco de texto** para meterlo, y el catálogo no se edita.
+- **Búsqueda (issue #4):** `src/lib/catalogue.ts` construye la expresión FTS5 y ordena; `src/lib/catalogue-db.ts` abre el artefacto con `sqlite3_deserialize` (sin OPFS ni COOP/COEP). Cada token se busca en `name` **y** en `aliases`, así que un título alternativo devuelve el `tune_id` correcto.
+- **Alta desde el catálogo:** `ensureTune()` resuelve la fila de `pr_tunes` por `(origin='thesession', origin_ref=tune_id)` y solo la crea si no existe (23505 → relectura). El uuid de `pr_tunes` es interno; el id de TheSession vive en `origin_ref`.
 
 ## Convenciones
 
 - Commits en español, concisos, uno por unidad lógica. Mensajes multi-línea siempre con `git commit -F`.
 - **Nunca** commitear `.env`, `.env.local`, claves ni cadenas de conexión. `.gitignore` ya los cubre; verificar con `git status --porcelain` antes de `git add -A`.
 - **La UI va en inglés** (producto público para la comunidad trad); código, comentarios y commits en español.
-- No añadir ficheros grandes (artefactos SQLite, `node_modules`, `dist`) al repo.
+- No añadir ficheros grandes (`node_modules`, `dist`, capturas) al repo. **Única excepción: `public/thesession.db`**, el artefacto del catálogo (4,48 MB), porque el build no puede reconstruirlo y el navegador lo necesita (issue #4).
 - Un frente por sesión: la fase se cierra y se valida antes de abrir la siguiente.
