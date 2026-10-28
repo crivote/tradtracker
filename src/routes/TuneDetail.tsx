@@ -138,12 +138,12 @@ export default function TuneDetail() {
           }
         >
           {(item) => {
-            // Una sola pasada por el modelo puro: el JSX no calcula nada. La
-            // antigüedad va en un memo porque la fila se recarga al apuntar un
-            // ensayo y la etiqueta tiene que seguirlo.
-            const flags = overrideFields(item());
+            // Una sola pasada por el modelo puro: el JSX no calcula nada. La fila
+            // se recarga al apuntar un ensayo, así que todo lo derivado de ella va
+            // en memos: el callback de `Show` no se re-ejecuta al cambiar el valor.
+            const flags = createMemo(() => overrideFields(item()));
             const recency = createMemo(() => practiceRecency(item(), now()));
-            const external = sessionUrl(item());
+            const external = createMemo(() => sessionUrl(item()));
 
             return (
               <article class="space-y-6 rounded-lg border border-gray-700 bg-gray-900 p-6">
@@ -157,10 +157,10 @@ export default function TuneDetail() {
                   <div class="min-w-0 flex-1">
                     <h2
                       class="truncate text-xl font-semibold text-gray-100"
-                      title={flags.title ? 'Custom value' : displayTitle(item())}
+                      title={flags().title ? 'Custom value' : displayTitle(item())}
                     >
                       {displayTitle(item())}
-                      <Show when={flags.title}>
+                      <Show when={flags().title}>
                         <span class="ml-1 align-top text-amber-400" title="Custom value">
                           *
                         </span>
@@ -182,26 +182,26 @@ export default function TuneDetail() {
                   <div class="flex items-baseline justify-between gap-3 sm:justify-start">
                     <dt class="text-gray-500">
                       Rhythm
-                      <Show when={flags.rhythm}>
+                      <Show when={flags().rhythm}>
                         <span class="ml-1 text-amber-400" title="Custom value">
                           *
                         </span>
                       </Show>
                     </dt>
-                    <dd class="text-gray-200" title={flags.rhythm ? 'Custom value' : undefined}>
+                    <dd class="text-gray-200" title={flags().rhythm ? 'Custom value' : undefined}>
                       {displayRhythm(item())}
                     </dd>
                   </div>
                   <div class="flex items-baseline justify-between gap-3 sm:justify-start">
                     <dt class="text-gray-500">
                       Key
-                      <Show when={flags.key}>
+                      <Show when={flags().key}>
                         <span class="ml-1 text-amber-400" title="Custom value">
                           *
                         </span>
                       </Show>
                     </dt>
-                    <dd class="text-gray-200" title={flags.key ? 'Custom value' : undefined}>
+                    <dd class="text-gray-200" title={flags().key ? 'Custom value' : undefined}>
                       {displayKey(item())}
                     </dd>
                   </div>
@@ -240,7 +240,7 @@ export default function TuneDetail() {
                   )}
                 </Show>
 
-                <Show when={external}>
+                <Show when={external()}>
                   {(url) => (
                     <p class="text-sm">
                       <a
