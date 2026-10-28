@@ -1,4 +1,4 @@
-import { Show, createSignal, onMount } from 'solid-js';
+import { Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import { A, useNavigate, useParams } from '@solidjs/router';
 import {
   STATUS_LABELS,
@@ -26,31 +26,50 @@ import { formatDate } from '../lib/format';
 export default function TuneDetail() {
   const params = useParams();
   const navigate = useNavigate();
-  const id = params.id;
 
-  // Un único instante para todo el renderizado: la etiqueta de días y la fecha
-  // de alta no pueden discrepar por un cambio de día a media carga.
-  const now = Date.now();
+  // Un único instante por carga: la etiqueta de días y la fecha de alta no pueden
+  // discrepar por un cambio de día a media carga. Se refresca al cambiar de tune.
+  const [now, setNow] = createSignal(Date.now());
 
   const [row, setRow] = createSignal<RepertoireRow | null>(null);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const [removing, setRemoving] = createSignal(false);
 
-  onMount(async () => {
-    setLoading(true);
+  /**
+   * `params.id` se lee DENTRO del efecto: el router reutiliza la instancia al
+   * navegar de `/repertoire/a` a `/repertoire/b`, así que capturar el id una vez
+   * dejaba la primera fila en pantalla. Con la lectura reactiva, cada id tiene su
+   * carga y una respuesta tardía de la anterior no pisa a la nueva.
+   */
+  createEffect(() => {
+    const id = params.id;
+    let cancelled = false;
+
+    setRow(null);
     setError(null);
+    setNow(Date.now());
+
     if (!id) {
       setLoading(false);
       return;
     }
-    try {
-      setRow(await fetchRepertoireRow(id));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setLoading(false);
-    }
+
+    setLoading(true);
+    void fetchRepertoireRow(id)
+      .then((found) => {
+        if (!cancelled) setRow(found);
+      })
+      .catch((cause) => {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    onCleanup(() => {
+      cancelled = true;
+    });
   });
 
   /** Enlace a TheSession: solo cuando el tune viene de ahí y trae referencia. */
@@ -88,18 +107,25 @@ export default function TuneDetail() {
         <Show
           when={row()}
           fallback={
-            <div class="rounded-lg border border-dashed border-gray-700 bg-gray-800/50 p-8 text-center">
-              <p class="text-gray-300">That tune is not in your repertoire.</p>
-              <A href="/" class="mt-2 inline-block text-sm text-amber-300 hover:text-amber-200">
-                Back to repertoire
-              </A>
-            </div>
+            /**
+             * El «no está en tu repertorio» solo vale si la carga fue bien: con un
+             * error de red la fila también es null, y decir que la tune no existe
+             * sería mentir sobre la causa.
+             */
+            <Show when={!error()}>
+              <div class="rounded-lg border border-dashed border-gray-700 bg-gray-800/50 p-8 text-center">
+                <p class="text-gray-300">That tune is not in your repertoire.</p>
+                <A href="/" class="mt-2 inline-block text-sm text-amber-300 hover:text-amber-200">
+                  Back to repertoire
+                </A>
+              </div>
+            </Show>
           }
         >
           {(item) => {
             // Una sola pasada por el modelo puro: el JSX no calcula nada.
             const flags = overrideFields(item());
-            const recency = practiceRecency(item(), now);
+            const recency = practiceRecency(item(), now());
             const external = sessionUrl(item());
 
             return (
