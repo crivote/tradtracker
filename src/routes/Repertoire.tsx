@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import {
+  SORT_LABELS,
   STATUS_LABELS,
   STATUS_STYLES,
   addCatalogueTune,
@@ -7,8 +8,13 @@ import {
   displayRhythm,
   displayTitle,
   fetchRepertoire,
+  parseViewMode,
   removeFromRepertoire,
+  sortRepertoire,
+  VIEW_MODE_KEY,
   type RepertoireRow,
+  type SortKey,
+  type ViewMode,
 } from '../lib/repertoire';
 import {
   aliasExcerpt,
@@ -17,7 +23,7 @@ import {
   type CatalogueEntry,
 } from '../lib/catalogue';
 import { preloadCatalogue, searchCatalogue, getCatalogueStats } from '../lib/catalogue-db';
-import { normalizeTitle } from '../lib/format';
+import { formatDate, normalizeTitle } from '../lib/format';
 
 /**
  * Vista de la colección.
@@ -31,7 +37,164 @@ import { normalizeTitle } from '../lib/format';
  * Los títulos alternativos cuentan: cada token se busca en el nombre y en la
  * columna `aliases`, y cuando el acierto viene de un alias se enseña el alias,
  * para que «Butterfly, The» al buscar «red admiral» no parezca un error.
+ *
+ * El orden (issue #7) no es cosa de la base: `fetchRepertoire` sigue trayendo
+ * por `added_at` y `sortRepertoire` — puro y probado en `repertoire-model` —
+ * reordena en el navegador con el criterio elegido, y ambas vistas (tabla y
+ * tarjetas) consumen las mismas filas ordenadas. La preferencia tabla/grid
+ * vive en `sessionStorage`: sobrevive a recargas de esta pestaña sin tocar la
+ * base de datos.
  */
+
+/**
+ * La preferencia de vista se lee al montar y se escribe al cambiar. Si el
+ * navegador la bloquea (modo privado) se degrada a tabla sin rumorear.
+ */
+function loadViewMode(): ViewMode {
+  try {
+    return parseViewMode(sessionStorage.getItem(VIEW_MODE_KEY));
+  } catch {
+    return 'table';
+  }
+}
+
+function rememberViewMode(mode: ViewMode): void {
+  try {
+    sessionStorage.setItem(VIEW_MODE_KEY, mode);
+  } catch {
+    /* sin almacenamiento disponible: la preferencia solo vive en memoria */
+  }
+}
+
+/** La tabla clásica, intacta, pero alimentada por las filas ya ordenadas. */
+function RepertoireTable(props: {
+  rows: RepertoireRow[];
+  busyId: string | number | null;
+  onRemove: (row: RepertoireRow) => void;
+}) {
+  return (
+    <div class="overflow-x-auto rounded-lg border border-gray-700">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-gray-800 text-xs uppercase tracking-wide text-gray-400">
+          <tr>
+            <th class="px-4 py-3 font-medium">Tune</th>
+            <th class="px-4 py-3 font-medium">Rhythm</th>
+            <th class="px-4 py-3 font-medium">Key</th>
+            <th class="px-4 py-3 font-medium">Status</th>
+            <th class="px-4 py-3 font-medium">Added</th>
+            <th class="px-4 py-3" />
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-700 bg-gray-900">
+          <For each={props.rows}>
+            {(row) => (
+              <tr class="hover:bg-gray-800/60">
+                <td class="px-4 py-3">
+                  <p class="text-gray-100">{displayTitle(row)}</p>
+                  <p class="text-xs text-gray-500">
+                    {row.tune.origin}
+                    {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
+                  </p>
+                </td>
+                <td class="px-4 py-3 text-gray-300">{displayRhythm(row)}</td>
+                <td class="px-4 py-3 text-gray-300">{displayKey(row)}</td>
+                <td class="px-4 py-3">
+                  <span
+                    class={`inline-block rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[row.status]}`}
+                  >
+                    {STATUS_LABELS[row.status]}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-gray-400">
+                  {new Date(row.added_at).toLocaleDateString()}
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <button
+                    type="button"
+                    disabled={props.busyId === row.id}
+                    class="text-xs text-gray-500 hover:text-red-300 disabled:opacity-60"
+                    onClick={() => props.onRemove(row)}
+                  >
+                    {props.busyId === row.id ? 'Removing…' : 'Remove'}
+                  </button>
+                </td>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** La vista de tarjetas (#7): los mismos datos, en formato de grid. */
+function GridView(props: {
+  rows: RepertoireRow[];
+  busyId: string | number | null;
+  onRemove: (row: RepertoireRow) => void;
+}) {
+  return (
+    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <For each={props.rows}>
+        {(row) => (
+          <li class="flex flex-col gap-3 rounded-lg border border-gray-700 bg-gray-900 p-4 hover:border-gray-600">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0">
+                <p class="truncate font-medium text-gray-100" title={displayTitle(row)}>
+                  {displayTitle(row)}
+                </p>
+                <p class="text-xs text-gray-500">
+                  {row.tune.origin}
+                  {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
+                </p>
+              </div>
+              <span
+                class={`inline-block shrink-0 rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[row.status]}`}
+              >
+                {STATUS_LABELS[row.status]}
+              </span>
+            </div>
+            <dl class="space-y-1 text-sm">
+              <div class="flex items-baseline justify-between gap-3">
+                <dt class="text-gray-500">Rhythm</dt>
+                <dd class="text-gray-300">{displayRhythm(row)}</dd>
+              </div>
+              <div class="flex items-baseline justify-between gap-3">
+                <dt class="text-gray-500">Key</dt>
+                <dd class="text-gray-300">{displayKey(row)}</dd>
+              </div>
+              <div class="flex items-baseline justify-between gap-3">
+                <dt class="text-gray-500">Added</dt>
+                <dd class="text-gray-400">{new Date(row.added_at).toLocaleDateString()}</dd>
+              </div>
+              <div class="flex items-baseline justify-between gap-3">
+                <dt class="text-gray-500">Practiced</dt>
+                <dd class="text-gray-400">{formatDate(row.last_practiced_at)}</dd>
+              </div>
+              <Show when={row.rating !== null}>
+                <div class="flex items-baseline justify-between gap-3">
+                  <dt class="text-gray-500">Rating</dt>
+                  <dd class="text-amber-300">★ {row.rating}</dd>
+                </div>
+              </Show>
+            </dl>
+            <div class="mt-auto text-right">
+              <button
+                type="button"
+                disabled={props.busyId === row.id}
+                class="text-xs text-gray-500 hover:text-red-300 disabled:opacity-60"
+                onClick={() => props.onRemove(row)}
+              >
+                {props.busyId === row.id ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          </li>
+        )}
+      </For>
+    </ul>
+  );
+}
+
 export default function Repertoire() {
   const [rows, setRows] = createSignal<RepertoireRow[]>([]);
   const [loading, setLoading] = createSignal(true);
@@ -47,7 +210,27 @@ export default function Repertoire() {
   const [catalogueReady, setCatalogueReady] = createSignal(false);
   const [tuneCount, setTuneCount] = createSignal<number | null>(null);
 
+  // La vista arranca con lo guardado en la sesión de esta pestaña.
+  const [viewMode, setViewMode] = createSignal<ViewMode>(loadViewMode());
+  // El orden por defecto es la urgencia: este corte existe para decidir qué ensayar.
+  const [sortKey, setSortKey] = createSignal<SortKey>('urgency');
+
+  const chooseView = (mode: ViewMode) => {
+    setViewMode(mode);
+    rememberViewMode(mode);
+  };
+
   const tokens = createMemo(() => tokenizeQuery(query()));
+
+  /** Las filas en el orden elegido; ambas vistas consumen este memo. */
+  const visible = createMemo(() => sortRepertoire(rows(), sortKey()));
+
+  const viewButtonClass = (mode: ViewMode) =>
+    `px-3 py-1.5 text-sm ${
+      viewMode() === mode
+        ? 'bg-amber-500 font-medium text-gray-900'
+        : 'text-gray-300 hover:text-amber-300'
+    }`;
 
   const load = async () => {
     setLoading(true);
@@ -169,13 +352,50 @@ export default function Repertoire() {
             </Show>
           </p>
         </div>
-        <button
-          type="button"
-          class="rounded bg-amber-500 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-amber-400"
-          onClick={() => setShowCatalogue((open) => !open)}
-        >
-          {showCatalogue() ? 'Close catalogue' : 'Add tunes'}
-        </button>
+        <div class="flex flex-wrap items-center gap-3">
+          <label class="flex items-center gap-2 text-sm text-gray-400" for="repertoire-sort">
+            Sort by
+            <select
+              id="repertoire-sort"
+              class="rounded border border-gray-600 bg-gray-900 px-2 py-1.5 text-sm text-gray-100 focus:border-amber-500 focus:outline-none"
+              value={sortKey()}
+              onChange={(event) => setSortKey(event.currentTarget.value as SortKey)}
+            >
+              {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
+                <option value={key}>{SORT_LABELS[key]}</option>
+              ))}
+            </select>
+          </label>
+          <div
+            class="flex overflow-hidden rounded border border-gray-600"
+            role="group"
+            aria-label="Repertoire view"
+          >
+            <button
+              type="button"
+              class={viewButtonClass('table')}
+              aria-pressed={viewMode() === 'table'}
+              onClick={() => chooseView('table')}
+            >
+              Table
+            </button>
+            <button
+              type="button"
+              class={viewButtonClass('grid')}
+              aria-pressed={viewMode() === 'grid'}
+              onClick={() => chooseView('grid')}
+            >
+              Grid
+            </button>
+          </div>
+          <button
+            type="button"
+            class="rounded bg-amber-500 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-amber-400"
+            onClick={() => setShowCatalogue((open) => !open)}
+          >
+            {showCatalogue() ? 'Close catalogue' : 'Add tunes'}
+          </button>
+        </div>
       </div>
 
       <Show when={error()}>
@@ -299,57 +519,12 @@ export default function Repertoire() {
             </div>
           }
         >
-          <div class="overflow-x-auto rounded-lg border border-gray-700">
-            <table class="w-full text-left text-sm">
-              <thead class="bg-gray-800 text-xs uppercase tracking-wide text-gray-400">
-                <tr>
-                  <th class="px-4 py-3 font-medium">Tune</th>
-                  <th class="px-4 py-3 font-medium">Rhythm</th>
-                  <th class="px-4 py-3 font-medium">Key</th>
-                  <th class="px-4 py-3 font-medium">Status</th>
-                  <th class="px-4 py-3 font-medium">Added</th>
-                  <th class="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-700 bg-gray-900">
-                <For each={rows()}>
-                  {(row) => (
-                    <tr class="hover:bg-gray-800/60">
-                      <td class="px-4 py-3">
-                        <p class="text-gray-100">{displayTitle(row)}</p>
-                        <p class="text-xs text-gray-500">
-                          {row.tune.origin}
-                          {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
-                        </p>
-                      </td>
-                      <td class="px-4 py-3 text-gray-300">{displayRhythm(row)}</td>
-                      <td class="px-4 py-3 text-gray-300">{displayKey(row)}</td>
-                      <td class="px-4 py-3">
-                        <span
-                          class={`inline-block rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[row.status]}`}
-                        >
-                          {STATUS_LABELS[row.status]}
-                        </span>
-                      </td>
-                      <td class="px-4 py-3 text-gray-400">
-                        {new Date(row.added_at).toLocaleDateString()}
-                      </td>
-                      <td class="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          disabled={busyId() === row.id}
-                          class="text-xs text-gray-500 hover:text-red-300 disabled:opacity-60"
-                          onClick={() => void remove(row)}
-                        >
-                          {busyId() === row.id ? 'Removing…' : 'Remove'}
-                        </button>
-                      </td>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
-          </div>
+          <Show
+            when={viewMode() === 'grid'}
+            fallback={<RepertoireTable rows={visible()} busyId={busyId()} onRemove={remove} />}
+          >
+            <GridView rows={visible()} busyId={busyId()} onRemove={remove} />
+          </Show>
         </Show>
       </Show>
     </div>

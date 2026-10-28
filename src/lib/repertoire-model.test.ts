@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  collationKey,
   displayKey,
   displayRhythm,
   displayTitle,
   mapRepertoireRow,
+  parseViewMode,
+  sortRepertoire,
   type RepertoireRow,
 } from './repertoire-model';
 
@@ -67,5 +70,125 @@ describe('display helpers', () => {
     expect(displayTitle(overridden)).toBe('The Kesh (session version)');
     expect(displayRhythm(overridden)).toBe('slide');
     expect(displayKey(overridden)).toBe('G');
+  });
+});
+
+// --- Orden (issue #7): cuatro criterios deterministas ----------------------
+
+/** Fila de prueba: identidad y tune a medida; lo demás toma valores neutros. */
+function makeRow(input: {
+  id: string;
+  name?: string;
+  custom_title?: string | null;
+  rating?: number | null;
+  added_at?: string;
+  last_practiced_at?: string | null;
+}): RepertoireRow {
+  const { name, ...overrides } = input;
+  return mapRepertoireRow({
+    ...baseRow,
+    added_at: '2026-06-01T12:00:00Z',
+    ...overrides,
+    pr_tunes: { ...tune, name: name ?? tune.name },
+  });
+}
+
+describe('collationKey', () => {
+  it('lowercases and strips diacritics so comparisons stay comparable', () => {
+    expect(collationKey('Ángel')).toBe('angel');
+    expect(collationKey('Niña')).toBe('nina');
+    expect(collationKey('Óró Sé do Bheatha Abhaile')).toBe('oro se do bheatha abhaile');
+  });
+});
+
+describe('sortRepertoire', () => {
+  it('urgency puts never-practiced rows first, then the ones practiced longest ago', () => {
+    const never = makeRow({ id: 'n1', name: 'Fresh Jig' });
+    const old = makeRow({ id: 'old', name: 'Old Reel', last_practiced_at: '2026-01-10T10:00:00Z' });
+    const recent = makeRow({
+      id: 'recent',
+      name: 'Recent Reel',
+      last_practiced_at: '2026-10-20T10:00:00Z',
+    });
+    const sorted = sortRepertoire([recent, never, old], 'urgency');
+    expect(sorted.map((row) => row.id)).toEqual(['n1', 'old', 'recent']);
+  });
+
+  it('urgency orders the never-practiced ones by title, not by added date', () => {
+    const laterAdded = makeRow({ id: 'b', name: 'Never Beta', added_at: '2026-09-01T00:00:00Z' });
+    const earlierAdded = makeRow({ id: 'a', name: 'Never Alpha', added_at: '2026-02-01T00:00:00Z' });
+    // Si el criterio fuera la fecha de alta, «Beta» saldría primera (desc).
+    const sorted = sortRepertoire([laterAdded, earlierAdded], 'urgency');
+    expect(sorted.map((row) => row.id)).toEqual(['a', 'b']);
+  });
+
+  it('alphabetical ignores case and accents', () => {
+    const angel = makeRow({ id: 'angel', name: 'Ángel' });
+    const nube = makeRow({ id: 'nube', name: 'Nube' });
+    const oro = makeRow({ id: 'oro', name: 'oro' });
+    // Sin normalizar, «Á» (U+00C1) ordenaría después de la «O».
+    const sorted = sortRepertoire([oro, angel, nube], 'alphabetical');
+    expect(sorted.map((row) => row.id)).toEqual(['angel', 'nube', 'oro']);
+  });
+
+  it('alphabetical follows the displayed title, so a custom override wins', () => {
+    const overridden = makeRow({ id: 'x', name: 'Zzz', custom_title: 'Aaa' });
+    const plain = makeRow({ id: 'y', name: 'Bbb' });
+    const sorted = sortRepertoire([plain, overridden], 'alphabetical');
+    expect(sorted.map((row) => row.id)).toEqual(['x', 'y']);
+  });
+
+  it('equal keys resolve by id, the same way regardless of the input order', () => {
+    const first = makeRow({ id: 't-1', name: 'banshee' });
+    const second = makeRow({ id: 't-2', name: 'Banshee' });
+    expect(sortRepertoire([first, second], 'alphabetical').map((row) => row.id)).toEqual([
+      't-1',
+      't-2',
+    ]);
+    expect(sortRepertoire([second, first], 'alphabetical').map((row) => row.id)).toEqual([
+      't-1',
+      't-2',
+    ]);
+  });
+
+  it('added puts the most recently added rows first', () => {
+    const old = makeRow({ id: 'old', name: 'Old', added_at: '2026-01-01T00:00:00Z' });
+    const mid = makeRow({ id: 'mid', name: 'Mid', added_at: '2026-06-01T00:00:00Z' });
+    const fresh = makeRow({ id: 'fresh', name: 'Fresh', added_at: '2026-10-01T00:00:00Z' });
+    const sorted = sortRepertoire([old, fresh, mid], 'added');
+    expect(sorted.map((row) => row.id)).toEqual(['fresh', 'mid', 'old']);
+  });
+
+  it('rating sorts descending with the unrated ones last', () => {
+    const high = makeRow({ id: 'high', name: 'High', rating: 5 });
+    const mid = makeRow({ id: 'mid', name: 'Mid', rating: 3 });
+    const unrated = makeRow({ id: 'un', name: 'Unrated' });
+    const sorted = sortRepertoire([unrated, high, mid], 'rating');
+    expect(sorted.map((row) => row.id)).toEqual(['high', 'mid', 'un']);
+  });
+
+  it('rating ties resolve by title', () => {
+    const alpha = makeRow({ id: 'a', name: 'Alpha', rating: 4 });
+    const zed = makeRow({ id: 'z', name: 'Zed', rating: 4 });
+    const sorted = sortRepertoire([zed, alpha], 'rating');
+    expect(sorted.map((row) => row.id)).toEqual(['a', 'z']);
+  });
+
+  it('never mutates the input list', () => {
+    const first = makeRow({ id: 'a', name: 'Nube' });
+    const second = makeRow({ id: 'b', name: 'Ángel' });
+    const input = Object.freeze([first, second]);
+    const sorted = sortRepertoire(input, 'alphabetical');
+    expect(sorted.map((row) => row.id)).toEqual(['b', 'a']);
+    expect([...input].map((row) => row.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('parseViewMode', () => {
+  it('only «grid» opts into the grid view; anything else falls back to the table', () => {
+    expect(parseViewMode('grid')).toBe('grid');
+    expect(parseViewMode('table')).toBe('table');
+    expect(parseViewMode('junk')).toBe('table');
+    expect(parseViewMode(null)).toBe('table');
   });
 });
