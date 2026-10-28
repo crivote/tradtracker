@@ -48,6 +48,13 @@ puede hablar con Supabase.
   y buscar el `ref` del proyecto dentro del bundle. Si no aparece, faltan.
 - Desde el 2026-10-28 la app no se queda en blanco si faltan: muestra un aviso de configuración en la
   cabecera (`src/lib/supabase.ts` lo detecta y `Layout.tsx` lo pinta).
+- **Y el build ahora falla antes de desplegar** (`scripts/check-env.mjs`, encadenado en `npm run build`).
+  Un build fallido deja intacto el despliegue anterior; un build mudo lo sustituía por una app sin
+  configurar. Si Cloudflare marca el build en rojo con «Faltan variables de Supabase», es esta guarda:
+  el problema está en esta sección, no en el código.
+- **Comprobado el 2026-10-28**: Vite sí incrusta variables que vengan del entorno del proceso (probado
+  compilando sin `.env.local` y con `VITE_*` exportadas). Si la guarda salta en Cloudflare, las
+  variables no están llegando al contenedor de build; no es limitación de Vite.
 
 **La `service_role`/`secret` no se pone nunca aquí.** Todo el front habla con la anon key y las políticas RLS.
 
