@@ -23,7 +23,7 @@ git push forgejo main
 
 ## Stack
 
-SolidJS + Vite + Tailwind + TypeScript · Supabase (auth, Postgres, Storage) · Netlify.
+SolidJS + Vite + Tailwind + TypeScript · Supabase (auth, Postgres, Storage) · **Cloudflare** (Worker con assets estáticos, construido desde el espejo de GitHub — ver `DEPLOY.md`).
 Dependencias ya elegidas en el andamio: `@sqlite.org/sqlite-wasm`, `abcjs`, `@supabase/supabase-js`, `@solidjs/router`, `lucide-solid`.
 
 ## Supabase
@@ -32,6 +32,19 @@ Dependencias ya elegidas en el andamio: `@sqlite.org/sqlite-wasm`, `abcjs`, `@su
 - **Es hermano del de TradTube** (`kshrrvowxibjqhsvijgh`), no el mismo: sin joins y sin auth compartida.
 - **Credenciales:** `~/secrets/tradtracker-db.txt` (contraseña y cadena de conexión) y `~/secrets/tradtracker-keys.txt` (URL, `ANON`, `SERVICE_ROLE`, publishable/secret). Permisos 600, fuera de git.
 - **La `service_role`/`secret` nunca va al cliente ni al navegador.** En el front, solo `VITE_SUPABASE_ANON_KEY` (o la publishable).
+
+### Auth (implementada 2026-10-28, issue #6)
+
+- **Email + contraseña**, registro abierto, **sin verificación obligatoria**. El proyecto tiene
+  `mailer_autoconfirm = true`: sin eso `signUp` devuelve usuario **sin sesión** y el registro no deja entrar.
+  Se cambia con `PATCH /v1/projects/<ref>/config/auth`.
+- **Recuperación de contraseña: FUERA DE ALCANCE por decisión del propietario** (2026-10-28). El SMTP por
+  defecto del plan free entrega 2 correos/hora; no prometer el flujo hasta configurar SMTP propio.
+- `site_url` del proyecto: `https://tradtracker.crivote.workers.dev`.
+- Cliente en `src/lib/supabase.ts` (`persistSession` + `autoRefreshToken`, sin OAuth ni magic link); la
+  sesión se expone por `src/lib/session.tsx`; el guard de rutas vive en `src/components/Layout.tsx`.
+- **La Admin API (`/auth/v1/admin/users`) exige `apikey` Y `Authorization: Bearer` con la `service_role`
+  legacy.** Con solo `apikey` responde `401 Invalid API key`, que se confunde con una credencial muerta.
 
 ## Decisiones de arquitectura vigentes (2026-10-28)
 
@@ -42,15 +55,20 @@ Dependencias ya elegidas en el andamio: `@sqlite.org/sqlite-wasm`, `abcjs`, `@su
 | D3 | Multiusuario público desde v1, RLS completa desde el primer esquema |
 | D4 | **Identidad propia**: `pr_tunes.id` uuid + `origin` + `origin_ref`. Sin esquema prefijado `ts:`/`loc:` |
 
-## Esquema (migración `001_initial_schema.sql`)
+## Esquema (migraciones `001`–`003`)
 
 - **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `created_by`, `created_at`. Único `(origin, origin_ref)`.
   RLS: lectura para autenticados; alta/edición/borrado solo del creador.
 - **`pr_repertoire`** — lo personal. `user_id`, `tune_id → pr_tunes`, overrides (`custom_title/rhythm/key/abc`), `status` (`nueva|aprendiendo|media|afianzada|aparcada`), `rating` 1–5, `image_path`, `notes`, marcas de tiempo. Único `(user_id, tune_id)`.
   RLS: `for all` con `user_id = auth.uid()`.
 - Trigger `pr_repertoire_touch_trg`: actualiza `status_changed_at` cuando cambia `status`.
+- **`002_repertoire_user_default.sql`** — `user_id` con `default auth.uid()`: el cliente inserta solo
+  `tune_id` y la base decide el dueño (la RLS lo vuelve a comprobar). Sin esto el front tendría que enviar
+  su propio uuid, que es un dato de confianza del navegador.
+- **`003_seed_catalogue.sql`** — 12 tunes reales de TheSession (`origin_ref` = `tune_id` del catálogo),
+  idempotente. Es semilla, no catálogo: el catálogo completo es el artefacto SQLite (issue #4).
 
-Las tablas de sesiones, sets, links, settings y favoritos **no existen todavía**: llegan con sus fases (#10, #13, #14, #15, #6).
+Las tablas de sesiones, sets, links, settings y favoritos **no existen todavía**: llegan con sus fases (#10, #13, #14, #15).
 
 ### Cómo se aplican las migraciones
 
@@ -60,6 +78,20 @@ No hay `psql` ni CLI de Supabase instalados en el host. Dos vías, ambas válida
 2. Instalar el CLI (`supabase db push`) cuando convenga; requiere `supabase link` con el proyecto.
 
 Las migraciones se escriben **idempotentes** (`if not exists`, `drop policy if exists`): se han de poder reaplicar sobre un proyecto a medias sin romper nada.
+
+**Trampa medida (2026-10-28):** el endpoint acepta **una sentencia por llamada**, y hay que partir el
+fichero por `;`. Quita los comentarios **antes** de partir: un `;` dentro de un comentario corta la
+sentencia en dos y el resto del comentario se envía como SQL (`ERROR: 42601` señalando una línea que
+parece válida). Los bloques `$$` también hay que respetarlos.
+
+## Estado del código (2026-10-28)
+
+- `src/lib/` — cliente Supabase, sesión, acceso a datos del repertorio y modelo puro de presentación.
+- `src/routes/` — `Login` y `Repertoire` (colección con join embebido, alta y baja).
+- `src/components/Layout.tsx` — cabecera y guard de rutas.
+- Pruebas: `npm run test:run` (Vitest). Typecheck: `npx tsc --noEmit -p tsconfig.json`.
+- El alta solo ofrece las tunes presentes en `pr_tunes` (12 sembradas); la búsqueda sobre el catálogo
+  completo llega con la issue #4.
 
 ## Trampas conocidas de TradTube (medidas, no supuestas)
 
@@ -84,5 +116,6 @@ Artefacto SQLite client-side (`public/thesession.db`, 4,7 MB, **22.775 tunes**, 
 
 - Commits en español, concisos, uno por unidad lógica. Mensajes multi-línea siempre con `git commit -F`.
 - **Nunca** commitear `.env`, `.env.local`, claves ni cadenas de conexión. `.gitignore` ya los cubre; verificar con `git status --porcelain` antes de `git add -A`.
+- **La UI va en inglés** (producto público para la comunidad trad); código, comentarios y commits en español.
 - No añadir ficheros grandes (artefactos SQLite, `node_modules`, `dist`) al repo.
 - Un frente por sesión: la fase se cierra y se valida antes de abrir la siguiente.
