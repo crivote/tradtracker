@@ -1,0 +1,20 @@
+# Cabeceras de tradtracker en Cloudflare Pages.
+# Sintaxis: ruta + (indentadas) Nombre: valor
+
+/*
+  Cross-Origin-Opener-Policy: same-origin
+
+# El catálogo SQLite se cachea un día: son 4,7 MB y cambia poco.
+/thesession.db
+  Cache-Control: public, max-age=86400
+  Content-Type: application/octet-stream
+
+# Los assets con hash de Vite son inmutables.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# COEP solo en el worker aislado (si algún día se usa ffmpeg.wasm, como en TradTube).
+# credentialless y no require-corp: require-corp rompe los iframes de YouTube.
+/ffmpeg-worker.html
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
