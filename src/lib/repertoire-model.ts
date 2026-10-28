@@ -187,7 +187,10 @@ export type ViewMode = 'table' | 'grid';
 /** Clave en `sessionStorage`: vive en la pestaña, sin tocar la base de datos. */
 export const VIEW_MODE_KEY = 'tradtracker.repertoire-view';
 
-/** Tolerante a basura en el almacenamiento: solo «grid» opta por el grid. */
+/**
+ * Tolerante a basura en el almacenamiento: solo «table» opta por la tabla. La
+ * vista por defecto es el grid de tarjetas, como pide la issue #7.
+ */
 export function parseViewMode(raw: string | null): ViewMode {
-  return raw === 'grid' ? 'grid' : 'table';
+  return raw === 'table' ? 'table' : 'grid';
 }

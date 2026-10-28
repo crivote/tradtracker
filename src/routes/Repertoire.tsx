@@ -48,13 +48,14 @@ import { formatDate, normalizeTitle } from '../lib/format';
 
 /**
  * La preferencia de vista se lee al montar y se escribe al cambiar. Si el
- * navegador la bloquea (modo privado) se degrada a tabla sin rumorear.
+ * navegador la bloquea (modo privado) se degrada al grid por defecto, que es la
+ * vista principal del repertorio.
  */
 function loadViewMode(): ViewMode {
   try {
     return parseViewMode(sessionStorage.getItem(VIEW_MODE_KEY));
   } catch {
-    return 'table';
+    return 'grid';
   }
 }
 

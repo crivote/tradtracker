@@ -185,10 +185,10 @@ describe('sortRepertoire', () => {
 });
 
 describe('parseViewMode', () => {
-  it('only «grid» opts into the grid view; anything else falls back to the table', () => {
+  it('defaults to the grid view; only an explicit «table» opts out', () => {
     expect(parseViewMode('grid')).toBe('grid');
     expect(parseViewMode('table')).toBe('table');
-    expect(parseViewMode('junk')).toBe('table');
-    expect(parseViewMode(null)).toBe('table');
+    expect(parseViewMode('junk')).toBe('grid');
+    expect(parseViewMode(null)).toBe('grid');
   });
 });
