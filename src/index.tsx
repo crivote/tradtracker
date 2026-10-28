@@ -1,7 +1,10 @@
 /* @refresh reload */
 import { render } from 'solid-js/web';
-import { Router } from '@solidjs/router';
-import App from './App';
+import { Navigate, Route, Router } from '@solidjs/router';
+import { SessionProvider } from './lib/session';
+import { Layout } from './components/Layout';
+import Login from './routes/Login';
+import Repertoire from './routes/Repertoire';
 import './index.css';
 
 const root = document.getElementById('root');
@@ -12,11 +15,19 @@ if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
   );
 }
 
+function NotFound() {
+  return <Navigate href="/" />;
+}
+
 render(
   () => (
-    <Router>
-      <App />
-    </Router>
+    <SessionProvider>
+      <Router root={Layout}>
+        <Route path="/login" component={Login} />
+        <Route path="/" component={Repertoire} />
+        <Route path="*" component={NotFound} />
+      </Router>
+    </SessionProvider>
   ),
   root!
 );
