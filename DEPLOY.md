@@ -34,6 +34,21 @@ Cloudflare (Worker `tradtracker`) → https://tradtracker.<subdominio>.workers.d
 
 Las dos variables se configuran **en el panel de Cloudflare**, no en el repo. La anon key es pública por diseño, pero no se commitea: así se puede rotar sin tocar el código.
 
+### Tienen que ser variables de BUILD, no de runtime
+
+**Medido el 2026-10-28:** el despliegue salió sin ellas y la app quedó en blanco. Vite incrusta `VITE_*`
+en el bundle **en tiempo de compilación**; una variable de runtime no llega al JavaScript y el cliente no
+puede hablar con Supabase.
+
+- Ruta correcta: **Workers & Pages → tradtracker → Settings → Build → «Build variables and secrets»**.
+- Ruta que NO sirve para esto: **Settings → Variables & Secrets** (esa es de runtime).
+- Después de guardarlas hay que **reconstruir** (Retry deployment o un push nuevo): cambiarlas no
+  reconstruye solo.
+- Comprobación rápida de si el build las lleva: `curl -s https://…/ | grep -o 'assets/index-[^"]*\.js'`
+  y buscar el `ref` del proyecto dentro del bundle. Si no aparece, faltan.
+- Desde el 2026-10-28 la app no se queda en blanco si faltan: muestra un aviso de configuración en la
+  cabecera (`src/lib/supabase.ts` lo detecta y `Layout.tsx` lo pinta).
+
 **La `service_role`/`secret` no se pone nunca aquí.** Todo el front habla con la anon key y las políticas RLS.
 
 ## Ruteo: el fallback SPA va en `wrangler.jsonc`, NO en `_redirects`
