@@ -103,8 +103,10 @@ declarada a la regla de no meter artefactos grandes (issue #4).
 - Se regenera con `node scripts/fetch-catalogue.mjs [--source <ruta>]`, que además escribe
   `public/thesession.meta.json` (fecha de copia, commit de TradTube, sha256, recuentos). La vista «About»
   lee ese sidecar y el recuento real del artefacto abierto.
-- El wasm de SQLite (`dist/assets/sqlite3-*.wasm`, ~860 kB) lo emite Vite con hash y **solo se descarga al
-  abrir el buscador**: el paquete se importa de forma dinámica, así que no pesa en la primera pantalla.
+- El wasm de SQLite (`dist/assets/sqlite3-*.wasm`, ~860 kB) lo emite Vite con hash y se descarga **en
+  segundo plano al entrar en el repertorio** (`preloadCatalogue()` en el montaje de la vista), no en el
+  login: cuando el usuario abre el buscador, la consulta ya es local. Medido el 2026-10-28: 4,69 MB + 860 kB
+  descargados una sola vez, y cero peticiones nuevas en las búsquedas siguientes.
 - `/thesession.db` se sirve con `Content-Type: application/octet-stream` y caché de un día (`_headers`).
 
 **Verificación tras desplegar** (no basta con que el build esté en verde):
