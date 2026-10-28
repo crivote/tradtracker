@@ -45,9 +45,16 @@ for (const key of REQUIRED) {
   }
 }
 
+// Normaliza: un espacio o una barra final en la variable no rompen la app (el
+// cliente también normaliza), así que no deben tumbar el build. Solo se aborta
+// si falta el valor o si la URL no es de un proyecto Supabase.
+for (const key of REQUIRED) {
+  if (typeof env[key] === 'string') env[key] = env[key].trim();
+}
+const normalisedUrl = (env.VITE_SUPABASE_URL ?? '').replace(/\/+$/, '');
+
 const missing = REQUIRED.filter((key) => !env[key]);
-const blank = REQUIRED.filter((key) => env[key] !== undefined && env[key].trim() === '');
-const problems = [...new Set([...missing, ...blank])];
+const problems = [...new Set(missing)];
 
 if (problems.length > 0) {
   console.error(
@@ -58,7 +65,11 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/.test(env.VITE_SUPABASE_URL)) {
+if (normalisedUrl !== env.VITE_SUPABASE_URL) {
+  console.warn(`[build] Aviso: VITE_SUPABASE_URL lleva barra(s) final(es); se ignoran.`);
+}
+
+if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/.test(normalisedUrl)) {
   console.error(
     `\n[build] VITE_SUPABASE_URL no parece una URL de proyecto: "${env.VITE_SUPABASE_URL}".\n` +
       '[build] Se esperaba https://<ref>.supabase.co\n'
@@ -66,4 +77,4 @@ if (!/^https:\/\/[a-z0-9]+\.supabase\.co$/.test(env.VITE_SUPABASE_URL)) {
   process.exit(1);
 }
 
-console.log(`[build] Configuración de Supabase presente (${env.VITE_SUPABASE_URL}).`);
+console.log(`[build] Configuración de Supabase presente (${normalisedUrl}).`);
