@@ -47,9 +47,17 @@ export function formatDate(iso: string | null): string {
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-export function daysSince(iso: string | null): number | null {
+/**
+ * Días enteros desde un instante ISO hasta `now`.
+ *
+ * El instante de referencia se inyecta: con el `Date.now()` interno la función
+ * no era determinista y los tests dependían del reloj de la máquina. Una fecha
+ * futura (reloj desajustado, husos) cuenta como 0: nunca se devuelve negativo,
+ * porque «-2 days ago» no significa nada para quien practica.
+ */
+export function daysSince(iso: string | null, now: number = Date.now()): number | null {
   if (!iso) return null;
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return null;
-  return Math.floor((Date.now() - then) / 86_400_000);
+  return Math.max(0, Math.floor((now - then) / 86_400_000));
 }

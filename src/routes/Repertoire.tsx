@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import { A } from '@solidjs/router';
 import {
   SORT_LABELS,
   STATUS_LABELS,
@@ -9,6 +10,8 @@ import {
   displayTitle,
   fetchRepertoire,
   parseViewMode,
+  placeholderInitials,
+  practiceRecency,
   removeFromRepertoire,
   sortRepertoire,
   VIEW_MODE_KEY,
@@ -23,7 +26,7 @@ import {
   type CatalogueEntry,
 } from '../lib/catalogue';
 import { preloadCatalogue, searchCatalogue, getCatalogueStats } from '../lib/catalogue-db';
-import { formatDate, normalizeTitle } from '../lib/format';
+import { normalizeTitle } from '../lib/format';
 
 /**
  * Vista de la colección.
@@ -44,6 +47,12 @@ import { formatDate, normalizeTitle } from '../lib/format';
  * tarjetas) consumen las mismas filas ordenadas. La preferencia tabla/grid
  * vive en `sessionStorage`: sobrevive a recargas de esta pestaña sin tocar la
  * base de datos.
+ *
+ * Corte 2 de la issue: la card enseña los días desde el último ensayo (no la
+ * fecha), un cuadro con las iniciales como placeholder de la imagen
+ * mnemotécnica y el título enlaza a `/repertoire/:id`, el detalle del tune.
+ * `now` se toma una sola vez aquí, al montar, y baja como prop: la función pura
+ * `practiceRecency` nunca lee el reloj.
  */
 
 /**
@@ -91,7 +100,13 @@ function RepertoireTable(props: {
             {(row) => (
               <tr class="hover:bg-gray-800/60">
                 <td class="px-4 py-3">
-                  <p class="text-gray-100">{displayTitle(row)}</p>
+                  <A
+                    href={`/repertoire/${row.id}`}
+                    class="text-gray-100 hover:text-amber-300 hover:underline"
+                    title={displayTitle(row)}
+                  >
+                    {displayTitle(row)}
+                  </A>
                   <p class="text-xs text-gray-500">
                     {row.tune.origin}
                     {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
@@ -128,75 +143,100 @@ function RepertoireTable(props: {
   );
 }
 
-/** La vista de tarjetas (#7): los mismos datos, en formato de grid. */
+/**
+ * La vista de tarjetas (#7): los mismos datos, en formato de grid. El cuadro de
+ * iniciales es el placeholder de la imagen mnemotécnica (la subida real llega en
+ * F10) y el título es el enlace al detalle: la tarjeta entera no puede serlo,
+ * porque lleva dentro un `<button>` de baja y un `<a>` con un botón dentro no es
+ * HTML válido.
+ */
 function GridView(props: {
   rows: RepertoireRow[];
+  now: number;
   busyId: string | number | null;
   onRemove: (row: RepertoireRow) => void;
 }) {
   return (
     <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <For each={props.rows}>
-        {(row) => (
-          <li class="flex flex-col gap-3 rounded-lg border border-gray-700 bg-gray-900 p-4 hover:border-gray-600">
-            <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0">
-                <p class="truncate font-medium text-gray-100" title={displayTitle(row)}>
-                  {displayTitle(row)}
-                </p>
-                <p class="text-xs text-gray-500">
-                  {row.tune.origin}
-                  {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
-                </p>
-              </div>
-              <span
-                class={`inline-block shrink-0 rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[row.status]}`}
+        {(row) => {
+          // Consumo del modelo puro, fuera del JSX: el instante ya viene de la vista.
+          const recency = practiceRecency(row, props.now);
+          return (
+            <li class="flex flex-col gap-3 rounded-lg border border-gray-700 bg-gray-900 p-4 hover:border-gray-600">
+              <div
+                class="flex h-12 w-12 items-center justify-center rounded-md border border-gray-700 bg-gray-800 text-sm font-semibold text-amber-300"
+                aria-hidden="true"
               >
-                {STATUS_LABELS[row.status]}
-              </span>
-            </div>
-            <dl class="space-y-1 text-sm">
-              <div class="flex items-baseline justify-between gap-3">
-                <dt class="text-gray-500">Rhythm</dt>
-                <dd class="text-gray-300">{displayRhythm(row)}</dd>
+                {placeholderInitials(row)}
               </div>
-              <div class="flex items-baseline justify-between gap-3">
-                <dt class="text-gray-500">Key</dt>
-                <dd class="text-gray-300">{displayKey(row)}</dd>
-              </div>
-              <div class="flex items-baseline justify-between gap-3">
-                <dt class="text-gray-500">Added</dt>
-                <dd class="text-gray-400">{new Date(row.added_at).toLocaleDateString()}</dd>
-              </div>
-              <div class="flex items-baseline justify-between gap-3">
-                <dt class="text-gray-500">Practiced</dt>
-                <dd class="text-gray-400">{formatDate(row.last_practiced_at)}</dd>
-              </div>
-              <Show when={row.rating !== null}>
-                <div class="flex items-baseline justify-between gap-3">
-                  <dt class="text-gray-500">Rating</dt>
-                  <dd class="text-amber-300">★ {row.rating}</dd>
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0">
+                  <A
+                    href={`/repertoire/${row.id}`}
+                    class="block truncate font-medium text-gray-100 hover:text-amber-300"
+                    title={displayTitle(row)}
+                  >
+                    {displayTitle(row)}
+                  </A>
+                  <p class="text-xs text-gray-500">
+                    {row.tune.origin}
+                    {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
+                  </p>
                 </div>
-              </Show>
-            </dl>
-            <div class="mt-auto text-right">
-              <button
-                type="button"
-                disabled={props.busyId === row.id}
-                class="text-xs text-gray-500 hover:text-red-300 disabled:opacity-60"
-                onClick={() => props.onRemove(row)}
-              >
-                {props.busyId === row.id ? 'Removing…' : 'Remove'}
-              </button>
-            </div>
-          </li>
-        )}
+                <span
+                  class={`inline-block shrink-0 rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[row.status]}`}
+                >
+                  {STATUS_LABELS[row.status]}
+                </span>
+              </div>
+              <dl class="space-y-1 text-sm">
+                <div class="flex items-baseline justify-between gap-3">
+                  <dt class="text-gray-500">Rhythm</dt>
+                  <dd class="text-gray-300">{displayRhythm(row)}</dd>
+                </div>
+                <div class="flex items-baseline justify-between gap-3">
+                  <dt class="text-gray-500">Key</dt>
+                  <dd class="text-gray-300">{displayKey(row)}</dd>
+                </div>
+                <div class="flex items-baseline justify-between gap-3">
+                  <dt class="text-gray-500">Added</dt>
+                  <dd class="text-gray-400">{new Date(row.added_at).toLocaleDateString()}</dd>
+                </div>
+                <div class="flex items-baseline justify-between gap-3">
+                  <dt class="text-gray-500">Practiced</dt>
+                  <dd class="text-gray-400">{recency.label}</dd>
+                </div>
+                <Show when={row.rating !== null}>
+                  <div class="flex items-baseline justify-between gap-3">
+                    <dt class="text-gray-500">Rating</dt>
+                    <dd class="text-amber-300">★ {row.rating}</dd>
+                  </div>
+                </Show>
+              </dl>
+              <div class="mt-auto text-right">
+                <button
+                  type="button"
+                  disabled={props.busyId === row.id}
+                  class="text-xs text-gray-500 hover:text-red-300 disabled:opacity-60"
+                  onClick={() => props.onRemove(row)}
+                >
+                  {props.busyId === row.id ? 'Removing…' : 'Remove'}
+                </button>
+              </div>
+            </li>
+          );
+        }}
       </For>
     </ul>
   );
 }
 
 export default function Repertoire() {
+  // Un único instante por renderizado de la vista: las etiquetas de «N days ago»
+  // de todas las cards hablan del mismo día. Nunca dentro de la función pura.
+  const now = Date.now();
+
   const [rows, setRows] = createSignal<RepertoireRow[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
@@ -524,7 +564,7 @@ export default function Repertoire() {
             when={viewMode() === 'grid'}
             fallback={<RepertoireTable rows={visible()} busyId={busyId()} onRemove={remove} />}
           >
-            <GridView rows={visible()} busyId={busyId()} onRemove={remove} />
+            <GridView rows={visible()} now={now} busyId={busyId()} onRemove={remove} />
           </Show>
         </Show>
       </Show>

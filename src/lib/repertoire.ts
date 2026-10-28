@@ -28,6 +28,22 @@ export async function fetchRepertoire(): Promise<RepertoireRow[]> {
   return (data ?? []).map(mapRepertoireRow);
 }
 
+/**
+ * Una fila concreta del repertorio, para el detalle `/repertoire/:id` (#7).
+ * `maybeSingle` porque «no existe» y «no es tuya» (RLS devuelve vacío) son el
+ * mismo caso para la vista: null, sin error.
+ */
+export async function fetchRepertoireRow(id: string): Promise<RepertoireRow | null> {
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .select(REPERTOIRE_SELECT)
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not load that tune: ${error.message}`);
+  return data ? mapRepertoireRow(data) : null;
+}
+
 /** Un tune tal y como lo entrega el catálogo SQLite. */
 export interface CatalogueTune {
   tuneId: number;

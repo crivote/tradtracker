@@ -5,7 +5,10 @@ import {
   displayRhythm,
   displayTitle,
   mapRepertoireRow,
+  overrideFields,
   parseViewMode,
+  placeholderInitials,
+  practiceRecency,
   sortRepertoire,
   type RepertoireRow,
 } from './repertoire-model';
@@ -190,5 +193,107 @@ describe('parseViewMode', () => {
     expect(parseViewMode('table')).toBe('table');
     expect(parseViewMode('junk')).toBe('grid');
     expect(parseViewMode(null)).toBe('grid');
+  });
+});
+
+// --- Recencia, iniciales y overrides (#7, corte 2) -------------------------
+
+/** Instante de referencia fijo: ninguna prueba de fechas depende del reloj real. */
+const NOW = Date.parse('2026-10-28T12:00:00Z');
+
+describe('practiceRecency', () => {
+  it('says «Never practiced» when there is no timestamp', () => {
+    expect(practiceRecency(makeRow({ id: 'never' }), NOW)).toEqual({
+      days: null,
+      label: 'Never practiced',
+    });
+  });
+
+  it('says «Never practiced» for an unparsable timestamp', () => {
+    const row = makeRow({ id: 'broken', last_practiced_at: 'ayer' });
+    expect(practiceRecency(row, NOW).label).toBe('Never practiced');
+    expect(practiceRecency(row, NOW).days).toBeNull();
+  });
+
+  it('says «Practiced today» for anything within the last day', () => {
+    const row = makeRow({ id: 'today', last_practiced_at: '2026-10-28T08:00:00Z' });
+    expect(practiceRecency(row, NOW)).toEqual({ days: 0, label: 'Practiced today' });
+  });
+
+  it('says «1 day ago» in the singular', () => {
+    const row = makeRow({ id: 'yesterday', last_practiced_at: '2026-10-27T08:00:00Z' });
+    expect(practiceRecency(row, NOW)).toEqual({ days: 1, label: '1 day ago' });
+  });
+
+  it('says «N days ago» in the plural', () => {
+    const row = makeRow({ id: 'week', last_practiced_at: '2026-10-21T08:00:00Z' });
+    expect(practiceRecency(row, NOW)).toEqual({ days: 7, label: '7 days ago' });
+  });
+
+  it('counts a future timestamp as today instead of a negative number', () => {
+    const row = makeRow({ id: 'future', last_practiced_at: '2026-12-24T08:00:00Z' });
+    expect(practiceRecency(row, NOW)).toEqual({ days: 0, label: 'Practiced today' });
+  });
+});
+
+describe('placeholderInitials', () => {
+  it('takes the initials of the displayed title, so the inverted article counts first', () => {
+    // «Kesh, The» se muestra como «The Kesh»: las iniciales son TK, no KT.
+    expect(placeholderInitials(makeRow({ id: 'kesh' }))).toBe('TK');
+  });
+
+  it('uses a single letter for a one-word title and uppercases it', () => {
+    expect(placeholderInitials(makeRow({ id: 'morrison', name: "morrison's" }))).toBe('M');
+  });
+
+  it('stops at two letters', () => {
+    expect(
+      placeholderInitials(makeRow({ id: 'long', name: 'Out On The Ocean' }))
+    ).toBe('OO');
+  });
+
+  it('prefers the custom title, which is what the card shows', () => {
+    const row = makeRow({ id: 'custom', name: 'Zzz', custom_title: 'Silver Spear' });
+    expect(placeholderInitials(row)).toBe('SS');
+  });
+
+  it('falls back to «?» when the title has no letters at all', () => {
+    expect(placeholderInitials(makeRow({ id: 'nothing', name: '« »' }))).toBe('?');
+    expect(placeholderInitials(makeRow({ id: 'blank', name: '' }))).toBe('?');
+  });
+});
+
+describe('overrideFields', () => {
+  it('marks nothing when every value comes from the shared tune', () => {
+    expect(overrideFields(makeRow({ id: 'plain' }))).toEqual({
+      title: false,
+      rhythm: false,
+      key: false,
+    });
+  });
+
+  it('does not count an empty or blank override as an override', () => {
+    const row: RepertoireRow = {
+      ...makeRow({ id: 'blank' }),
+      custom_title: '   ',
+      custom_rhythm: '',
+      custom_key: null,
+    };
+    expect(overrideFields(row)).toEqual({ title: false, rhythm: false, key: false });
+  });
+
+  it('marks each field that has its own text', () => {
+    const row: RepertoireRow = {
+      ...makeRow({ id: 'custom' }),
+      custom_title: 'The Kesh (session version)',
+      custom_rhythm: 'slide',
+      custom_key: 'G',
+    };
+    expect(overrideFields(row)).toEqual({ title: true, rhythm: true, key: true });
+  });
+
+  it('marks only the fields that were overridden', () => {
+    const row: RepertoireRow = { ...makeRow({ id: 'key-only' }), custom_key: 'D' };
+    expect(overrideFields(row)).toEqual({ title: false, rhythm: false, key: true });
   });
 });

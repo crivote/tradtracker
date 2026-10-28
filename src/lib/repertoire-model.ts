@@ -1,4 +1,4 @@
-import { normalizeTitle } from './format';
+import { daysSince, normalizeTitle } from './format';
 
 /**
  * Modelo puro del repertorio: tipos, normalización de la fila que devuelve
@@ -81,6 +81,67 @@ export const STATUS_STYLES: Record<TuneStatus, string> = {
   afianzada: 'bg-emerald-900/60 text-emerald-300 border-emerald-700',
   aparcada: 'bg-gray-800 text-gray-400 border-gray-600',
 };
+
+/**
+ * Recencia del último ensayo (#7, corte 2). La card enseñaba la fecha; para
+ * decidir qué ensayar lo útil son los días. Se calcula sobre el instante `now`
+ * de la vista para que el resultado sea determinista en los tests.
+ */
+export interface PracticeRecency {
+  /** Días enteros desde el último ensayo; null si nunca se ensayó. */
+  days: number | null;
+  /** Texto listo para pintar (en inglés, como el resto de la UI). */
+  label: string;
+}
+
+export function practiceRecency(row: RepertoireRow, now: number): PracticeRecency {
+  const days = daysSince(row.last_practiced_at, now);
+  if (days === null) return { days: null, label: 'Never practiced' };
+  if (days === 0) return { days, label: 'Practiced today' };
+  if (days === 1) return { days, label: '1 day ago' };
+  return { days, label: `${days} days ago` };
+}
+
+/**
+ * Iniciales del título mostrado para el cuadro mnemotécnico de la card, máximo
+ * dos y en mayúsculas. Se toma la primera letra de cada palabra: «Kesh, The» se
+ * muestra como «The Kesh», así que da «TK». Sin letras en el título, «?».
+ */
+export function placeholderInitials(row: RepertoireRow): string {
+  const words = displayTitle(row).split(/\s+/);
+  const initials: string[] = [];
+  for (const word of words) {
+    const letter = word.match(/\p{L}/u);
+    if (!letter) continue;
+    initials.push(letter[0]);
+    if (initials.length === 2) break;
+  }
+  return initials.length > 0 ? initials.join('').toUpperCase() : '?';
+}
+
+/** Campos cuyo valor viene de un override personal y no del tune compartido. */
+export interface OverrideFields {
+  title: boolean;
+  rhythm: boolean;
+  key: boolean;
+}
+
+/** Un override cuenta solo si tiene texto: un `custom_key` vacío no lo es. */
+function hasText(value: string | null): boolean {
+  return (value ?? '').trim().length > 0;
+}
+
+/**
+ * Marca de overrides (F2): el detalle enseña de dónde sale cada valor. La card
+ * no los marca; este corte solo los distingue en `/repertoire/:id`.
+ */
+export function overrideFields(row: RepertoireRow): OverrideFields {
+  return {
+    title: hasText(row.custom_title),
+    rhythm: hasText(row.custom_rhythm),
+    key: hasText(row.custom_key),
+  };
+}
 
 /**
  * Clave del orden alfabético: minúsculas y sin diacríticos. Se compara por code
