@@ -7,6 +7,7 @@
  * SQLite nativo de Node —mismo motor FTS5, distinto transporte—. Lo único que
  * esta suite no cruza es `sqlite-wasm`; eso se comprueba en el navegador.
  */
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -30,6 +31,7 @@ const nodeRequire = createRequire(import.meta.url);
 const { DatabaseSync } = nodeRequire('node:sqlite') as typeof import('node:sqlite');
 
 const DB_PATH = fileURLToPath(new URL('../../public/thesession.db', import.meta.url));
+const META_PATH = fileURLToPath(new URL('../../public/thesession.meta.json', import.meta.url));
 
 let db: InstanceType<typeof DatabaseSync>;
 
@@ -50,10 +52,18 @@ beforeAll(() => {
 afterAll(() => db.close());
 
 describe('artefacto del catálogo', () => {
-  it('contiene los 22.775 tunes y sus alias', () => {
+  it('coincide con el sidecar de procedencia y no está truncado', () => {
+    // El recuento cambia con cada refresco del catálogo: se coteja el artefacto
+    // contra el sidecar que escribe `scripts/fetch-catalogue.mjs` (que ya aborta
+    // por debajo de 20.000 tunes), no contra una cifra fija que caduca sola.
+    const meta = JSON.parse(readFileSync(META_PATH, 'utf8')) as {
+      tunes: number;
+      tunes_with_aliases: number;
+    };
     const row = db.prepare(CATALOGUE_STATS_SQL).get() as Record<string, number>;
-    expect(row.tunes).toBe(22775);
-    expect(row.with_aliases).toBe(8634);
+    expect(row.tunes).toBe(meta.tunes);
+    expect(row.with_aliases).toBe(meta.tunes_with_aliases);
+    expect(row.tunes).toBeGreaterThan(22000);
   });
 
   it('el nombre se devuelve con el id de TheSession, ritmo y compás', () => {
