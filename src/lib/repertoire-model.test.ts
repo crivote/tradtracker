@@ -26,7 +26,7 @@ const tune = {
 
 const baseRow = {
   id: 'repertoire-uuid',
-  status: 'nueva',
+  status: 'to_learn',
   rating: null,
   custom_title: null,
   custom_rhythm: null,
@@ -40,7 +40,7 @@ describe('mapRepertoireRow', () => {
   it('accepts the embedded tune as an object (many-to-one)', () => {
     const row = mapRepertoireRow({ ...baseRow, pr_tunes: tune });
     expect(row.tune.name).toBe('Kesh, The');
-    expect(row.status).toBe('nueva');
+    expect(row.status).toBe('to_learn');
     expect(row.rating).toBeNull();
   });
 

@@ -5,7 +5,15 @@ import { daysSince, normalizeTitle } from './format';
  * PostgREST y presentación. Sin cliente Supabase, para poder probarlo sin red.
  */
 
-export type TuneStatus = 'nueva' | 'aprendiendo' | 'media' | 'afianzada' | 'aparcada';
+/**
+ * Peldaños de capacidad (#29). Sustituyen a la escala de calidad de #11: ya no
+ * dicen «cómo de bien la toco» sino «cuánto puedo contar con ella».
+ *
+ * `aparcada` no está aquí a propósito: aparcar no es una altura de la escalera,
+ * es una bandera transversal (`shelved`), y una tune aparcada conserva su
+ * peldaño.
+ */
+export type TuneStatus = 'to_learn' | 'learning' | 'playing_along' | 'solo_ready';
 
 export interface TuneRecord {
   id: string;
@@ -42,6 +50,8 @@ export interface ChosenImage {
 export interface RepertoireRow {
   id: string;
   status: TuneStatus;
+  /** Bandera transversal: la tune está en el cajón, en cualquier peldaño. */
+  shelved: boolean;
   rating: number | null;
   custom_title: string | null;
   custom_rhythm: string | null;
@@ -52,6 +62,41 @@ export interface RepertoireRow {
   tune: TuneRecord;
   /** Fondo elegido; null si la tune no tiene imagen todavía. */
   image: ChosenImage | null;
+  /**
+   * Agregados de la vista `pr_repertoire_stats` (#29). `null` en la cuenta
+   * cuando no hay dato: sin vista, sin sesiones. Un `0` sí es un dato —hubo
+   * vista y no hubo ensayos— y no se pinta igual.
+   */
+  practice_count: number | null;
+  avg_quality: number | null;
+  days_since_last_practice: number | null;
+}
+
+/** Una fila de `pr_repertoire_stats`: los agregados de una fila de repertorio. */
+export interface RepertoireStats {
+  practice_count: number | null;
+  avg_quality: number | null;
+  days_since_last_practice: number | null;
+}
+
+/** Número o null: `avg_quality` llega como cadena porque en la base es numeric. */
+function toNumberOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Normaliza la fila de la vista. Ausente y null son lo mismo aquí: «no hay
+ * dato», que la carta pinta como `no sessions yet` (rama del «no», §4 del
+ * issue 29). Nunca se estima.
+ */
+export function mapStatsRow(row: Record<string, any> | null | undefined): RepertoireStats {
+  return {
+    practice_count: toNumberOrNull(row?.practice_count),
+    avg_quality: toNumberOrNull(row?.avg_quality),
+    days_since_last_practice: toNumberOrNull(row?.days_since_last_practice),
+  };
 }
 
 /** Los valores por defecto son los de la migración 005: centro y 100 %. */
@@ -100,15 +145,25 @@ export function mapImageRow(row: Record<string, any>): ChosenImage | null {
 /**
  * PostgREST devuelve la relación embebida como objeto (many-to-one) o como array
  * según la forma del join; aquí se normaliza a un único TuneRecord.
+ *
+ * `stats` son los agregados de `pr_repertoire_stats` para esta fila. Se pasan
+ * aparte porque vienen de otra consulta: la vista no es un destino de join (no
+ * hay clave ajena de una tabla a una vista). Sin ellos la fila queda con
+ * `practice_count: null`, que es la rama del «no» del issue 29, no un cero.
  */
-export function mapRepertoireRow(row: Record<string, any>): RepertoireRow {
+export function mapRepertoireRow(
+  row: Record<string, any>,
+  stats?: RepertoireStats | null
+): RepertoireRow {
   const embedded = Array.isArray(row.pr_tunes) ? row.pr_tunes[0] : row.pr_tunes;
   if (!embedded) {
     throw new Error(`Repertoire row ${row.id} came back without its tune.`);
   }
+  const aggregates = stats ?? mapStatsRow(row);
   return {
     id: row.id,
     status: row.status as TuneStatus,
+    shelved: row.shelved === true,
     rating: row.rating ?? null,
     custom_title: row.custom_title ?? null,
     custom_rhythm: row.custom_rhythm ?? null,
@@ -118,6 +173,9 @@ export function mapRepertoireRow(row: Record<string, any>): RepertoireRow {
     last_practiced_at: row.last_practiced_at ?? null,
     tune: embedded as TuneRecord,
     image: mapImageRow(row),
+    practice_count: aggregates.practice_count,
+    avg_quality: aggregates.avg_quality,
+    days_since_last_practice: aggregates.days_since_last_practice,
   };
 }
 
@@ -145,21 +203,86 @@ export function displayKey(item: RepertoireRow): string {
   return item.custom_key?.trim() || item.tune.key || '—';
 }
 
+/**
+ * Las cuatro bandas de la home (#29), en orden de escalera. Cada una lleva el
+ * nombre, la definición que se pinta al lado y el peldaño que enciende el
+ * indicador de cuatro barras. La densidad no es estética: las dos bandas de
+ * trabajo piden carta grande (ahí se mira la calidad de cada tune), y las dos de
+ * biblioteca piden miniatura (ahí hay cien y no se vigilan una a una).
+ */
+export interface BandDefinition {
+  status: TuneStatus;
+  label: string;
+  definition: string;
+  /** Barras encendidas del indicador, 1–4. */
+  rung: number;
+  density: 'card' | 'tile';
+}
+
+export const BANDS: readonly BandDefinition[] = [
+  {
+    status: 'to_learn',
+    label: 'To learn',
+    definition: 'Want to learn it. Not started.',
+    rung: 1,
+    density: 'card',
+  },
+  {
+    status: 'learning',
+    label: 'Learning',
+    definition: 'Know the parts, but can’t get through it end to end.',
+    rung: 2,
+    density: 'card',
+  },
+  {
+    status: 'playing_along',
+    label: 'Playing along',
+    definition: 'Can follow it when someone else leads.',
+    rung: 3,
+    density: 'tile',
+  },
+  {
+    status: 'solo_ready',
+    label: 'Solo-ready',
+    definition: 'If someone asks for a tune, this is one you’d give them.',
+    rung: 4,
+    density: 'tile',
+  },
+];
+
+/** La banda de un estado; nunca undefined para un TuneStatus válido. */
+export function bandFor(status: TuneStatus): BandDefinition {
+  return BANDS.find((band) => band.status === status) ?? BANDS[0];
+}
+
 export const STATUS_LABELS: Record<TuneStatus, string> = {
-  nueva: 'New',
-  aprendiendo: 'Learning',
-  media: 'Fluent',
-  afianzada: 'Solid',
-  aparcada: 'Shelved',
+  to_learn: 'To learn',
+  learning: 'Learning',
+  playing_along: 'Playing along',
+  solo_ready: 'Solo-ready',
 };
 
+/** Colores de la tabla: sigue siendo la vista oscura de siempre. */
 export const STATUS_STYLES: Record<TuneStatus, string> = {
-  nueva: 'bg-sky-900/60 text-sky-300 border-sky-700',
-  aprendiendo: 'bg-amber-900/60 text-amber-300 border-amber-700',
-  media: 'bg-violet-900/60 text-violet-300 border-violet-700',
-  afianzada: 'bg-emerald-900/60 text-emerald-300 border-emerald-700',
-  aparcada: 'bg-gray-800 text-gray-400 border-gray-600',
+  to_learn: 'bg-sky-900/60 text-sky-300 border-sky-700',
+  learning: 'bg-amber-900/60 text-amber-300 border-amber-700',
+  playing_along: 'bg-violet-900/60 text-violet-300 border-violet-700',
+  solo_ready: 'bg-emerald-900/60 text-emerald-300 border-emerald-700',
 };
+
+/** Cuántas tunes hay en cada peldaño; las cuatro claves siempre están. */
+export function statusCounts(rows: readonly RepertoireRow[]): Record<TuneStatus, number> {
+  const counts: Record<TuneStatus, number> = {
+    to_learn: 0,
+    learning: 0,
+    playing_along: 0,
+    solo_ready: 0,
+  };
+  for (const row of rows) {
+    if (row.status in counts) counts[row.status] += 1;
+  }
+  return counts;
+}
 
 /**
  * Recencia del último ensayo (#7, corte 2). La card enseñaba la fecha; para
@@ -333,4 +456,207 @@ export const VIEW_MODE_KEY = 'tradtracker.repertoire-view';
  */
 export function parseViewMode(raw: string | null): ViewMode {
   return raw === 'table' ? 'table' : 'grid';
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Home del repertorio (#29): staleness, medidor, bandas y topes.
+ * Todo puro y con el instante inyectado: el navegador no calcula
+ * nada dentro del JSX y las pruebas no dependen del reloj.
+ * ──────────────────────────────────────────────────────────────── */
+
+/** El tag satura a los 90 días; más allá no aporta información nueva. */
+export const STALENESS_SATURATION_DAYS = 90;
+
+/** Papel del tag a cero días y teja a los 90 (la paleta del boceto). */
+export const STALENESS_FROM: readonly [number, number, number] = [246, 240, 227];
+export const STALENESS_TO: readonly [number, number, number] = [186, 95, 62];
+
+/**
+ * Días sin ensayar de una fila: `never` es null. Se derivan de
+ * `last_practiced_at` (la columna que mantiene el trigger de sesiones) para que
+ * el resultado sea determinista con el `now` inyectado; si la fila no trae la
+ * fecha pero la vista sí trae los días, se usa el de la base como respaldo.
+ */
+export function stalenessDays(row: RepertoireRow, now: number): number | null {
+  if (row.last_practiced_at) return daysSince(row.last_practiced_at, now);
+  return row.days_since_last_practice ?? null;
+}
+
+/** El tag tal y como se lee: `never`, `today`, `1 day`, `41 days`. */
+export interface StalenessTag {
+  days: number | null;
+  /** Parte que va en negrita (el número) o el texto suelto. */
+  value: string;
+  /** `day`/`days` cuando hay número; null en `never` y `today`. */
+  unit: 'day' | 'days' | null;
+}
+
+export function stalenessTag(days: number | null): StalenessTag {
+  if (days === null) return { days: null, value: 'never', unit: null };
+  if (days === 0) return { days: 0, value: 'today', unit: null };
+  if (days === 1) return { days: 1, value: '1', unit: 'day' };
+  return { days, value: String(days), unit: 'days' };
+}
+
+/** Texto del `title` del tag: dice lo mismo, con palabras. */
+export function stalenessTitle(tag: StalenessTag): string {
+  if (tag.days === null) return 'Never practiced';
+  if (tag.days === 0) return 'Practiced today';
+  if (tag.days === 1) return 'Last practiced 1 day ago';
+  return `Last practiced ${tag.days} days ago`;
+}
+
+/**
+ * Intensidad del gradiente de abandono: `sqrt(min(días, 90) / 90)`. La raíz es
+ * deliberada —con escala lineal, 3 y 12 días caían en el mismo tono y el
+ * gradiente no se leía—. Nunca tocada va al extremo cálido.
+ */
+export function stalenessIntensity(days: number | null): number {
+  if (days === null) return 1;
+  const clamped = Math.min(Math.max(days, 0), STALENESS_SATURATION_DAYS);
+  return Math.sqrt(clamped / STALENESS_SATURATION_DAYS);
+}
+
+export interface StalenessColor {
+  /** 0 = recién tocada, 1 = nunca tocada o 90+ días. */
+  intensity: number;
+  background: string;
+  foreground: string;
+}
+
+/**
+ * Color del tag interpolado en sRGB entre papel y teja. El texto pasa a blanco
+ * cuando el fondo ya es oscuro (por encima de 0,55), el mismo umbral del
+ * boceto.
+ */
+export function stalenessColor(days: number | null): StalenessColor {
+  const intensity = stalenessIntensity(days);
+  const channels = STALENESS_FROM.map((from, index) =>
+    Math.round(from + (STALENESS_TO[index] - from) * intensity)
+  );
+  return {
+    intensity,
+    background: `rgb(${channels.join(',')})`,
+    foreground: intensity > 0.55 ? '#ffffff' : '#3c3428',
+  };
+}
+
+/** Cinco posiciones del medidor: llena, media o vacía. */
+export type MeterDot = 'on' | 'half' | 'off';
+
+/**
+ * Reparto de la media en cinco puntos con medio punto posible: el umbral es el
+ * del boceto (≥ 0,75 lleno, ≥ 0,25 medio). Una media de 2,5 da dos llenos, uno
+ * a medias y dos vacíos.
+ */
+export function qualityDots(avg: number | null): MeterDot[] {
+  if (avg === null) return [];
+  return Array.from({ length: 5 }, (_, index) => {
+    const fraction = avg - index;
+    if (fraction >= 0.75) return 'on';
+    if (fraction >= 0.25) return 'half';
+    return 'off';
+  });
+}
+
+export interface PracticeSummary {
+  dots: MeterDot[];
+  text: string;
+  /** Sin ensayos o sin dato: el texto va en itálica, sin medidor. */
+  empty: boolean;
+}
+
+/**
+ * `4.2 avg · 8 practices`, o `no sessions yet`. Sin dato de la vista
+ * (`practice_count` null) se dice lo mismo que sin ensayos: la rama del «no»
+ * del issue prohíbe estimar. Con ensayos pero ninguno puntuado no se dibuja
+ * medidor (sería un cero falso) y se dice cuántos fueron.
+ */
+export function practiceSummary(row: RepertoireRow): PracticeSummary {
+  const count = row.practice_count;
+  if (count === null || count <= 0) {
+    return { dots: [], text: 'no sessions yet', empty: true };
+  }
+  const practices = `${count} ${count === 1 ? 'practice' : 'practices'}`;
+  if (row.avg_quality === null) {
+    return { dots: [], text: practices, empty: true };
+  }
+  return {
+    dots: qualityDots(row.avg_quality),
+    text: `${row.avg_quality.toFixed(1)} avg · ${practices}`,
+    empty: false,
+  };
+}
+
+/**
+ * Orden dentro de una banda: nunca tocada primero; después, más días sin
+ * ensayar primero. Empate estable por título mostrado (colación sin
+ * diacríticos) y, en última instancia, por id.
+ */
+export function compareStaleness(left: RepertoireRow, right: RepertoireRow, now: number): number {
+  const leftDays = stalenessDays(left, now);
+  const rightDays = stalenessDays(right, now);
+  if (leftDays === null || rightDays === null) {
+    if (leftDays === rightDays) return tieBreak(left, right);
+    return leftDays === null ? -1 : 1;
+  }
+  if (leftDays !== rightDays) return rightDays - leftDays;
+  return tieBreak(left, right);
+}
+
+/** Una banda con sus filas ya ordenadas por staleness. */
+export interface BandGroup {
+  band: BandDefinition;
+  rows: RepertoireRow[];
+}
+
+/** Las cuatro bandas en orden de escalera, cada una ordenada por staleness. */
+export function groupIntoBands(rows: readonly RepertoireRow[], now: number): BandGroup[] {
+  return BANDS.map((band) => ({
+    band,
+    rows: rows
+      .filter((row) => row.status === band.status)
+      .sort((left, right) => compareStaleness(left, right, now)),
+  }));
+}
+
+/** Filtro de la home: por título mostrado, sin mayúsculas ni diacríticos. */
+export function matchesQuery(row: RepertoireRow, term: string): boolean {
+  const needle = collationKey(term.trim());
+  if (needle.length === 0) return true;
+  return collationKey(displayTitle(row)).includes(needle);
+}
+
+/**
+ * Filtra las bandas por el texto de la home. Con texto se ocultan las bandas sin
+ * coincidencias (una banda vacía al buscar es ruido); sin texto se devuelven las
+ * cuatro, vacías incluidas, porque la pantalla siempre enseña la escalera.
+ */
+export function filterBands(groups: readonly BandGroup[], term: string): BandGroup[] {
+  const needle = term.trim();
+  if (needle.length === 0) return [...groups];
+  return groups
+    .map((group) => ({ band: group.band, rows: group.rows.filter((row) => matchesQuery(row, needle)) }))
+    .filter((group) => group.rows.length > 0);
+}
+
+/** Tope de dos filas: depende de las columnas reales, no de un número fijo. */
+export function capForColumns(columns: number): number {
+  if (!Number.isFinite(columns) || columns < 1) return 0;
+  return Math.floor(columns) * 2;
+}
+
+/** Las filas que se pintan con un tope (o sin tope, con `Infinity`). */
+export function capRows<T>(rows: readonly T[], limit: number): T[] {
+  if (!Number.isFinite(limit)) return [...rows];
+  return rows.slice(0, Math.max(0, limit));
+}
+
+/**
+ * Tonalidad de la carta: null cuando no hay ninguna, para que la vista escriba
+ * `key not set` en vez de un guion. La tabla sigue usando `displayKey`.
+ */
+export function cardKey(row: RepertoireRow): string | null {
+  const key = (row.custom_key?.trim() || row.tune.key || '').trim();
+  return key.length > 0 ? key : null;
 }

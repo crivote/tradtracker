@@ -22,7 +22,7 @@ const mockedFetch = vi.mocked(fetchRepertoireRow);
 function makeRow(overrides: Record<string, any> = {}) {
   return {
     id: 'row-a',
-    status: 'aprendiendo',
+    status: 'learning',
     rating: 4,
     custom_title: null,
     custom_rhythm: null,

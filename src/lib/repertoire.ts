@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
-import type { RepertoireRow } from './repertoire-model';
-import { mapRepertoireRow } from './repertoire-model';
+import type { RepertoireRow, RepertoireStats } from './repertoire-model';
+import { mapRepertoireRow, mapStatsRow } from './repertoire-model';
 
 export * from './repertoire-model';
 
@@ -8,6 +8,7 @@ export * from './repertoire-model';
 const REPERTOIRE_SELECT = [
   'id',
   'status',
+  'shelved',
   'rating',
   'custom_title',
   'custom_rhythm',
@@ -31,14 +32,44 @@ const REPERTOIRE_SELECT = [
   'pr_tunes!inner(id,origin,origin_ref,name,rhythm,meter,key,abc)',
 ].join(',');
 
+/** Columnas de la vista de agregados (#29); una fila por fila de repertorio. */
+const STATS_SELECT = 'repertoire_id,practice_count,avg_quality,days_since_last_practice';
+
+/**
+ * Agregados de ensayo por fila de repertorio (issue #29). Van en una segunda
+ * consulta y no en un join embebido porque la vista no es un destino de join
+ * (no hay clave ajena de una tabla a una vista).
+ *
+ * Si la vista no existe o falla, se devuelve un mapa vacío y la home sigue
+ * funcionando: las cartas dicen `no sessions yet`, que es la rama del «no» del
+ * issue. Estimar aquí sería inventar el dato que falta.
+ */
+async function fetchStats(): Promise<Map<string, RepertoireStats>> {
+  const { data, error } = await supabase.from('pr_repertoire_stats').select(STATS_SELECT);
+  const stats = new Map<string, RepertoireStats>();
+  if (error) return stats;
+  for (const row of data ?? []) {
+    stats.set(row.repertoire_id, mapStatsRow(row));
+  }
+  return stats;
+}
+
+/**
+ * El repertorio entero, con sus agregados. Las dos consultas van en paralelo:
+ * la lista no espera a los agregados ni al revés.
+ */
 export async function fetchRepertoire(): Promise<RepertoireRow[]> {
-  const { data, error } = await supabase
-    .from('pr_repertoire')
-    .select(REPERTOIRE_SELECT)
-    .order('added_at', { ascending: false });
+  const [{ data, error }, stats] = await Promise.all([
+    supabase
+      .from('pr_repertoire')
+      .select(REPERTOIRE_SELECT)
+      .order('added_at', { ascending: false }),
+    fetchStats(),
+  ]);
 
   if (error) throw new Error(`Could not load your repertoire: ${error.message}`);
-  return (data ?? []).map(mapRepertoireRow);
+  const rows = (data ?? []) as unknown as Array<Record<string, any>>;
+  return rows.map((row) => mapRepertoireRow(row, stats.get(row.id) ?? null));
 }
 
 /**
@@ -47,14 +78,17 @@ export async function fetchRepertoire(): Promise<RepertoireRow[]> {
  * mismo caso para la vista: null, sin error.
  */
 export async function fetchRepertoireRow(id: string): Promise<RepertoireRow | null> {
-  const { data, error } = await supabase
-    .from('pr_repertoire')
-    .select(REPERTOIRE_SELECT)
-    .eq('id', id)
-    .maybeSingle();
+  const [rowResult, statsResult] = await Promise.all([
+    supabase.from('pr_repertoire').select(REPERTOIRE_SELECT).eq('id', id).maybeSingle(),
+    supabase.from('pr_repertoire_stats').select(STATS_SELECT).eq('repertoire_id', id).maybeSingle(),
+  ]);
 
+  const { data, error } = rowResult;
   if (error) throw new Error(`Could not load that tune: ${error.message}`);
-  return data ? mapRepertoireRow(data) : null;
+  if (!data) return null;
+
+  const stats = statsResult.error ? null : mapStatsRow(statsResult.data);
+  return mapRepertoireRow(data, stats);
 }
 
 /** Un tune tal y como lo entrega el catálogo SQLite. */
