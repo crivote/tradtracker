@@ -38,6 +38,7 @@ import { preloadCatalogue, searchCatalogue, getCatalogueStats } from '../lib/cat
 import { normalizeTitle } from '../lib/format';
 import { logPractice } from '../lib/practice';
 import TuneCard from '../components/TuneCard';
+import ImportFromSession from '../components/ImportFromSession';
 import './repertoire.css';
 
 /**
@@ -359,6 +360,9 @@ export default function Repertoire() {
   const [error, setError] = createSignal<string | null>(null);
   const [busyId, setBusyId] = createSignal<string | number | null>(null);
   const [showCatalogue, setShowCatalogue] = createSignal(false);
+  // El import de The Session (#32) se abre en el mismo sitio que el catálogo:
+  // un panel en línea, no un modal. Los dos pueden estar abiertos a la vez.
+  const [showImport, setShowImport] = createSignal(false);
   const [search, setSearch] = createSignal('');
 
   const [query, setQuery] = createSignal('');
@@ -626,6 +630,14 @@ export default function Repertoire() {
           <button type="button" class="add" onClick={() => setShowCatalogue((open) => !open)}>
             {showCatalogue() ? 'Close catalogue' : 'Add a tune'}
           </button>
+          <button
+            type="button"
+            class="add add--quiet"
+            aria-expanded={showImport()}
+            onClick={() => setShowImport((open) => !open)}
+          >
+            {showImport() ? 'Close import' : 'Import from The Session'}
+          </button>
         </div>
       </header>
 
@@ -633,6 +645,16 @@ export default function Repertoire() {
         <p class="notice notice-error" role="alert">
           {error()}
         </p>
+      </Show>
+
+      {/* Import del tunebook (#32): mismo sitio y misma forma que el catálogo,
+          porque es la otra puerta de entrada al repertorio. */}
+      <Show when={showImport()}>
+        <ImportFromSession
+          existingRefs={ownedRefs()}
+          onImported={() => void reload()}
+          onClose={() => setShowImport(false)}
+        />
       </Show>
 
       <Show when={showCatalogue()}>

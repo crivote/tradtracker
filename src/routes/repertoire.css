@@ -87,6 +87,18 @@
   filter: brightness(1.08);
   transform: translateY(-1px);
 }
+/*
+ * Variante secundaria de `.add`, para el import de The Session (#32): mismo
+ * cuerpo, mismo hover y misma tipografía, pero sin relleno de acento. Compite en
+ * la misma cabecera con «Add a tune» y no puede robarle el peso a la acción
+ * primaria; por eso hereda `.add` (la clase va junto a ella en el marcado) y
+ * solo cambia fondo, borde y color de texto.
+ */
+.repertoire-home .add--quiet {
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+}
 
 /* búsqueda: la herramienta que de verdad hace falta con 160 en la biblioteca */
 .repertoire-home .search {
@@ -820,6 +832,159 @@
 .repertoire-home .catalogue .cat-add:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+/*
+ * ── panel del import de The Session (#32): el hermano de `.catalogue` ──
+ *
+ * Es la misma superficie que el catálogo —mismo disparador en la cabecera, se
+ * abre en línea debajo, mismo papel— así que repite su caja, su etiqueta en
+ * versalitas, su campo blanco sobre papel y sus botones de píldora. Se copia en
+ * vez de compartir selector con `.catalogue` a propósito: lo del catálogo está
+ * medido y es contrato, y un retoque aquí no debe moverlo. Ni un color literal
+ * nuevo: todo sale de las variables de `.repertoire-home`.
+ */
+.repertoire-home .import {
+  max-width: 1260px;
+  margin: 0 auto 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.45);
+  padding: 16px;
+}
+.repertoire-home .import h2 {
+  font-family: var(--serif);
+  font-weight: 300;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.repertoire-home .import label {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 14px 0 6px;
+}
+.repertoire-home .import input[type="text"] {
+  width: 100%;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 10px;
+  outline: none;
+}
+.repertoire-home .import input[type="text"]:focus {
+  border-color: var(--accent);
+}
+.repertoire-home .import input[type="text"]::placeholder {
+  color: var(--faint);
+}
+.repertoire-home .import select {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 7px 10px;
+  outline: none;
+}
+.repertoire-home .import select:focus {
+  border-color: var(--accent);
+}
+/* Campo y acción en la misma línea; el campo cede, el botón no. */
+.repertoire-home .import .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.repertoire-home .import .row input {
+  flex: 1;
+  min-width: 0;
+}
+.repertoire-home .import .hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.repertoire-home .import .summary {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.repertoire-home .import .progress {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.repertoire-home .import .rung-def {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.repertoire-home .import .done {
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--accent);
+}
+.repertoire-home .import ul {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.repertoire-home .import li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.repertoire-home .import .member-name {
+  font-size: 13.5px;
+  color: var(--ink);
+}
+.repertoire-home .import .member-bio {
+  font-size: 11px;
+  color: var(--faint);
+}
+.repertoire-home .import .act,
+.repertoire-home .import .pick,
+.repertoire-home .import .close {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 13px;
+  cursor: pointer;
+}
+.repertoire-home .import .act:hover,
+.repertoire-home .import .pick:hover,
+.repertoire-home .import .close:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.repertoire-home .import .act:disabled,
+.repertoire-home .import .pick:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.repertoire-home .import .notice {
+  margin-top: 10px;
+}
+.repertoire-home .import .foot {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 
 /* ── tabla: la vista de siempre, sobre papel ──────────────────── */

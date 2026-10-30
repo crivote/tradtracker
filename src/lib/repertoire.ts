@@ -1,6 +1,14 @@
 import { supabase } from './supabase';
 import type { RepertoireRow, RepertoireStats, TuneStatus } from './repertoire-model';
 import { mapRepertoireRow, mapStatsRow } from './repertoire-model';
+import { lookupCatalogueMeters } from './catalogue-db';
+import {
+  repertoireRowsFor,
+  tuneRowsFor,
+  type RepertoireInsertRow,
+  type SessionTune,
+  type TuneInsertRow,
+} from './thesession-import';
 
 export * from './repertoire-model';
 
@@ -318,4 +326,191 @@ export async function saveShelved(repertoireId: string, shelved: boolean): Promi
 
   if (error) throw new Error(`Could not save the shelved flag: ${error.message}`);
   if (!data?.id) throw new Error('Could not save the shelved flag: that tune is not yours.');
+}
+
+/* ── import del tunebook de The Session (#32, corte 2) ─────────────── */
+
+/**
+ * Lo que devuelve un alta en lote. Los tres recuentos no son adorno: el panel
+ * enseña «K tunes added» con `added` y nombra aparte lo que ya estaba, porque
+ * una importación de 400 tunes se repite y el segundo viaje no crea nada.
+ */
+export interface SessionImportResult {
+  /** Filas nuevas en `pr_tunes` (compartida: puede no crear ninguna). */
+  createdTunes: number;
+  /** Filas nuevas en `pr_repertoire`. */
+  added: number;
+  /** Ya presentes en el repertorio (carrera con otra pestaña, 23505). */
+  alreadyPresent: number;
+  /** El peldaño con el que se dieron de alta. */
+  status: string;
+}
+
+/** Tanda de escritura: 100 filas por viaje, ni una petición por tune. */
+const IMPORT_BATCH = 100;
+
+function batches<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let start = 0; start < items.length; start += size) {
+    out.push(items.slice(start, start + size));
+  }
+  return out;
+}
+
+/**
+ * Alta en lote del tunebook (#32): resuelve o crea los `pr_tunes` que falten y
+ * cuelga de ellos las filas de repertorio, **por tandas de 100**.
+ *
+ * El orden y las trampas:
+ *   1. El `meter` sale del catálogo local. Si el catálogo no está cargado o la
+ *      consulta falla, se sigue con un mapa vacío: el compás queda `null` y el
+ *      tune entra igual — no se pierde una importación de 400 por un adorno.
+ *   2. `pr_tunes` es compartida: se pregunta qué `origin_ref` ya tienen uuid
+ *      antes de insertar (la columna es `text`, de ahí `String`).
+ *   3. Los que faltan se insertan de una tanda en una llamada; después se
+ *      releen los que sigan sin uuid, que es la carrera con otro usuario. Si la
+ *      tanda choca con un `23505` (alguien insertó una de las cien a la vez) se
+ *      reintenta fila a fila: un viaje por tune **solo** en ese caso, porque la
+ *      alternativa es perder las otras noventa y nueve.
+ *   4. Las filas de repertorio también van por tandas. Un `23505` en la tanda
+ *      significa «otra pestaña lo insertó a la vez»: se reintenta fila a fila
+ *      ignorando los duplicados, porque el resultado final es el mismo. Otro
+ *      código se lanza.
+ *   5. `user_id`, `status_changed_at` y `last_practiced_at` **no** se escriben:
+ *      los pone la base (default `auth.uid()` y trigger).
+ */
+export async function importSessionTunes(
+  tunes: SessionTune[],
+  status: string,
+  onProgress?: (done: number, total: number) => void
+): Promise<SessionImportResult> {
+  const total = tunes.length;
+  let added = 0;
+  let alreadyPresent = 0;
+  let createdTunes = 0;
+  let done = 0;
+
+  if (total === 0) return { createdTunes, added, alreadyPresent, status };
+
+  // 1. Compás del catálogo local; sin catálogo, `meter: null`.
+  let meters = new Map<number, string | null>();
+  try {
+    meters = await lookupCatalogueMeters(tunes.map((tune) => tune.tuneId));
+  } catch {
+    /* el catálogo es un adorno del alta: no aborta la importación */
+  }
+
+  // 2. Qué `origin_ref` ya tienen uuid en `pr_tunes`.
+  const tuneIdByRef = new Map<string, string>();
+  const collect = (rows: Array<{ id: string; origin_ref: string | null }>) => {
+    for (const row of rows) {
+      if (row.origin_ref) tuneIdByRef.set(String(row.origin_ref), row.id);
+    }
+  };
+
+  const lookupRefs = async (refs: string[]) => {
+    for (const batch of batches(refs, IMPORT_BATCH)) {
+      const { data, error } = await supabase
+        .from('pr_tunes')
+        .select('id,origin_ref')
+        .eq('origin', 'thesession')
+        .in('origin_ref', batch);
+
+      if (error) throw new Error(`Could not look up the tunes: ${error.message}`);
+      collect((data ?? []) as Array<{ id: string; origin_ref: string | null }>);
+    }
+  };
+
+  await lookupRefs(tunes.map((tune) => String(tune.tuneId)));
+
+  // 3. Alta de los `pr_tunes` que falten.
+  const missing = tunes.filter((tune) => !tuneIdByRef.has(String(tune.tuneId)));
+  if (missing.length > 0) {
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
+      throw new Error('Your session expired — sign in again to add tunes.');
+    }
+    const createdBy = userData.user.id;
+
+    const insertOne = async (row: TuneInsertRow & { created_by: string }): Promise<boolean> => {
+      const { error } = await supabase.from('pr_tunes').insert(row);
+      if (!error) return true;
+      // Otro usuario la creó entre la lectura y la escritura: no es un fallo.
+      if (error.code === '23505') return false;
+      throw new Error(`Could not save the tunes: ${error.message}`);
+    };
+
+    for (const batch of batches(missing, IMPORT_BATCH)) {
+      const rows = tuneRowsFor(batch, meters).map((row) => ({ ...row, created_by: createdBy }));
+
+      const { data, error } = await supabase
+        .from('pr_tunes')
+        .insert(rows)
+        .select('id,origin_ref');
+
+      if (error) {
+        if (error.code !== '23505') {
+          throw new Error(`Could not save the tunes: ${error.message}`);
+        }
+        // Una de las cien chocó: se reintenta fila a fila y se ignoran los
+        // duplicados; los uuid se recogen en la relectura de abajo.
+        for (const row of rows) {
+          createdTunes += (await insertOne(row)) ? 1 : 0;
+        }
+        continue;
+      }
+
+      const inserted = (data ?? []) as Array<{ id: string; origin_ref: string | null }>;
+      collect(inserted);
+      createdTunes += inserted.length;
+    }
+
+    // 4. Relectura de los que sigan sin uuid (carrera con otro usuario).
+    const stillMissing = tunes
+      .filter((tune) => !tuneIdByRef.has(String(tune.tuneId)))
+      .map((tune) => String(tune.tuneId));
+    if (stillMissing.length > 0) await lookupRefs(stillMissing);
+
+    const unresolved = tunes.filter((tune) => !tuneIdByRef.has(String(tune.tuneId)));
+    if (unresolved.length > 0) {
+      // Sin uuid no hay clave ajena que colgar: decirlo en vez de contar de más.
+      throw new Error(
+        `Could not resolve ${unresolved.length} of the tunes in the shared catalogue — nothing was added to your repertoire.`
+      );
+    }
+  }
+
+  // 5. Filas de repertorio, tantas como tunes tengan uuid.
+  const rows = repertoireRowsFor(tunes, tuneIdByRef, status);
+  const insertRow = async (row: RepertoireInsertRow): Promise<void> => {
+    const { error } = await supabase.from('pr_repertoire').insert(row);
+    if (!error) {
+      added += 1;
+      return;
+    }
+    if (error.code === '23505') {
+      alreadyPresent += 1;
+      return;
+    }
+    throw new Error(`Could not add the tunes: ${error.message}`);
+  };
+
+  for (const batch of batches(rows, IMPORT_BATCH)) {
+    const { error } = await supabase.from('pr_repertoire').insert(batch);
+
+    if (!error) {
+      added += batch.length;
+    } else if (error.code === '23505') {
+      // Otra pestaña insertó alguna a la vez: fila a fila, los duplicados no
+      // son un error. El resultado final es el mismo.
+      for (const row of batch) await insertRow(row);
+    } else {
+      throw new Error(`Could not add the tunes: ${error.message}`);
+    }
+
+    done += batch.length;
+    onProgress?.(Math.min(done, total), total);
+  }
+
+  return { createdTunes, added, alreadyPresent, status };
 }
