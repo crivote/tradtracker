@@ -1,16 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BANDS,
+  bandFor,
+  capForColumns,
+  capRows,
+  cardKey,
   collationKey,
+  compareStaleness,
   displayKey,
   displayRhythm,
   displayTitle,
+  filterBands,
+  groupIntoBands,
   mapRepertoireRow,
+  mapStatsRow,
+  matchesQuery,
   overrideFields,
   parseViewMode,
   placeholderInitials,
   practiceRecency,
+  practiceSummary,
+  qualityDots,
   sortRepertoire,
+  stalenessColor,
+  stalenessDays,
+  stalenessIntensity,
+  stalenessTag,
+  stalenessTitle,
+  statusCounts,
   type RepertoireRow,
+  type RepertoireStats,
+  type TuneStatus,
 } from './repertoire-model';
 
 const tune = {
@@ -86,14 +106,21 @@ function makeRow(input: {
   rating?: number | null;
   added_at?: string;
   last_practiced_at?: string | null;
+  status?: TuneStatus;
+  shelved?: boolean;
+  key?: string | null;
+  stats?: RepertoireStats;
 }): RepertoireRow {
-  const { name, ...overrides } = input;
-  return mapRepertoireRow({
-    ...baseRow,
-    added_at: '2026-06-01T12:00:00Z',
-    ...overrides,
-    pr_tunes: { ...tune, name: name ?? tune.name },
-  });
+  const { name, key, stats, ...overrides } = input;
+  return mapRepertoireRow(
+    {
+      ...baseRow,
+      added_at: '2026-06-01T12:00:00Z',
+      ...overrides,
+      pr_tunes: { ...tune, name: name ?? tune.name, key: key === undefined ? tune.key : key },
+    },
+    stats ?? null
+  );
 }
 
 describe('collationKey', () => {
@@ -295,5 +322,353 @@ describe('overrideFields', () => {
   it('marks only the fields that were overridden', () => {
     const row: RepertoireRow = { ...makeRow({ id: 'key-only' }), custom_key: 'D' };
     expect(overrideFields(row)).toEqual({ title: false, rhythm: false, key: true });
+  });
+});
+
+// --- Home del repertorio (#29): peldaños, gradiente, medidor y topes --------
+
+/** Instante ISO de hace `days` días respecto a NOW. */
+function daysAgo(days: number): string {
+  return new Date(NOW - days * 86_400_000).toISOString();
+}
+
+describe('mapRepertoireRow con los agregados de la vista (#29)', () => {
+  it('acepta la fila de la vista y convierte el numeric que llega como cadena', () => {
+    // PostgREST entrega `numeric` como cadena: 4,25 llega «4.25».
+    const stats = mapStatsRow({
+      practice_count: 8,
+      avg_quality: '4.25',
+      days_since_last_practice: 12,
+    });
+    expect(stats).toEqual({ practice_count: 8, avg_quality: 4.25, days_since_last_practice: 12 });
+
+    const row = mapRepertoireRow({ ...baseRow, pr_tunes: tune }, stats);
+    expect(row.practice_count).toBe(8);
+    expect(row.avg_quality).toBe(4.25);
+    expect(row.days_since_last_practice).toBe(12);
+  });
+
+  it('sin vista deja los tres agregados en null: no hay dato, no hay cero', () => {
+    const row = mapRepertoireRow({ ...baseRow, pr_tunes: tune });
+    expect(row.practice_count).toBeNull();
+    expect(row.avg_quality).toBeNull();
+    expect(row.days_since_last_practice).toBeNull();
+  });
+
+  it('conserva el cero de una fila sin ensayos y el null de una sin valorar', () => {
+    const row = mapRepertoireRow(
+      { ...baseRow, pr_tunes: tune },
+      { practice_count: 0, avg_quality: null, days_since_last_practice: null }
+    );
+    expect(row.practice_count).toBe(0);
+    expect(row.avg_quality).toBeNull();
+  });
+
+  it('lee la bandera de aparcada y los peldaños nuevos', () => {
+    const row = mapRepertoireRow({
+      ...baseRow,
+      status: 'solo_ready',
+      shelved: true,
+      pr_tunes: tune,
+    });
+    expect(row.status).toBe('solo_ready');
+    expect(row.shelved).toBe(true);
+    expect(mapRepertoireRow({ ...baseRow, pr_tunes: tune }).shelved).toBe(false);
+  });
+
+  it('mapStatsRow tolera basura sin romper la pantalla', () => {
+    expect(mapStatsRow(undefined)).toEqual({
+      practice_count: null,
+      avg_quality: null,
+      days_since_last_practice: null,
+    });
+    expect(mapStatsRow({ practice_count: 'no', avg_quality: '', days_since_last_practice: null })).toEqual({
+      practice_count: null,
+      avg_quality: null,
+      days_since_last_practice: null,
+    });
+  });
+});
+
+describe('bandas de la escalera (#29)', () => {
+  it('son cuatro, en orden de capacidad, con su definición, peldaño y densidad', () => {
+    expect(BANDS.map((band) => band.status)).toEqual([
+      'to_learn',
+      'learning',
+      'playing_along',
+      'solo_ready',
+    ]);
+    expect(BANDS.map((band) => band.label)).toEqual([
+      'To learn',
+      'Learning',
+      'Playing along',
+      'Solo-ready',
+    ]);
+    expect(BANDS.map((band) => band.rung)).toEqual([1, 2, 3, 4]);
+    // Las dos de trabajo piden carta; las dos de biblioteca, miniatura.
+    expect(BANDS.map((band) => band.density)).toEqual(['card', 'card', 'tile', 'tile']);
+    for (const band of BANDS) {
+      expect(band.definition.length).toBeGreaterThan(10);
+    }
+    expect(BANDS[0].definition).toBe('Want to learn it. Not started.');
+    expect(BANDS[3].definition).toBe("If someone asks for a tune, this is one you’d give them.");
+  });
+
+  it('bandFor devuelve la banda del estado y no rompe con un valor desconocido', () => {
+    expect(bandFor('playing_along').rung).toBe(3);
+    expect(bandFor('nueva' as TuneStatus).status).toBe('to_learn');
+  });
+
+  it('statusCounts cuenta por peldaño y deja las cuatro claves siempre', () => {
+    const rows = [
+      makeRow({ id: 'a', status: 'to_learn' }),
+      makeRow({ id: 'b', status: 'learning' }),
+      makeRow({ id: 'c', status: 'learning' }),
+      makeRow({ id: 'd', status: 'solo_ready' }),
+    ];
+    expect(statusCounts(rows)).toEqual({
+      to_learn: 1,
+      learning: 2,
+      playing_along: 0,
+      solo_ready: 1,
+    });
+    expect(statusCounts([])).toEqual({
+      to_learn: 0,
+      learning: 0,
+      playing_along: 0,
+      solo_ready: 0,
+    });
+  });
+});
+
+describe('staleness: días, etiqueta y gradiente (#29)', () => {
+  it('sale de last_practiced_at con el instante inyectado', () => {
+    expect(stalenessDays(makeRow({ id: 'never' }), NOW)).toBeNull();
+    expect(stalenessDays(makeRow({ id: 'x', last_practiced_at: daysAgo(41) }), NOW)).toBe(41);
+  });
+
+  it('usa los días de la vista solo si falta la fecha en la fila', () => {
+    const row = makeRow({
+      id: 'x',
+      stats: { practice_count: 1, avg_quality: 4, days_since_last_practice: 9 },
+    });
+    expect(stalenessDays(row, NOW)).toBe(9);
+  });
+
+  it('la etiqueta es never / today / 1 day / N days', () => {
+    expect(stalenessTag(null)).toEqual({ days: null, value: 'never', unit: null });
+    expect(stalenessTag(0)).toEqual({ days: 0, value: 'today', unit: null });
+    expect(stalenessTag(1)).toEqual({ days: 1, value: '1', unit: 'day' });
+    expect(stalenessTag(41)).toEqual({ days: 41, value: '41', unit: 'days' });
+  });
+
+  it('el title del tag dice lo mismo con palabras', () => {
+    expect(stalenessTitle(stalenessTag(null))).toBe('Never practiced');
+    expect(stalenessTitle(stalenessTag(0))).toBe('Practiced today');
+    expect(stalenessTitle(stalenessTag(1))).toBe('Last practiced 1 day ago');
+    expect(stalenessTitle(stalenessTag(41))).toBe('Last practiced 41 days ago');
+  });
+
+  it('la escala es raíz sobre 90 días, no lineal', () => {
+    expect(stalenessIntensity(0)).toBe(0);
+    expect(stalenessIntensity(3)).toBeCloseTo(Math.sqrt(3 / 90), 10);
+    expect(stalenessIntensity(90)).toBe(1);
+    // Más allá de 90 no aporta: satura.
+    expect(stalenessIntensity(400)).toBe(1);
+    expect(stalenessIntensity(null)).toBe(1);
+  });
+
+  it('el color del tag a 3 días es rgb(235,214,197) y a 90 es rgb(186,95,62)', () => {
+    expect(stalenessColor(3).background).toBe('rgb(235,214,197)');
+    expect(stalenessColor(90).background).toBe('rgb(186,95,62)');
+    // Los extremos: papel recién tocada, teja a los 90 y en «never».
+    expect(stalenessColor(0).background).toBe('rgb(246,240,227)');
+    expect(stalenessColor(null).background).toBe('rgb(186,95,62)');
+    expect(stalenessColor(400).background).toBe('rgb(186,95,62)');
+  });
+
+  it('el texto pasa a blanco solo cuando el fondo ya es oscuro', () => {
+    expect(stalenessColor(3).foreground).toBe('#3c3428');
+    expect(stalenessColor(90).foreground).toBe('#ffffff');
+    expect(stalenessColor(null).foreground).toBe('#ffffff');
+  });
+});
+
+describe('medidor de calidad (#29)', () => {
+  it('dibuja medio punto: 2,5 son dos llenos, uno a medias y dos vacíos', () => {
+    expect(qualityDots(2.5)).toEqual(['on', 'on', 'half', 'off', 'off']);
+  });
+
+  it('redondea a los umbrales del boceto (0,75 y 0,25)', () => {
+    expect(qualityDots(5)).toEqual(['on', 'on', 'on', 'on', 'on']);
+    expect(qualityDots(4.2)).toEqual(['on', 'on', 'on', 'on', 'off']);
+    expect(qualityDots(1)).toEqual(['on', 'off', 'off', 'off', 'off']);
+    expect(qualityDots(0.5)).toEqual(['half', 'off', 'off', 'off', 'off']);
+    expect(qualityDots(null)).toEqual([]);
+  });
+
+  it('«4.2 avg · 8 practices», con el singular bien puesto', () => {
+    expect(
+      practiceSummary(
+        makeRow({ id: 'x', stats: { practice_count: 8, avg_quality: 4.2, days_since_last_practice: 2 } })
+      )
+    ).toEqual({ dots: qualityDots(4.2), text: '4.2 avg · 8 practices', empty: false });
+
+    expect(
+      practiceSummary(
+        makeRow({ id: 'y', stats: { practice_count: 1, avg_quality: 5, days_since_last_practice: 2 } })
+      ).text
+    ).toBe('5.0 avg · 1 practice');
+  });
+
+  it('sin ensayos dice «no sessions yet» y no pinta medidor', () => {
+    const none = practiceSummary(
+      makeRow({ id: 'x', stats: { practice_count: 0, avg_quality: null, days_since_last_practice: null } })
+    );
+    expect(none).toEqual({ dots: [], text: 'no sessions yet', empty: true });
+  });
+
+  it('sin vista de agregados dice lo mismo que sin ensayos: no se estima', () => {
+    expect(practiceSummary(makeRow({ id: 'x' })).text).toBe('no sessions yet');
+  });
+
+  it('con ensayos sin puntuar cuenta los ensayos y no dibuja cinco aros vacíos', () => {
+    const unrated = practiceSummary(
+      makeRow({ id: 'x', stats: { practice_count: 2, avg_quality: null, days_since_last_practice: 1 } })
+    );
+    expect(unrated.dots).toEqual([]);
+    expect(unrated.text).toBe('2 practices');
+    expect(unrated.empty).toBe(true);
+  });
+});
+
+describe('groupIntoBands y orden por staleness (#29)', () => {
+  it('devuelve las cuatro bandas en orden de escalera, aunque estén vacías', () => {
+    const groups = groupIntoBands([], NOW);
+    expect(groups.map((group) => group.band.status)).toEqual([
+      'to_learn',
+      'learning',
+      'playing_along',
+      'solo_ready',
+    ]);
+    expect(groups.every((group) => group.rows.length === 0)).toBe(true);
+  });
+
+  it('dentro de cada banda, nunca tocada primero y después días descendentes', () => {
+    const rows = [
+      makeRow({ id: 'recent', name: 'Recent', status: 'learning', last_practiced_at: daysAgo(2) }),
+      makeRow({ id: 'never-b', name: 'Never B', status: 'learning' }),
+      makeRow({ id: 'old', name: 'Old', status: 'learning', last_practiced_at: daysAgo(90) }),
+      makeRow({ id: 'never-a', name: 'Never A', status: 'learning' }),
+      makeRow({ id: 'mid', name: 'Mid', status: 'learning', last_practiced_at: daysAgo(41) }),
+    ];
+    const [toLearn, learning] = groupIntoBands(rows, NOW);
+    expect(toLearn.rows).toEqual([]);
+    expect(learning.rows.map((row) => row.id)).toEqual([
+      'never-a',
+      'never-b',
+      'old',
+      'mid',
+      'recent',
+    ]);
+  });
+
+  it('el empate de staleness se rompe por título sin diacríticos (collationKey)', () => {
+    const rows = [
+      makeRow({ id: 'z', name: 'Zed', status: 'to_learn', last_practiced_at: daysAgo(10) }),
+      makeRow({ id: 'a', name: 'Ángel', status: 'to_learn', last_practiced_at: daysAgo(10) }),
+      makeRow({ id: 'n', name: 'nube', status: 'to_learn', last_practiced_at: daysAgo(10) }),
+    ];
+    expect(groupIntoBands(rows, NOW)[0].rows.map((row) => row.id)).toEqual(['a', 'n', 'z']);
+  });
+
+  it('no muta las filas de entrada y no se cuela ningún estado ajeno', () => {
+    const rows = Object.freeze([
+      makeRow({ id: 'a', status: 'to_learn' }),
+      makeRow({ id: 'b', status: 'nueva' as TuneStatus }),
+    ]);
+    const groups = groupIntoBands(rows, NOW);
+    expect(groups.reduce((total, group) => total + group.rows.length, 0)).toBe(1);
+    expect([...rows].map((row) => row.id)).toEqual(['a', 'b']);
+  });
+
+  it('compareStaleness es un comparador total: mismo resultado en cualquier orden', () => {
+    const a = makeRow({ id: 'a', name: 'Alpha', last_practiced_at: daysAgo(5) });
+    const b = makeRow({ id: 'b', name: 'Beta', last_practiced_at: daysAgo(5) });
+    expect(compareStaleness(a, b, NOW)).toBeLessThan(0);
+    expect(compareStaleness(b, a, NOW)).toBeGreaterThan(0);
+    expect(compareStaleness(a, a, NOW)).toBe(0);
+  });
+});
+
+describe('búsqueda de la home y topes (#29)', () => {
+  const rows = [
+    makeRow({ id: 'a', name: 'Banshee, The', status: 'to_learn' }),
+    makeRow({ id: 'b', name: 'Ángel', status: 'learning' }),
+    makeRow({ id: 'c', name: 'Cooley’s', status: 'playing_along' }),
+  ];
+  const groups = groupIntoBands(rows, NOW);
+
+  it('sin texto devuelve las cuatro bandas, vacías incluidas', () => {
+    expect(filterBands(groups, '').length).toBe(4);
+    expect(filterBands(groups, '   ').length).toBe(4);
+  });
+
+  it('con texto oculta las bandas sin coincidencias', () => {
+    const filtered = filterBands(groups, 'banshee');
+    expect(filtered.map((group) => group.band.status)).toEqual(['to_learn']);
+    expect(filtered[0].rows.map((row) => row.id)).toEqual(['a']);
+  });
+
+  it('busca por título mostrado, sin mayúsculas ni diacríticos', () => {
+    expect(filterBands(groups, 'ANGEL')[0].band.status).toBe('learning');
+    // El título se muestra normalizado («Banshee, The» → «The Banshee»).
+    expect(matchesQuery(rows[0], 'the banshee')).toBe(true);
+    expect(matchesQuery(rows[0], 'banshee the')).toBe(false);
+    expect(matchesQuery(rows[0], 'banshee')).toBe(true);
+    expect(matchesQuery(rows[0], '')).toBe(true);
+  });
+
+  it('el título personal manda en la búsqueda, igual que en la carta', () => {
+    const custom = makeRow({ id: 'x', name: 'Zzz', custom_title: 'Silver Spear' });
+    expect(matchesQuery(custom, 'silver')).toBe(true);
+    expect(matchesQuery(custom, 'zzz')).toBe(false);
+  });
+
+  it('no deja bandas vacías cuando el texto no está en ninguna', () => {
+    expect(filterBands(groups, 'no existe')).toEqual([]);
+  });
+
+  it('el tope son dos filas sobre las columnas reales', () => {
+    expect(capForColumns(4)).toBe(8);
+    expect(capForColumns(3)).toBe(6);
+    expect(capForColumns(6)).toBe(12);
+    expect(capForColumns(1)).toBe(2);
+    expect(capForColumns(0)).toBe(0);
+    expect(capForColumns(-2)).toBe(0);
+    expect(capForColumns(Number.NaN)).toBe(0);
+  });
+
+  it('capRows corta sin mutar y con Infinity no corta nada', () => {
+    const list = [1, 2, 3, 4, 5];
+    expect(capRows(list, 2)).toEqual([1, 2]);
+    expect(capRows(list, 0)).toEqual([]);
+    expect(capRows(list, Number.POSITIVE_INFINITY)).toEqual(list);
+    expect(list).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+describe('cardKey', () => {
+  it('devuelve null cuando no hay tonalidad, para escribir «key not set»', () => {
+    expect(cardKey(makeRow({ id: 'x', key: null }))).toBeNull();
+    expect(cardKey(makeRow({ id: 'y', key: '   ' }))).toBeNull();
+    expect(cardKey(makeRow({ id: 'z', key: 'D' }))).toBe('D');
+  });
+
+  it('prefiere el override personal', () => {
+    const row: RepertoireRow = { ...makeRow({ id: 'x', key: 'D' }), custom_key: 'G' };
+    expect(cardKey(row)).toBe('G');
+    // La tabla sigue mostrando su guion de siempre (no se toca esa vista).
+    expect(displayKey(makeRow({ id: 'none', key: null }))).toBe('—');
   });
 });
