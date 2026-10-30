@@ -270,7 +270,13 @@ export const STATUS_STYLES: Record<TuneStatus, string> = {
   solo_ready: 'bg-emerald-900/60 text-emerald-300 border-emerald-700',
 };
 
-/** Cuántas tunes hay en cada peldaño; las cuatro claves siempre están. */
+/**
+ * Cuántas tunes hay en cada peldaño; las cuatro claves siempre están.
+ *
+ * Las aparcadas **no** cuentan: aparcar no cambia el peldaño, así que contarlas
+ * aquí daría una cabecera que no cuadra con las bandas, que tampoco las pintan.
+ * Su recuento vive en la sección «Shelved» del final de la home.
+ */
 export function statusCounts(rows: readonly RepertoireRow[]): Record<TuneStatus, number> {
   const counts: Record<TuneStatus, number> = {
     to_learn: 0,
@@ -279,6 +285,7 @@ export function statusCounts(rows: readonly RepertoireRow[]): Record<TuneStatus,
     solo_ready: 0,
   };
   for (const row of rows) {
+    if (row.shelved) continue;
     if (row.status in counts) counts[row.status] += 1;
   }
   return counts;
@@ -610,12 +617,19 @@ export interface BandGroup {
   rows: RepertoireRow[];
 }
 
-/** Las cuatro bandas en orden de escalera, cada una ordenada por staleness. */
+/**
+ * Las cuatro bandas en orden de escalera, cada una ordenada por staleness.
+ *
+ * Las aparcadas quedan fuera de las cuatro bandas: una tune en el cajón no está
+ * en rotación y encabezar «To learn» por no haberla tocado nunca es justo el
+ * defecto que corrige #11. Conservan su peldaño y se pintan en su propia
+ * sección al final de la home (`visibleShelved`).
+ */
 export function groupIntoBands(rows: readonly RepertoireRow[], now: number): BandGroup[] {
   return BANDS.map((band) => ({
     band,
     rows: rows
-      .filter((row) => row.status === band.status)
+      .filter((row) => !row.shelved && row.status === band.status)
       .sort((left, right) => compareStaleness(left, right, now)),
   }));
 }
@@ -638,6 +652,25 @@ export function filterBands(groups: readonly BandGroup[], term: string): BandGro
   return groups
     .map((group) => ({ band: group.band, rows: group.rows.filter((row) => matchesQuery(row, needle)) }))
     .filter((group) => group.rows.length > 0);
+}
+
+/**
+ * Las aparcadas, para el cajón del final de la home (#11). El orden es el mismo
+ * de dentro de las bandas —nunca tocada primero, después las más abandonadas—
+ * y el buscador de la home también manda aquí: con texto solo vuelven las que
+ * casan, y sin coincidencias la lista va vacía y la sección no se pinta.
+ *
+ * Aparcar no cambia el peldaño, así que la fila conserva el suyo y la sección
+ * no agrupa: es un cajón, no una quinta banda.
+ */
+export function visibleShelved(
+  rows: readonly RepertoireRow[],
+  term: string,
+  now: number
+): RepertoireRow[] {
+  return rows
+    .filter((row) => row.shelved && matchesQuery(row, term))
+    .sort((left, right) => compareStaleness(left, right, now));
 }
 
 /** Tope de dos filas: depende de las columnas reales, no de un número fijo. */

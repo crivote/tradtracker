@@ -28,6 +28,7 @@ import {
   stalenessTag,
   stalenessTitle,
   statusCounts,
+  visibleShelved,
   type RepertoireRow,
   type RepertoireStats,
   type TuneStatus,
@@ -655,6 +656,96 @@ describe('búsqueda de la home y topes (#29)', () => {
     expect(capRows(list, 0)).toEqual([]);
     expect(capRows(list, Number.POSITIVE_INFINITY)).toEqual(list);
     expect(list).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+describe('aparcadas (#11): fuera de las bandas y del recuento', () => {
+  const rows = [
+    makeRow({ id: 'work', name: 'Working', status: 'learning' }),
+    makeRow({ id: 'shelf', name: 'Shelved One', status: 'learning', shelved: true }),
+    makeRow({ id: 'shelf-never', name: 'Shelved Never', status: 'to_learn', shelved: true }),
+  ];
+
+  it('groupIntoBands deja fuera las aparcadas aunque su peldaño sea el de la banda', () => {
+    const groups = groupIntoBands(rows, NOW);
+    expect(groups.map((group) => group.rows.map((row) => row.id))).toEqual([
+      [],
+      ['work'],
+      [],
+      [],
+    ]);
+  });
+
+  it('con todas aparcadas las cuatro bandas quedan vacías', () => {
+    const allShelved = [
+      makeRow({ id: 'a', status: 'to_learn', shelved: true }),
+      makeRow({ id: 'b', status: 'solo_ready', shelved: true }),
+    ];
+    const groups = groupIntoBands(allShelved, NOW);
+    expect(groups.every((group) => group.rows.length === 0)).toBe(true);
+    // Siguen siendo cuatro: la escalera se pinta aunque no haya nada en ella.
+    expect(groups.length).toBe(4);
+  });
+
+  it('statusCounts no las cuenta, para que la cabecera cuadre con las bandas', () => {
+    expect(statusCounts(rows)).toEqual({
+      to_learn: 0,
+      learning: 1,
+      playing_along: 0,
+      solo_ready: 0,
+    });
+    // Sin aparcadas el recuento es el de siempre.
+    expect(statusCounts([makeRow({ id: 'x', status: 'solo_ready' })])).toEqual({
+      to_learn: 0,
+      learning: 0,
+      playing_along: 0,
+      solo_ready: 1,
+    });
+  });
+});
+
+describe('visibleShelved: el cajón del final (#11)', () => {
+  const shelved = [
+    makeRow({ id: 'old', name: 'Old Reel', status: 'playing_along', shelved: true, last_practiced_at: daysAgo(80) }),
+    makeRow({ id: 'never', name: 'Never Jig', status: 'learning', shelved: true }),
+    makeRow({ id: 'recent', name: 'Recent Slide', status: 'solo_ready', shelved: true, last_practiced_at: daysAgo(3) }),
+  ];
+  const rows = [...shelved, makeRow({ id: 'in-rotation', name: 'In Rotation', status: 'learning' })];
+
+  it('devuelve solo las aparcadas, nunca tocada primero y después las más abandonadas', () => {
+    expect(visibleShelved(rows, '', NOW).map((row) => row.id)).toEqual(['never', 'old', 'recent']);
+  });
+
+  it('conserva el peldaño de cada aparcada: el cajón no agrupa', () => {
+    expect(visibleShelved(rows, '', NOW).map((row) => row.status)).toEqual([
+      'learning',
+      'playing_along',
+      'solo_ready',
+    ]);
+  });
+
+  it('respeta el buscador de la home, igual que las bandas', () => {
+    expect(visibleShelved(rows, 'slide', NOW).map((row) => row.id)).toEqual(['recent']);
+    // Sin distinguir mayúsculas ni diacríticos.
+    expect(visibleShelved(rows, 'JIG', NOW).map((row) => row.id)).toEqual(['never']);
+  });
+
+  it('sin coincidencias devuelve vacío: la sección no se pinta', () => {
+    expect(visibleShelved(rows, 'no existe', NOW)).toEqual([]);
+  });
+
+  it('sin aparcadas devuelve vacío y no muta la entrada', () => {
+    const inRotation = [makeRow({ id: 'a', status: 'to_learn' }), makeRow({ id: 'b', status: 'solo_ready' })];
+    const copy = [...inRotation];
+    expect(visibleShelved(inRotation, '', NOW)).toEqual([]);
+    expect(inRotation).toEqual(copy);
+  });
+
+  it('una aparcada sin ensayos encabeza el cajón y no la banda', () => {
+    const never = makeRow({ id: 'never', status: 'to_learn', shelved: true });
+    const groups = groupIntoBands([never], NOW);
+    expect(groups[0].rows).toEqual([]);
+    expect(visibleShelved([never], '', NOW).map((row) => row.id)).toEqual(['never']);
   });
 });
 

@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { RepertoireRow, RepertoireStats } from './repertoire-model';
+import type { RepertoireRow, RepertoireStats, TuneStatus } from './repertoire-model';
 import { mapRepertoireRow, mapStatsRow } from './repertoire-model';
 
 export * from './repertoire-model';
@@ -278,4 +278,44 @@ export async function clearImageChoice(repertoireId: string): Promise<void> {
 
   if (error) throw new Error(`Could not clear the background: ${error.message}`);
   if (!data?.id) throw new Error('Could not clear the background: that tune is not yours.');
+}
+
+/**
+ * Cambia el peldaño de capacidad (#11). Se envía **solo** `status`: el CHECK de
+ * la migración 006 valida los cuatro valores y el trigger
+ * `pr_repertoire_touch_trg` mantiene `status_changed_at`. Escribir esa columna
+ * desde el navegador sería fechar el cambio con el reloj del cliente.
+ *
+ * Mismo patrón que `saveImageChoice`: se actualiza por id de fila y se pide el
+ * id de vuelta, porque a una fila ajena la filtra la RLS y el `update` no da
+ * error, solo deja de afectar filas —un no-op silencioso que el `select` sí
+ * convierte en error visible—.
+ */
+export async function saveStatus(repertoireId: string, status: TuneStatus): Promise<void> {
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .update({ status })
+    .eq('id', repertoireId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not save the level: ${error.message}`);
+  if (!data?.id) throw new Error('Could not save the level: that tune is not yours.');
+}
+
+/**
+ * Marca o desmarca la aparcada (#11). El peldaño no se toca: aparcar es una
+ * bandera transversal y una tune aparcada conserva el suyo. Nunca se envía
+ * `user_id`; el dueño lo decide la base.
+ */
+export async function saveShelved(repertoireId: string, shelved: boolean): Promise<void> {
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .update({ shelved })
+    .eq('id', repertoireId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not save the shelved flag: ${error.message}`);
+  if (!data?.id) throw new Error('Could not save the shelved flag: that tune is not yours.');
 }
