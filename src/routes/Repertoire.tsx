@@ -20,6 +20,7 @@ import {
   sortRepertoire,
   statusCounts,
   VIEW_MODE_KEY,
+  visibleShelved,
   type BandGroup,
   type RepertoireRow,
   type SortKey,
@@ -183,7 +184,25 @@ function BandView(props: {
             {(rung) => <i classList={{ on: rung <= props.group.band.rung }} />}
           </For>
         </span>
-        <h2 id={`band-${props.group.band.status}`}>{props.group.band.label}</h2>
+        {/*
+          Atajo al filtro por peldaño (#11): el filtro ya existe por construcción
+          (las bandas son los peldaños) y esto solo lo alcanza con el teclado y
+          con un clic. Una banda ya aislada no vuelve a ofrecer el atajo.
+        */}
+        <h2 id={`band-${props.group.band.status}`}>
+          <Show
+            when={!props.expanded}
+            fallback={props.group.band.label}
+          >
+            <button
+              type="button"
+              aria-label={`Show only ${props.group.band.label}`}
+              onClick={props.onShowAll}
+            >
+              {props.group.band.label}
+            </button>
+          </Show>
+        </h2>
         <span class="def">{props.group.band.definition}</span>
         <span class="count">{tuneCountLabel(total())}</span>
       </div>
@@ -220,6 +239,49 @@ function BandView(props: {
             Back to all
           </button>
         </Show>
+      </Show>
+    </section>
+  );
+}
+
+/**
+ * El cajón de las aparcadas (#11), al final de la home.
+ *
+ * No es una quinta banda: no agrupa, no tiene tope y no carga al scroll. Es un
+ * cajón que se abre cuando se busca algo concreto, y por eso arranca cerrado y
+ * recuerda su estado solo en esta visita (un `signal` local, sin almacenamiento:
+ * la pantalla se abre en las cuatro bandas, que es lo que se mira a diario).
+ */
+function ShelvedShelf(props: {
+  rows: RepertoireRow[];
+  now: number;
+  onPractise: (row: RepertoireRow) => void | Promise<void>;
+}) {
+  const [open, setOpen] = createSignal(false);
+
+  return (
+    <section class="band band--shelved" aria-labelledby="band-shelved">
+      <div class="band-head">
+        <h2 id="band-shelved">Shelved</h2>
+        <span class="count">· {tuneCountLabel(props.rows.length)}</span>
+        <button
+          type="button"
+          class="more toggle"
+          aria-expanded={open()}
+          onClick={() => setOpen((current) => !current)}
+        >
+          {open() ? 'Hide' : 'Show'}
+        </button>
+      </div>
+
+      <Show when={open()}>
+        <div class="grid-tiles" id="shelved-grid">
+          <For each={props.rows}>
+            {(row) => (
+              <TuneCard row={row} now={props.now} density="tile" onPractise={props.onPractise} />
+            )}
+          </For>
+        </div>
       </Show>
     </section>
   );
@@ -352,6 +414,14 @@ export default function Repertoire() {
     const filtered = term.length === 0 ? rows() : rows().filter((row) => matchesQuery(row, term));
     return sortRepertoire(filtered, sortKey());
   });
+
+  /**
+   * Las aparcadas del cajón del final (#11): ordenadas por staleness y
+   * respetando el buscador, igual que las bandas. Con una banda aislada no se
+   * pintan —esa vista es una sola banda, no la pantalla entera—.
+   */
+  const shelvedRows = createMemo(() => visibleShelved(rows(), search(), now()));
+  const showShelved = createMemo(() => activeBand() === null && shelvedRows().length > 0);
 
   const load = async () => {
     setLoading(true);
@@ -712,7 +782,7 @@ export default function Repertoire() {
             }
           >
             <Show
-              when={visibleGroups().length > 0}
+              when={visibleGroups().length > 0 || showShelved()}
               fallback={
                 <p class="notice">
                   No tune in your repertoire matches “{search().trim()}”.
@@ -732,6 +802,12 @@ export default function Repertoire() {
                   />
                 )}
               </For>
+
+              {/* El cajón va después de las cuatro bandas, y solo en la vista
+                  completa: con una banda aislada la pantalla es esa banda. */}
+              <Show when={showShelved()}>
+                <ShelvedShelf rows={shelvedRows()} now={now()} onPractise={practise} />
+              </Show>
             </Show>
           </Show>
         </Show>

@@ -1,8 +1,10 @@
-import { Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 import { A, useNavigate, useParams } from '@solidjs/router';
 import {
+  BANDS,
   STATUS_LABELS,
   STATUS_STYLES,
+  bandFor,
   displayKey,
   displayRhythm,
   displayTitle,
@@ -11,8 +13,14 @@ import {
   placeholderInitials,
   practiceRecency,
   type RepertoireRow,
+  type TuneStatus,
 } from '../lib/repertoire-model';
-import { fetchRepertoireRow, removeFromRepertoire } from '../lib/repertoire';
+import {
+  fetchRepertoireRow,
+  removeFromRepertoire,
+  saveShelved,
+  saveStatus,
+} from '../lib/repertoire';
 import { focalPosition } from '../lib/image-sources';
 import { formatDate } from '../lib/format';
 import PracticeLog from '../components/PracticeLog';
@@ -39,6 +47,8 @@ export default function TuneDetail() {
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const [removing, setRemoving] = createSignal(false);
+  const [savingLevel, setSavingLevel] = createSignal(false);
+  const [savingShelved, setSavingShelved] = createSignal(false);
 
   /**
    * `params.id` se lee DENTRO del efecto: el router reutiliza la instancia al
@@ -109,6 +119,40 @@ export default function TuneDetail() {
     }
   };
 
+  /**
+   * El peldaño se cambia a mano (#11), aquí y solo aquí: no hay gesto sobre la
+   * banda ni control en el menú de la carta. Se guarda y se relee la fila —el
+   * mismo camino que el fondo y los ensayos— para que la pantalla enseñe lo que
+   * hay en la base y no lo que creíamos haber escrito.
+   */
+  const changeLevel = async (item: RepertoireRow, status: TuneStatus) => {
+    if (status === item.status) return;
+    setSavingLevel(true);
+    setError(null);
+    try {
+      await saveStatus(item.id, status);
+      await reload(item.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSavingLevel(false);
+    }
+  };
+
+  /** Aparcar no toca el peldaño: solo mueve la fila al cajón fuera de rotación. */
+  const changeShelved = async (item: RepertoireRow, shelved: boolean) => {
+    setSavingShelved(true);
+    setError(null);
+    try {
+      await saveShelved(item.id, shelved);
+      await reload(item.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSavingShelved(false);
+    }
+  };
+
   return (
     <div class="space-y-6">
       <A href="/" class="text-sm text-gray-400 hover:text-amber-300">
@@ -147,10 +191,12 @@ export default function TuneDetail() {
             const flags = createMemo(() => overrideFields(item()));
             const recency = createMemo(() => practiceRecency(item(), now()));
             const external = createMemo(() => sessionUrl(item()));
+            /** El peldaño actual con su definición canónica: la del modelo, no una nueva. */
+            const level = createMemo(() => bandFor(item().status));
 
             return (
               <article class="space-y-6 rounded-lg border border-gray-700 bg-gray-900 p-6">
-                <header class="flex items-start gap-4">
+                <header class="flex flex-wrap items-start gap-4">
                   <div
                     class="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-gray-700 bg-gray-800 text-lg font-semibold text-amber-300"
                     aria-hidden="true"
@@ -174,12 +220,51 @@ export default function TuneDetail() {
                       {item().tune.origin_ref ? ` #${item().tune.origin_ref}` : ''}
                     </p>
                   </div>
-                  <span
-                    class={`inline-block shrink-0 rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[item().status]}`}
-                  >
-                    {STATUS_LABELS[item().status]}
-                  </span>
+                  {/*
+                    Peldaño de capacidad (#11): el badge de antes era de solo
+                    lectura y por eso todas las tunes se quedaban en `to_learn`.
+                    Ahora se elige aquí y la definición de al lado sale de BANDS:
+                    las cuatro definiciones son canónicas y no se reescriben.
+                  */}
+                  <div class="flex shrink-0 flex-wrap items-center gap-3">
+                    <select
+                      aria-label="Level"
+                      disabled={savingLevel()}
+                      value={item().status}
+                      class={`rounded border px-2 py-0.5 text-xs disabled:opacity-60 ${STATUS_STYLES[item().status]}`}
+                      onChange={(event) =>
+                        void changeLevel(item(), event.currentTarget.value as TuneStatus)
+                      }
+                    >
+                      <For each={BANDS}>
+                        {(band) => <option value={band.status}>{STATUS_LABELS[band.status]}</option>}
+                      </For>
+                    </select>
+                    <span class="max-w-[17rem] text-xs text-gray-400 italic">{level().definition}</span>
+                  </div>
                 </header>
+
+                {/*
+                  Aparcada (#11): bandera transversal, no un quinto peldaño. Marcar
+                  la casilla no cambia el nivel; solo la saca de rotación, y la
+                  home deja de contarla en su banda para pintarla en el cajón.
+                */}
+                <div class="space-y-1">
+                  <label class="flex items-center gap-2 text-sm text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={item().shelved}
+                      disabled={savingShelved()}
+                      onChange={(event) => void changeShelved(item(), event.currentTarget.checked)}
+                    />
+                    Shelved — out of rotation
+                  </label>
+                  <Show when={item().shelved}>
+                    <p class="text-xs text-gray-500">
+                      Keeps its level ({level().label}) and stays out of rotation.
+                    </p>
+                  </Show>
+                </div>
 
                 {/*
                   Fondo del tune (#31): se pinta aquí, recortado al focal guardado,

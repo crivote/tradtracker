@@ -639,6 +639,51 @@
   min-width: 172px;
 }
 
+/* ── atajo al filtro por peldaño (#11) ────────────────────────────
+   El título de la banda es un botón que deja esa sola banda en pantalla
+   (`?band=`, el mismo aislamiento de «Show all»). Se pinta como el
+   título, sin caja: el atajo no debe parecer un control nuevo. */
+.repertoire-home .band-head h2 button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.repertoire-home .band-head h2 button:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.repertoire-home .band-head h2 button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* ── cajón de aparcadas (#11): al final, cerrado y sin tope ─────
+   Se separa de las bandas con una línea y su recuento va en caja baja:
+   no es una banda de trabajo, es una estantería. */
+.repertoire-home .band--shelved {
+  margin-top: 4px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+.repertoire-home .band--shelved .band-head h2 {
+  color: var(--muted);
+}
+.repertoire-home .band--shelved .count {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
+}
+.repertoire-home .band--shelved .toggle {
+  margin-top: 0;
+}
+
 /* ── tope de dos filas y «Show all» ───────────────────────────── */
 .repertoire-home .more {
   margin-top: 14px;

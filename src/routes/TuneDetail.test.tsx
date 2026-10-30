@@ -6,23 +6,28 @@
  * Supabase simulado, que es el único tramo que los tests puros no cruzan.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
 import { MemoryRouter, Route, createMemoryHistory } from '@solidjs/router';
 
 vi.mock('../lib/repertoire', () => ({
   fetchRepertoireRow: vi.fn(),
   removeFromRepertoire: vi.fn(),
+  saveStatus: vi.fn(),
+  saveShelved: vi.fn(),
 }));
 
-import { fetchRepertoireRow } from '../lib/repertoire';
+import { fetchRepertoireRow, saveShelved, saveStatus } from '../lib/repertoire';
 import TuneDetail from './TuneDetail';
 
 const mockedFetch = vi.mocked(fetchRepertoireRow);
+const mockedSaveStatus = vi.mocked(saveStatus);
+const mockedSaveShelved = vi.mocked(saveShelved);
 
 function makeRow(overrides: Record<string, any> = {}) {
   return {
     id: 'row-a',
     status: 'learning',
+    shelved: false,
     rating: 4,
     custom_title: null,
     custom_rhythm: null,
@@ -58,6 +63,8 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   mockedFetch.mockReset();
+  mockedSaveStatus.mockReset();
+  mockedSaveShelved.mockReset();
 });
 
 // Sin `globals: true` en vitest, la librería no registra su limpieza sola: sin
@@ -144,5 +151,85 @@ describe('TuneDetail', () => {
 
     await waitFor(() => expect(screen.getByText('The Bucks Of Oranmore')).toBeTruthy());
     expect(mockedFetch).toHaveBeenLastCalledWith('row-b');
+  });
+
+  /**
+   * #11: el peldaño se escribe desde el detalle. Se comprueba la llamada al
+   * adaptador y la recarga, no el estado de la base —eso lo cruza la integración
+   * opt-in—. El `select` se busca por su etiqueta accesible, que es como lo usa
+   * quien navega con teclado.
+   */
+  it('writes the chosen level through saveStatus and reloads the row', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    mockedSaveStatus.mockResolvedValue(undefined);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByLabelText('Level')).toBeTruthy());
+
+    const select = screen.getByLabelText('Level') as HTMLSelectElement;
+    expect(select.value).toBe('learning');
+    // Las cuatro etiquetas canónicas, en orden de escalera.
+    expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
+      'To learn',
+      'Learning',
+      'Playing along',
+      'Solo-ready',
+    ]);
+    // La definición del peldaño actual sale de BANDS, no se reescribe aquí.
+    expect(screen.getByText('Know the parts, but can’t get through it end to end.')).toBeTruthy();
+
+    fireEvent.change(select, { target: { value: 'solo_ready' } });
+
+    await waitFor(() => expect(mockedSaveStatus).toHaveBeenCalledWith('row-a', 'solo_ready'));
+    // Guardar no basta: la fila se relee, como con el fondo y los ensayos.
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+  });
+
+  it('writes the shelved flag through saveShelved without touching the level', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    mockedSaveShelved.mockResolvedValue(undefined);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByLabelText('Shelved — out of rotation')).toBeTruthy());
+
+    const checkbox = screen.getByLabelText('Shelved — out of rotation') as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    fireEvent.click(checkbox);
+
+    await waitFor(() => expect(mockedSaveShelved).toHaveBeenCalledWith('row-a', true));
+    // Aparcar no es un peldaño: el adaptador del nivel no se toca.
+    expect(mockedSaveStatus).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows the help line and the checked box when the tune is already shelved', async () => {
+    mockedFetch.mockResolvedValue(makeRow({ shelved: true }) as any);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Shelved — out of rotation')).toBeTruthy()
+    );
+
+    expect((screen.getByLabelText('Shelved — out of rotation') as HTMLInputElement).checked).toBe(
+      true
+    );
+    expect(
+      screen.getByText('Keeps its level (Learning) and stays out of rotation.')
+    ).toBeTruthy();
+  });
+
+  it('shows the write error in the existing alert instead of losing the change', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    mockedSaveStatus.mockRejectedValue(new Error('Could not save the level: that tune is not yours.'));
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByLabelText('Level')).toBeTruthy());
+
+    fireEvent.change(screen.getByLabelText('Level'), { target: { value: 'to_learn' } });
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('that tune is not yours')
+    );
   });
 });
