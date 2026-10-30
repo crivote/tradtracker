@@ -6,14 +6,17 @@ import {
   displayKey,
   displayRhythm,
   displayTitle,
+  imageCredit,
   overrideFields,
   placeholderInitials,
   practiceRecency,
   type RepertoireRow,
 } from '../lib/repertoire-model';
 import { fetchRepertoireRow, removeFromRepertoire } from '../lib/repertoire';
+import { focalPosition } from '../lib/image-sources';
 import { formatDate } from '../lib/format';
 import PracticeLog from '../components/PracticeLog';
+import BackgroundPicker from '../components/BackgroundPicker';
 
 /**
  * Detalle de un tune del repertorio (#7, corte 2), en ruta propia
@@ -178,6 +181,43 @@ export default function TuneDetail() {
                   </span>
                 </header>
 
+                {/*
+                  Fondo del tune (#31): se pinta aquí, recortado al focal guardado,
+                  con el crédito debajo —autor · licencia, con enlace a la ficha—.
+                  Sin fondo, esta pieza no existe y el detalle queda como estaba.
+                */}
+                <Show when={item().image}>
+                  {(image) => (
+                    <figure class="space-y-1">
+                      <div class="relative h-40 w-full overflow-hidden rounded-md border border-gray-700 bg-gray-800">
+                        <img
+                          src={image().fullUrl ?? image().thumbUrl ?? ''}
+                          alt=""
+                          aria-hidden="true"
+                          loading="lazy"
+                          decoding="async"
+                          class="h-full w-full object-cover"
+                          style={{ 'object-position': focalPosition(image().focalX, image().focalY) }}
+                        />
+                      </div>
+                      <figcaption class="text-xs text-gray-400">
+                        {imageCredit(image())}
+                        <Show when={image().pageUrl}>
+                          {' · '}
+                          <a
+                            href={image().pageUrl!}
+                            target="_blank"
+                            rel="noreferrer"
+                            class="text-amber-300 hover:text-amber-200"
+                          >
+                            Source
+                          </a>
+                        </Show>
+                      </figcaption>
+                    </figure>
+                  )}
+                </Show>
+
                 <dl class="grid gap-3 text-sm sm:grid-cols-2">
                   <div class="flex items-baseline justify-between gap-3 sm:justify-start">
                     <dt class="text-gray-500">
@@ -254,6 +294,13 @@ export default function TuneDetail() {
                     </p>
                   )}
                 </Show>
+
+                <BackgroundPicker
+                  repertoireId={item().id}
+                  title={displayTitle(item())}
+                  image={item().image}
+                  onSaved={() => reload(item().id)}
+                />
 
                 <div class="flex items-center justify-between gap-3 border-t border-gray-800 pt-4">
                   <A href="/" class="text-sm text-gray-400 hover:text-amber-300">

@@ -74,6 +74,12 @@ export default function About() {
           (FTS5 over titles and alternative titles). It holds no ABC notation and no keys,
           so scores and backing tracks are not derived from it.
         </p>
+
+        <p class="mt-2 text-xs text-gray-500">
+          Tune backgrounds come from Wikimedia Commons and, if you paste your own key, from
+          Pexels. Each image keeps its own licence and author, shown with the image — public
+          domain and CC0 ones are marked in green; nothing is copied into this app.
+        </p>
       </section>
     </div>
   );

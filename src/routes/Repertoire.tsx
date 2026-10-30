@@ -27,6 +27,7 @@ import {
 } from '../lib/catalogue';
 import { preloadCatalogue, searchCatalogue, getCatalogueStats } from '../lib/catalogue-db';
 import { normalizeTitle } from '../lib/format';
+import { focalPosition } from '../lib/image-sources';
 import PracticeLog from '../components/PracticeLog';
 
 /**
@@ -166,67 +167,93 @@ function GridView(props: {
           // Consumo del modelo puro, fuera del JSX: el instante ya viene de la vista.
           const recency = practiceRecency(row, props.now);
           return (
-            <li class="flex flex-col gap-3 rounded-lg border border-gray-700 bg-gray-900 p-4 hover:border-gray-600">
-              <div
-                class="flex h-12 w-12 items-center justify-center rounded-md border border-gray-700 bg-gray-800 text-sm font-semibold text-amber-300"
-                aria-hidden="true"
-              >
-                {placeholderInitials(row)}
-              </div>
-              <div class="flex items-start justify-between gap-2">
-                <div class="min-w-0">
-                  <A
-                    href={`/repertoire/${row.id}`}
-                    class="block truncate font-medium text-gray-100 hover:text-amber-300"
-                    title={displayTitle(row)}
-                  >
-                    {displayTitle(row)}
-                  </A>
-                  <p class="text-xs text-gray-500">
-                    {row.tune.origin}
-                    {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
-                  </p>
-                </div>
-                <span
-                  class={`inline-block shrink-0 rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[row.status]}`}
+            <li class="relative flex flex-col gap-3 overflow-hidden rounded-lg border border-gray-700 bg-gray-900 p-4 hover:border-gray-600">
+              {/*
+                Fondo del tune (#31): la imagen elegida se pinta como fondo de la
+                carta, recortada al focal guardado. Va en un `img` que cubre la
+                carta —no en un marco— porque `loading="lazy"` solo existe en
+                elementos `img`/`iframe`: un `background-image` de CSS se
+                descargaría siempre, aunque la carta no se vea. El velo de encima
+                mantiene legible el texto.
+              */}
+              <Show when={row.image}>
+                {(image) => (
+                  <>
+                    <img
+                      src={image().thumbUrl ?? ''}
+                      alt=""
+                      aria-hidden="true"
+                      loading="lazy"
+                      decoding="async"
+                      class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-40"
+                      style={{ 'object-position': focalPosition(image().focalX, image().focalY) }}
+                    />
+                    <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-gray-950 via-gray-950/85 to-gray-950/30" />
+                  </>
+                )}
+              </Show>
+              <div class="relative flex flex-col gap-3">
+                <div
+                  class="flex h-12 w-12 items-center justify-center rounded-md border border-gray-700 bg-gray-800 text-sm font-semibold text-amber-300"
+                  aria-hidden="true"
                 >
-                  {STATUS_LABELS[row.status]}
-                </span>
-              </div>
-              <dl class="space-y-1 text-sm">
-                <div class="flex items-baseline justify-between gap-3">
-                  <dt class="text-gray-500">Rhythm</dt>
-                  <dd class="text-gray-300">{displayRhythm(row)}</dd>
+                  {placeholderInitials(row)}
                 </div>
-                <div class="flex items-baseline justify-between gap-3">
-                  <dt class="text-gray-500">Key</dt>
-                  <dd class="text-gray-300">{displayKey(row)}</dd>
-                </div>
-                <div class="flex items-baseline justify-between gap-3">
-                  <dt class="text-gray-500">Added</dt>
-                  <dd class="text-gray-400">{new Date(row.added_at).toLocaleDateString()}</dd>
-                </div>
-                <div class="flex items-baseline justify-between gap-3">
-                  <dt class="text-gray-500">Practiced</dt>
-                  <dd class="text-gray-400">{recency.label}</dd>
-                </div>
-                <Show when={row.rating !== null}>
-                  <div class="flex items-baseline justify-between gap-3">
-                    <dt class="text-gray-500">Rating</dt>
-                    <dd class="text-amber-300">★ {row.rating}</dd>
+                <div class="flex items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <A
+                      href={`/repertoire/${row.id}`}
+                      class="block truncate font-medium text-gray-100 hover:text-amber-300"
+                      title={displayTitle(row)}
+                    >
+                      {displayTitle(row)}
+                    </A>
+                    <p class="text-xs text-gray-500">
+                      {row.tune.origin}
+                      {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
+                    </p>
                   </div>
-                </Show>
-              </dl>
-              <div class="mt-auto flex items-center justify-between gap-2">
-                <PracticeLog repertoireId={row.id} onLogged={() => props.onLogged(row)} />
-                <button
-                  type="button"
-                  disabled={props.busyId === row.id}
-                  class="text-xs text-gray-500 hover:text-red-300 disabled:opacity-60"
-                  onClick={() => props.onRemove(row)}
-                >
-                  {props.busyId === row.id ? 'Removing…' : 'Remove'}
-                </button>
+                  <span
+                    class={`inline-block shrink-0 rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[row.status]}`}
+                  >
+                    {STATUS_LABELS[row.status]}
+                  </span>
+                </div>
+                <dl class="space-y-1 text-sm">
+                  <div class="flex items-baseline justify-between gap-3">
+                    <dt class="text-gray-500">Rhythm</dt>
+                    <dd class="text-gray-300">{displayRhythm(row)}</dd>
+                  </div>
+                  <div class="flex items-baseline justify-between gap-3">
+                    <dt class="text-gray-500">Key</dt>
+                    <dd class="text-gray-300">{displayKey(row)}</dd>
+                  </div>
+                  <div class="flex items-baseline justify-between gap-3">
+                    <dt class="text-gray-500">Added</dt>
+                    <dd class="text-gray-400">{new Date(row.added_at).toLocaleDateString()}</dd>
+                  </div>
+                  <div class="flex items-baseline justify-between gap-3">
+                    <dt class="text-gray-500">Practiced</dt>
+                    <dd class="text-gray-400">{recency.label}</dd>
+                  </div>
+                  <Show when={row.rating !== null}>
+                    <div class="flex items-baseline justify-between gap-3">
+                      <dt class="text-gray-500">Rating</dt>
+                      <dd class="text-amber-300">★ {row.rating}</dd>
+                    </div>
+                  </Show>
+                </dl>
+                <div class="mt-auto flex items-center justify-between gap-2">
+                  <PracticeLog repertoireId={row.id} onLogged={() => props.onLogged(row)} />
+                  <button
+                    type="button"
+                    disabled={props.busyId === row.id}
+                    class="text-xs text-gray-500 hover:text-red-300 disabled:opacity-60"
+                    onClick={() => props.onRemove(row)}
+                  >
+                    {props.busyId === row.id ? 'Removing…' : 'Remove'}
+                  </button>
+                </div>
               </div>
             </li>
           );
