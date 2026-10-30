@@ -1,0 +1,860 @@
+/*
+ * Home del repertorio (#29) — contrato visual del boceto 008-escala.
+ *
+ * Los valores de la pantalla, la banda, la rejilla, la carta, el tag, el menú y
+ * la miniatura están copiados del boceto (§2.6 del issue) y son contrato: están
+ * medidos a 1280 px (carta 282 × 226, miniatura 186 × 149). No se reinterpretan
+ * aquí: si un número no cuadra con la pantalla real se mide y se comenta en el
+ * issue.
+ *
+ * La paleta del boceto vive en el proyecto desde este corte; el resto de la app
+ * sigue en la paleta oscura y esta pantalla se pinta sobre papel, así que las
+ * variables se declaran en `.repertoire-home` y no en `:root` para no teñir el
+ * resto de la aplicación (tabla, detalle, catálogo).
+ *
+ * `--serif` pide Fraunces, que el boceto carga de Google Fonts; aquí no se añade
+ * una petición a un tercero por una tipografía: Georgia es el respaldo y las
+ * medidas de la carta no dependen de la fuente (las pone la rejilla).
+ */
+
+.repertoire-home {
+  --paper: #f2ede2;
+  --ink: #241f18;
+  --muted: #6b6154;
+  --faint: #9c9282;
+  --line: #ded6c6;
+  --accent: #8a3524;
+  --serif: "Fraunces", Georgia, "Times New Roman", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+
+  font-family: var(--sans);
+  color: var(--ink);
+  line-height: 1.4;
+  background-color: var(--paper);
+  background-image:
+    radial-gradient(1100px 700px at 8% -8%, rgba(255, 255, 255, 0.5), transparent 60%),
+    repeating-linear-gradient(91deg, rgba(120, 104, 80, 0.026) 0 1px, transparent 1px 3px);
+  /* contenedor de la pantalla */
+  padding: 52px clamp(18px, 4vw, 58px) 90px;
+}
+
+/* ── cabecera ─────────────────────────────────────────────────── */
+.repertoire-home .page-head {
+  max-width: 1260px;
+  margin: 0 auto 22px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+.repertoire-home h1 {
+  font-family: var(--serif);
+  font-weight: 300;
+  font-size: clamp(28px, 3.2vw, 38px);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  margin: 0;
+}
+.repertoire-home .sub {
+  margin-top: 7px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.repertoire-home .sub b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.repertoire-home .head-tools {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.repertoire-home .add {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 15px;
+  transition: filter 0.2s, transform 0.2s;
+}
+.repertoire-home .add:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+/* búsqueda: la herramienta que de verdad hace falta con 160 en la biblioteca */
+.repertoire-home .search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2px;
+}
+.repertoire-home .search input {
+  font: inherit;
+  font-size: 13px;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--ink);
+  width: 190px;
+  padding: 6px 0;
+}
+.repertoire-home .search input::placeholder {
+  color: var(--faint);
+}
+.repertoire-home .search svg {
+  width: 14px;
+  height: 14px;
+  stroke: var(--faint);
+  fill: none;
+  stroke-width: 1.7;
+}
+
+/* ── orden: el abandono es un continuo, manda la secuencia ────── */
+.repertoire-home .sortbar {
+  max-width: 1260px;
+  margin: 0 auto 14px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  color: var(--muted);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.repertoire-home .sortbar .lbl {
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 10.5px;
+  color: var(--faint);
+  font-weight: 600;
+}
+.repertoire-home .sortbar .heat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.repertoire-home .sortbar .heat i {
+  display: block;
+  width: 76px;
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #e6dccb 0%, #d8b79a 55%, #c2643f 100%);
+}
+.repertoire-home .sortbar .spacer {
+  flex: 1;
+}
+.repertoire-home .sortbar select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 2px 0;
+}
+.repertoire-home .viewswitch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px;
+}
+.repertoire-home .viewswitch button {
+  font: inherit;
+  font-size: 11.5px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.repertoire-home .viewswitch button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* ── banda ────────────────────────────────────────────────────── */
+.repertoire-home .band {
+  max-width: 1260px;
+  margin: 0 auto 36px;
+}
+.repertoire-home .band:last-of-type {
+  margin-bottom: 0;
+}
+
+/* cabecera de banda: peldaño + nombre + definición + recuento */
+.repertoire-home .band-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 9px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.repertoire-home .band-head h2 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0;
+}
+.repertoire-home .band-head .def {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--muted);
+}
+.repertoire-home .band-head .count {
+  margin-left: auto;
+  font-size: 10.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* indicador de peldaño: cuatro barras encendidas hasta el nivel */
+.repertoire-home .rungs {
+  display: flex;
+  align-items: flex-end;
+  gap: 2.5px;
+  height: 11px;
+  align-self: center;
+}
+.repertoire-home .rungs i {
+  width: 4px;
+  border-radius: 1px;
+  background: var(--line);
+  display: block;
+}
+.repertoire-home .rungs i:nth-child(1) {
+  height: 4px;
+}
+.repertoire-home .rungs i:nth-child(2) {
+  height: 6px;
+}
+.repertoire-home .rungs i:nth-child(3) {
+  height: 8.5px;
+}
+.repertoire-home .rungs i:nth-child(4) {
+  height: 11px;
+}
+.repertoire-home .rungs i.on {
+  background: var(--accent);
+}
+
+/* banda de trabajo: carta grande, cuatro por fila */
+.repertoire-home .grid-4 {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(4, 1fr);
+}
+@media (max-width: 1100px) {
+  .repertoire-home .grid-4 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+@media (max-width: 820px) {
+  .repertoire-home .grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .repertoire-home .grid-4 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* biblioteca: miniatura, seis por fila */
+.repertoire-home .grid-tiles {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(166px, 1fr));
+}
+
+/* ── la carta ─────────────────────────────────────────────────── */
+.repertoire-home .card {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  aspect-ratio: 5 / 4;
+  border-radius: 3px 16px 3px 14px;
+  background: #d9d2c2;
+  box-shadow: 0 16px 28px -24px rgba(58, 42, 20, 0.75);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  transition: box-shadow 0.4s ease, transform 0.4s ease;
+  margin: 0;
+}
+.repertoire-home .card:hover {
+  box-shadow: 0 26px 34px -26px rgba(58, 42, 20, 0.8);
+  transform: translateY(-2px);
+}
+.repertoire-home .card img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: -2;
+  filter: saturate(0.88) contrast(1.03);
+  transition: transform 1s cubic-bezier(0.16, 0.84, 0.28, 1), filter 0.5s ease;
+  /* Encuadre guardado en #31: el zoom elegido en el selector entra en el
+     `transform` base, y el hover lo respeta (a 100 % queda scale(1.04), que es
+     el valor del contrato). */
+  transform: scale(var(--zoom, 1));
+}
+.repertoire-home .card:hover img {
+  transform: scale(calc(var(--zoom, 1) * 1.04));
+  filter: saturate(1) contrast(1.03);
+}
+
+/* el velo que hace legible el texto sobre la foto (solo con foto) */
+.repertoire-home .card--photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    rgba(16, 12, 9, 0.9) 0%,
+    rgba(16, 12, 9, 0.6) 38%,
+    rgba(16, 12, 9, 0.1) 66%,
+    rgba(16, 12, 9, 0.3) 100%
+  );
+}
+
+/* el tag: no es una etiqueta de género, es el tiempo sin tocarla.
+   Su color es el propio gradiente de abandono, calculado desde los días. */
+.repertoire-home .tag {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  font-family: var(--serif);
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  padding: 5px 9px 4px;
+  transform: rotate(-2deg);
+  white-space: nowrap;
+  box-shadow: 0 6px 12px -8px rgba(30, 20, 8, 0.8);
+  background: #f6f0e3;
+  color: #3c3428;
+  transition: transform 0.4s ease;
+}
+.repertoire-home .tag b {
+  font-weight: 600;
+}
+
+/* menú de tres puntos */
+.repertoire-home .kebab {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 3;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(14, 11, 8, 0.42);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  padding: 0;
+}
+.repertoire-home .kebab:hover,
+.repertoire-home .kebab[aria-expanded="true"] {
+  background: rgba(14, 11, 8, 0.66);
+}
+.repertoire-home .kebab span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #fff;
+  display: block;
+}
+
+.repertoire-home .menu {
+  position: absolute;
+  top: 44px;
+  right: 10px;
+  z-index: 4;
+  min-width: 186px;
+  background: #f8f3e7;
+  border: 1px solid #e0d6c2;
+  border-radius: 8px;
+  box-shadow: 0 22px 34px -18px rgba(40, 26, 10, 0.55);
+  padding: 5px;
+  display: none;
+  transform-origin: top right;
+}
+.repertoire-home .menu.open {
+  display: block;
+  animation: tt-pop 0.14s ease-out;
+}
+@keyframes tt-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.repertoire-home .menu button,
+.repertoire-home .menu a {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 9px;
+  font: inherit;
+  font-size: 12.5px;
+  color: #2a231a;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 7px 9px;
+  border-radius: 5px;
+  text-align: left;
+  text-decoration: none;
+}
+.repertoire-home .menu button:hover,
+.repertoire-home .menu a:hover {
+  background: #ebe2d0;
+}
+.repertoire-home .menu button:disabled {
+  cursor: not-allowed;
+  color: #9c9282;
+}
+.repertoire-home .menu button:disabled:hover {
+  background: none;
+}
+.repertoire-home .menu svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.75;
+}
+.repertoire-home .menu .sep {
+  height: 1px;
+  background: #e5dccb;
+  margin: 4px 6px;
+}
+.repertoire-home .menu .primary {
+  color: var(--accent);
+  font-weight: 600;
+}
+.repertoire-home .menu .primary svg {
+  opacity: 1;
+}
+
+/* cuerpo: título, ritmo/tono, calidad */
+.repertoire-home .body {
+  position: relative;
+  z-index: 2;
+  padding: 0 14px 13px;
+}
+.repertoire-home .card h2 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(19px, 1.7vw, 23px);
+  letter-spacing: -0.012em;
+  line-height: 1.1;
+  color: #fff;
+  margin: 0;
+}
+.repertoire-home .card h2 a {
+  color: #fff;
+  text-decoration: none;
+}
+.repertoire-home .card h2 a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.repertoire-home .card h2 a:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+.repertoire-home .tune-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.68);
+}
+.repertoire-home .tune-meta .gap {
+  color: rgba(255, 255, 255, 0.34);
+}
+.repertoire-home .tune-meta .missing {
+  opacity: 0.45;
+}
+
+/* calidad media de los ensayos: cinco puntos, el último puede ir a medias */
+.repertoire-home .quality {
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.62);
+}
+.repertoire-home .q {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.repertoire-home .q i {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+}
+.repertoire-home .q i.on {
+  background: #fff;
+  border-color: #fff;
+}
+.repertoire-home .q i.half {
+  border-color: rgba(255, 255, 255, 0.85);
+  background: linear-gradient(90deg, #fff 0 50%, transparent 50%);
+}
+.repertoire-home .quality .n {
+  letter-spacing: 0.01em;
+}
+.repertoire-home .quality.none {
+  color: rgba(255, 255, 255, 0.42);
+  font-style: italic;
+  font-family: var(--serif);
+  font-size: 12.5px;
+}
+
+/* ── rama del «no»: sin foto, la carta va sobre papel ───────────
+   Sobre papel no hay degradado oscuro, así que ningún texto va en
+   blanco y el tag mantiene su propio color. */
+.repertoire-home .card--bare {
+  background: #ece5d5;
+  box-shadow: 0 12px 24px -22px rgba(58, 42, 20, 0.7);
+}
+.repertoire-home .card--bare h2,
+.repertoire-home .card--bare h2 a {
+  color: var(--ink);
+}
+.repertoire-home .card--bare h2 a:focus-visible {
+  outline-color: var(--accent);
+}
+.repertoire-home .card--bare .tune-meta {
+  color: var(--muted);
+}
+.repertoire-home .card--bare .tune-meta .gap {
+  color: var(--faint);
+}
+.repertoire-home .card--bare .tune-meta .missing {
+  color: var(--faint);
+  opacity: 1;
+}
+.repertoire-home .card--bare .quality {
+  color: var(--muted);
+}
+.repertoire-home .card--bare .q i {
+  border-color: var(--faint);
+}
+.repertoire-home .card--bare .q i.on {
+  background: var(--ink);
+  border-color: var(--ink);
+}
+.repertoire-home .card--bare .q i.half {
+  border-color: var(--ink);
+  background: linear-gradient(90deg, var(--ink) 0 50%, transparent 50%);
+}
+.repertoire-home .card--bare .quality.none {
+  color: var(--faint);
+}
+.repertoire-home .card--bare .kebab {
+  border-color: rgba(36, 31, 24, 0.18);
+  background: rgba(255, 255, 255, 0.55);
+}
+.repertoire-home .card--bare .kebab span {
+  background: var(--ink);
+}
+.repertoire-home .card--bare .kebab:hover,
+.repertoire-home .card--bare .kebab[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+/* ── miniatura de biblioteca: el dato mínimo ──────────────────── */
+.repertoire-home .tile h2 {
+  font-size: 15px;
+}
+.repertoire-home .tile .body {
+  padding: 0 10px 10px;
+}
+.repertoire-home .tile .tune-meta {
+  font-size: 10.5px;
+  margin-top: 2px;
+}
+.repertoire-home .tile .tag {
+  top: 8px;
+  left: 8px;
+  font-size: 11px;
+  padding: 4px 7px 3px;
+}
+.repertoire-home .tile .kebab {
+  width: 22px;
+  height: 22px;
+  top: 7px;
+  right: 7px;
+}
+.repertoire-home .tile .kebab span {
+  width: 2.5px;
+  height: 2.5px;
+}
+.repertoire-home .tile .menu {
+  top: 34px;
+  right: 7px;
+  min-width: 172px;
+}
+
+/* ── tope de dos filas y «Show all» ───────────────────────────── */
+.repertoire-home .more {
+  margin-top: 14px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: none;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+.repertoire-home .more:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.repertoire-home .back-to-all {
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.repertoire-home .band-sentinel {
+  height: 1px;
+}
+.repertoire-home .band-empty {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--faint);
+}
+
+/* ── estados de la pantalla (carga, vacío, error) ─────────────── */
+.repertoire-home .notice {
+  max-width: 1260px;
+  margin: 0 auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+.repertoire-home .notice-error {
+  border: 1px solid #c98c76;
+  background: #f6e3da;
+  color: #7a2f1a;
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.repertoire-home .empty {
+  max-width: 1260px;
+  margin: 0 auto;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 32px;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* ── panel del catálogo: papel, no la paleta oscura del resto ─── */
+.repertoire-home .catalogue {
+  max-width: 1260px;
+  margin: 0 auto 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.45);
+  padding: 16px;
+}
+.repertoire-home .catalogue label {
+  display: block;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 6px;
+}
+.repertoire-home .catalogue input[type="search"] {
+  width: 100%;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 8px 10px;
+  outline: none;
+}
+.repertoire-home .catalogue input[type="search"]:focus {
+  border-color: var(--accent);
+}
+.repertoire-home .catalogue .hint {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.repertoire-home .catalogue ul {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.repertoire-home .catalogue li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.repertoire-home .catalogue .cat-title {
+  color: var(--ink);
+  font-size: 13.5px;
+}
+.repertoire-home .catalogue .cat-meta {
+  font-size: 11px;
+  color: var(--faint);
+}
+.repertoire-home .catalogue .cat-add {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.repertoire-home .catalogue .cat-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.repertoire-home .catalogue .cat-add:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ── tabla: la vista de siempre, sobre papel ──────────────────── */
+.repertoire-home .table-wrap {
+  max-width: 1260px;
+  margin: 0 auto;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.4);
+}
+.repertoire-home .table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+.repertoire-home .table-wrap th {
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 600;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.repertoire-home .table-wrap td {
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(222, 214, 198, 0.6);
+  color: var(--ink);
+  vertical-align: top;
+}
+.repertoire-home .table-wrap tr:last-child td {
+  border-bottom: 0;
+}
+.repertoire-home .table-wrap a {
+  color: var(--ink);
+  text-decoration: none;
+}
+.repertoire-home .table-wrap a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.repertoire-home .table-wrap .dim {
+  color: var(--faint);
+  font-size: 11px;
+}
+.repertoire-home .table-wrap .remove {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--faint);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+.repertoire-home .table-wrap .remove:hover {
+  color: var(--accent);
+}
+.repertoire-home .table-wrap .pill {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .repertoire-home {
+    padding: 30px 16px 60px;
+  }
+  .repertoire-home .page-head {
+    align-items: flex-start;
+  }
+  .repertoire-home .sortbar .heat {
+    display: none;
+  }
+  .repertoire-home .search input {
+    width: 100%;
+  }
+}

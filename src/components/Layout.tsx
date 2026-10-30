@@ -60,7 +60,16 @@ export const Layout: ParentComponent = (props) => {
         </div>
       </Show>
 
-      <main class="max-w-7xl mx-auto px-6 py-8">{props.children}</main>
+      {/*
+        La home del repertorio (#29) mide su propio marco: el contrato del
+        boceto fija `padding: 52px clamp(18px, 4vw, 58px) 90px` en la pantalla y
+        una carta de 282 px a 1280 px. Si el `main` añadiera sus 24 px de
+        padding, la rejilla se quedaría 20 px corta; por eso esta ruta va a
+        sangre y las demás conservan el contenedor de siempre.
+      */}
+      <main class={location.pathname === '/' ? '' : 'max-w-7xl mx-auto px-6 py-8'}>
+        {props.children}
+      </main>
     </div>
   );
 };

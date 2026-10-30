@@ -1,22 +1,29 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
-import { A } from '@solidjs/router';
+import { A, useSearchParams } from '@solidjs/router';
 import {
+  BANDS,
   SORT_LABELS,
   STATUS_LABELS,
-  STATUS_STYLES,
   addCatalogueTune,
+  bandFor,
+  capForColumns,
+  capRows,
   displayKey,
   displayRhythm,
   displayTitle,
   fetchRepertoire,
+  filterBands,
+  groupIntoBands,
+  matchesQuery,
   parseViewMode,
-  placeholderInitials,
-  practiceRecency,
   removeFromRepertoire,
   sortRepertoire,
+  statusCounts,
   VIEW_MODE_KEY,
+  type BandGroup,
   type RepertoireRow,
   type SortKey,
+  type TuneStatus,
   type ViewMode,
 } from '../lib/repertoire';
 import {
@@ -27,34 +34,32 @@ import {
 } from '../lib/catalogue';
 import { preloadCatalogue, searchCatalogue, getCatalogueStats } from '../lib/catalogue-db';
 import { normalizeTitle } from '../lib/format';
-import { focalPosition } from '../lib/image-sources';
-import PracticeLog from '../components/PracticeLog';
+import { logPractice } from '../lib/practice';
+import TuneCard from '../components/TuneCard';
+import './repertoire.css';
 
 /**
- * Vista de la colección.
+ * Home del repertorio (#29).
  *
- * El alta busca en el catálogo completo (issue #4): `public/thesession.db`, un
- * SQLite de 22.775 tunes que se descarga una vez y se consulta en el navegador.
- * Ya no se limita a las tunes sembradas en `pr_tunes`. Al elegir un resultado se
- * resuelve su fila compartida por `(origin='thesession', origin_ref=tune_id)` y
- * se añade al repertorio del usuario.
+ * La pantalla ya no es una lista ordenada sino cuatro bandas en orden de
+ * escalera (to_learn → learning → playing_along → solo_ready), cada una con su
+ * definición escrita y su recuento, y dos densidades: carta grande en las bandas
+ * de trabajo (ahí se mira la calidad de cada tune) y miniatura en las de
+ * biblioteca (ahí hay cien y no se vigilan una a una).
  *
- * Los títulos alternativos cuentan: cada token se busca en el nombre y en la
- * columna `aliases`, y cuando el acierto viene de un alias se enseña el alias,
- * para que «Butterfly, The» al buscar «red admiral» no parezca un error.
+ * Tres reglas mandan sobre el resto:
+ *   · Dentro de cada banda, orden por staleness: nunca tocada primero, después
+ *     días descendentes. El orden es del modelo puro (`groupIntoBands`), no del
+ *     JSX ni de la base.
+ *   · Cada banda densa enseña dos filas y ofrece «Show all N». El tope se mide
+ *     sobre las columnas reales de la rejilla y se recalcula al cambiar el
+ *     ancho; no es un número fijo.
+ *   · «Show all» no despliega dentro de la página: deja esa sola banda en
+ *     pantalla, la refleja en la URL (`?band=…`) y carga las cartas en tandas de
+ *     una fila al hacer scroll. «Back to all» vuelve a la vista completa.
  *
- * El orden (issue #7) no es cosa de la base: `fetchRepertoire` sigue trayendo
- * por `added_at` y `sortRepertoire` — puro y probado en `repertoire-model` —
- * reordena en el navegador con el criterio elegido, y ambas vistas (tabla y
- * tarjetas) consumen las mismas filas ordenadas. La preferencia tabla/grid
- * vive en `sessionStorage`: sobrevive a recargas de esta pestaña sin tocar la
- * base de datos.
- *
- * Corte 2 de la issue: la card enseña los días desde el último ensayo (no la
- * fecha), un cuadro con las iniciales como placeholder de la imagen
- * mnemotécnica y el título enlaza a `/repertoire/:id`, el detalle del tune.
- * `now` se toma una sola vez aquí, al montar, y baja como prop: la función pura
- * `practiceRecency` nunca lee el reloj.
+ * La vista de tabla se conserva: mismas columnas, mismo orden elegido a mano,
+ * misma baja. Solo cambia el papel.
  */
 
 /**
@@ -78,59 +83,195 @@ function rememberViewMode(mode: ViewMode): void {
   }
 }
 
-/** La tabla clásica, intacta, pero alimentada por las filas ya ordenadas. */
+/** «1 tune» / «12 tunes», con el número ya formateado por quien llama. */
+function tuneCountLabel(count: number): string {
+  return `${count} ${count === 1 ? 'tune' : 'tunes'}`;
+}
+
+/** La banda, con su densidad, su tope y su carga progresiva. */
+function BandView(props: {
+  group: BandGroup;
+  now: number;
+  /** Con texto en el buscador se ignoran los topes (§2.5). */
+  searching: boolean;
+  /** Esta banda es la única en pantalla (?band=…), con carga al scroll. */
+  expanded: boolean;
+  onShowAll: () => void;
+  onBackToAll: () => void;
+  onPractise: (row: RepertoireRow) => void | Promise<void>;
+}) {
+  let grid: HTMLDivElement | undefined;
+
+  // Columnas reales de la rejilla: es lo que decide el tope de dos filas.
+  const [columns, setColumns] = createSignal(4);
+  // Cuántas cartas se han cargado de la banda abierta (tandas de una fila).
+  const [shown, setShown] = createSignal(0);
+  let sentinel: HTMLDivElement | undefined;
+
+  const measure = () => {
+    if (!grid) return;
+    const template = window.getComputedStyle(grid).gridTemplateColumns;
+    const count = template.split(' ').filter(Boolean).length;
+    if (count > 0) setColumns(count);
+  };
+
+  onMount(() => {
+    measure();
+    const onResize = () => measure();
+    window.addEventListener('resize', onResize);
+
+    // El ancho de la rejilla también cambia sin que cambie la ventana (barra de
+    // scroll, panel del catálogo); el observador cubre los dos casos.
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined' && grid) {
+      observer = new ResizeObserver(() => measure());
+      observer.observe(grid);
+    }
+
+    onCleanup(() => {
+      window.removeEventListener('resize', onResize);
+      observer?.disconnect();
+    });
+  });
+
+  /** Al abrir la banda se empieza por una fila; el scroll añade más. */
+  createEffect(() => {
+    if (props.expanded) setShown(columns());
+  });
+
+  const cap = createMemo(() => capForColumns(columns()));
+  const limit = createMemo(() => {
+    if (props.searching) return Number.POSITIVE_INFINITY;
+    if (props.expanded) return shown();
+    return cap();
+  });
+  const rows = createMemo(() => capRows(props.group.rows, limit()));
+  const total = createMemo(() => props.group.rows.length);
+
+  /**
+   * Carga progresiva al hacer scroll: el centinela del final de la rejilla pide
+   * una fila más cuando entra en el viewport. Sin `IntersectionObserver` (o si
+   * no hay nada más que cargar) no se observa nada; sin la API se enseña todo,
+   * que es el degradado honesto.
+   */
+  createEffect(() => {
+    if (!props.expanded || shown() >= total()) return;
+    if (typeof IntersectionObserver === 'undefined') {
+      setShown(total());
+      return;
+    }
+    const step = Math.max(1, columns());
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShown((current) => Math.min(total(), current + step));
+        }
+      },
+      { rootMargin: '0px' }
+    );
+    if (sentinel) observer.observe(sentinel);
+    onCleanup(() => observer.disconnect());
+  });
+
+  const gridClass = () => (props.group.band.density === 'card' ? 'grid-4' : 'grid-tiles');
+
+  return (
+    <section class="band" data-band={props.group.band.status} aria-labelledby={`band-${props.group.band.status}`}>
+      <div class="band-head">
+        <span class="rungs" aria-hidden="true">
+          <For each={[1, 2, 3, 4]}>
+            {(rung) => <i classList={{ on: rung <= props.group.band.rung }} />}
+          </For>
+        </span>
+        <h2 id={`band-${props.group.band.status}`}>{props.group.band.label}</h2>
+        <span class="def">{props.group.band.definition}</span>
+        <span class="count">{tuneCountLabel(total())}</span>
+      </div>
+
+      <Show
+        when={total() > 0}
+        fallback={<p class="band-empty">Nothing at this level yet.</p>}
+      >
+        <div class={gridClass()} ref={grid}>
+          <For each={rows()}>
+            {(row) => (
+              <TuneCard
+                row={row}
+                now={props.now}
+                density={props.group.band.density}
+                onPractise={props.onPractise}
+              />
+            )}
+          </For>
+        </div>
+
+        {/* Con texto en el buscador no hay tope que ofrecer. */}
+        <Show when={!props.searching && !props.expanded && total() > cap()}>
+          <button type="button" class="more" onClick={props.onShowAll}>
+            Show all {total()}
+          </button>
+        </Show>
+
+        <Show when={props.expanded}>
+          <Show when={shown() < total()}>
+            <div class="band-sentinel" ref={sentinel} aria-hidden="true" />
+          </Show>
+          <button type="button" class="more" onClick={props.onBackToAll}>
+            Back to all
+          </button>
+        </Show>
+      </Show>
+    </section>
+  );
+}
+
+/** La tabla clásica (#7): mismas columnas y misma baja, sobre papel. */
 function RepertoireTable(props: {
   rows: RepertoireRow[];
   busyId: string | number | null;
   onRemove: (row: RepertoireRow) => void;
 }) {
   return (
-    <div class="overflow-x-auto rounded-lg border border-gray-700">
-      <table class="w-full text-left text-sm">
-        <thead class="bg-gray-800 text-xs uppercase tracking-wide text-gray-400">
+    <div class="table-wrap">
+      <table>
+        <thead>
           <tr>
-            <th class="px-4 py-3 font-medium">Tune</th>
-            <th class="px-4 py-3 font-medium">Rhythm</th>
-            <th class="px-4 py-3 font-medium">Key</th>
-            <th class="px-4 py-3 font-medium">Status</th>
-            <th class="px-4 py-3 font-medium">Added</th>
-            <th class="px-4 py-3" />
+            <th>Tune</th>
+            <th>Rhythm</th>
+            <th>Key</th>
+            <th>Level</th>
+            <th>Added</th>
+            <th />
           </tr>
         </thead>
-        <tbody class="divide-y divide-gray-700 bg-gray-900">
+        <tbody>
           <For each={props.rows}>
             {(row) => (
-              <tr class="hover:bg-gray-800/60">
-                <td class="px-4 py-3">
-                  <A
-                    href={`/repertoire/${row.id}`}
-                    class="text-gray-100 hover:text-amber-300 hover:underline"
-                    title={displayTitle(row)}
-                  >
+              <tr>
+                <td>
+                  <A href={`/repertoire/${row.id}`} title={displayTitle(row)}>
                     {displayTitle(row)}
                   </A>
-                  <p class="text-xs text-gray-500">
+                  <p class="dim">
                     {row.tune.origin}
                     {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
                   </p>
                 </td>
-                <td class="px-4 py-3 text-gray-300">{displayRhythm(row)}</td>
-                <td class="px-4 py-3 text-gray-300">{displayKey(row)}</td>
-                <td class="px-4 py-3">
-                  <span
-                    class={`inline-block rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[row.status]}`}
-                  >
-                    {STATUS_LABELS[row.status]}
-                  </span>
+                <td>{displayRhythm(row)}</td>
+                <td>{displayKey(row)}</td>
+                <td>
+                  <span class="pill">{STATUS_LABELS[row.status]}</span>
+                  <Show when={row.shelved}>
+                    {' '}
+                    <span class="dim">shelved</span>
+                  </Show>
                 </td>
-                <td class="px-4 py-3 text-gray-400">
-                  {new Date(row.added_at).toLocaleDateString()}
-                </td>
-                <td class="px-4 py-3 text-right">
+                <td class="dim">{new Date(row.added_at).toLocaleDateString()}</td>
+                <td style={{ 'text-align': 'right' }}>
                   <button
                     type="button"
+                    class="remove"
                     disabled={props.busyId === row.id}
-                    class="text-xs text-gray-500 hover:text-red-300 disabled:opacity-60"
                     onClick={() => props.onRemove(row)}
                   >
                     {props.busyId === row.id ? 'Removing…' : 'Remove'}
@@ -145,134 +286,17 @@ function RepertoireTable(props: {
   );
 }
 
-/**
- * La vista de tarjetas (#7): los mismos datos, en formato de grid. El cuadro de
- * iniciales es el placeholder de la imagen mnemotécnica (la subida real llega en
- * F10) y el título es el enlace al detalle: la tarjeta entera no puede serlo,
- * porque lleva dentro un `<button>` de baja y un `<a>` con un botón dentro no es
- * HTML válido.
- */
-function GridView(props: {
-  rows: RepertoireRow[];
-  now: number;
-  busyId: string | number | null;
-  onRemove: (row: RepertoireRow) => void;
-  /** Recarga tras apuntar un ensayo: «Practiced» pasa a «Practiced today». */
-  onLogged: (row: RepertoireRow) => void | Promise<void>;
-}) {
-  return (
-    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <For each={props.rows}>
-        {(row) => {
-          // Consumo del modelo puro, fuera del JSX: el instante ya viene de la vista.
-          const recency = practiceRecency(row, props.now);
-          return (
-            <li class="relative flex flex-col gap-3 overflow-hidden rounded-lg border border-gray-700 bg-gray-900 p-4 hover:border-gray-600">
-              {/*
-                Fondo del tune (#31): la imagen elegida se pinta como fondo de la
-                carta, recortada al focal guardado. Va en un `img` que cubre la
-                carta —no en un marco— porque `loading="lazy"` solo existe en
-                elementos `img`/`iframe`: un `background-image` de CSS se
-                descargaría siempre, aunque la carta no se vea. El velo de encima
-                mantiene legible el texto.
-              */}
-              <Show when={row.image}>
-                {(image) => (
-                  <>
-                    <img
-                      src={image().thumbUrl ?? ''}
-                      alt=""
-                      aria-hidden="true"
-                      loading="lazy"
-                      decoding="async"
-                      class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-40"
-                      style={{ 'object-position': focalPosition(image().focalX, image().focalY) }}
-                    />
-                    <div class="pointer-events-none absolute inset-0 bg-gradient-to-t from-gray-950 via-gray-950/85 to-gray-950/30" />
-                  </>
-                )}
-              </Show>
-              <div class="relative flex flex-col gap-3">
-                <div
-                  class="flex h-12 w-12 items-center justify-center rounded-md border border-gray-700 bg-gray-800 text-sm font-semibold text-amber-300"
-                  aria-hidden="true"
-                >
-                  {placeholderInitials(row)}
-                </div>
-                <div class="flex items-start justify-between gap-2">
-                  <div class="min-w-0">
-                    <A
-                      href={`/repertoire/${row.id}`}
-                      class="block truncate font-medium text-gray-100 hover:text-amber-300"
-                      title={displayTitle(row)}
-                    >
-                      {displayTitle(row)}
-                    </A>
-                    <p class="text-xs text-gray-500">
-                      {row.tune.origin}
-                      {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
-                    </p>
-                  </div>
-                  <span
-                    class={`inline-block shrink-0 rounded border px-2 py-0.5 text-xs ${STATUS_STYLES[row.status]}`}
-                  >
-                    {STATUS_LABELS[row.status]}
-                  </span>
-                </div>
-                <dl class="space-y-1 text-sm">
-                  <div class="flex items-baseline justify-between gap-3">
-                    <dt class="text-gray-500">Rhythm</dt>
-                    <dd class="text-gray-300">{displayRhythm(row)}</dd>
-                  </div>
-                  <div class="flex items-baseline justify-between gap-3">
-                    <dt class="text-gray-500">Key</dt>
-                    <dd class="text-gray-300">{displayKey(row)}</dd>
-                  </div>
-                  <div class="flex items-baseline justify-between gap-3">
-                    <dt class="text-gray-500">Added</dt>
-                    <dd class="text-gray-400">{new Date(row.added_at).toLocaleDateString()}</dd>
-                  </div>
-                  <div class="flex items-baseline justify-between gap-3">
-                    <dt class="text-gray-500">Practiced</dt>
-                    <dd class="text-gray-400">{recency.label}</dd>
-                  </div>
-                  <Show when={row.rating !== null}>
-                    <div class="flex items-baseline justify-between gap-3">
-                      <dt class="text-gray-500">Rating</dt>
-                      <dd class="text-amber-300">★ {row.rating}</dd>
-                    </div>
-                  </Show>
-                </dl>
-                <div class="mt-auto flex items-center justify-between gap-2">
-                  <PracticeLog repertoireId={row.id} onLogged={() => props.onLogged(row)} />
-                  <button
-                    type="button"
-                    disabled={props.busyId === row.id}
-                    class="text-xs text-gray-500 hover:text-red-300 disabled:opacity-60"
-                    onClick={() => props.onRemove(row)}
-                  >
-                    {props.busyId === row.id ? 'Removing…' : 'Remove'}
-                  </button>
-                </div>
-              </div>
-            </li>
-          );
-        }}
-      </For>
-    </ul>
-  );
-}
-
 export default function Repertoire() {
-  // Un único instante por renderizado de la vista: las etiquetas de «N days ago»
-  // de todas las cards hablan del mismo día. Nunca dentro de la función pura.
-  const now = Date.now();
+  // El instante de la vista: el tag de todas las cartas habla del mismo «hoy».
+  // Se refresca al recargar (tras apuntar un ensayo) para que «today» sea hoy.
+  const [now, setNow] = createSignal(Date.now());
 
   const [rows, setRows] = createSignal<RepertoireRow[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const [busyId, setBusyId] = createSignal<string | number | null>(null);
   const [showCatalogue, setShowCatalogue] = createSignal(false);
+  const [search, setSearch] = createSignal('');
 
   const [query, setQuery] = createSignal('');
   const [results, setResults] = createSignal<CatalogueEntry[]>([]);
@@ -282,10 +306,17 @@ export default function Repertoire() {
   const [catalogueReady, setCatalogueReady] = createSignal(false);
   const [tuneCount, setTuneCount] = createSignal<number | null>(null);
 
-  // La vista arranca con lo guardado en la sesión de esta pestaña.
   const [viewMode, setViewMode] = createSignal<ViewMode>(loadViewMode());
-  // El orden por defecto es la urgencia: este corte existe para decidir qué ensayar.
   const [sortKey, setSortKey] = createSignal<SortKey>('urgency');
+
+  // La banda abierta vive en la URL (§2.7): recargar mantiene la vista.
+  const [params, setParams] = useSearchParams<{ band?: string }>();
+  const activeBand = createMemo<TuneStatus | null>(() => {
+    const raw = params.band;
+    return typeof raw === 'string' && BANDS.some((band) => band.status === raw)
+      ? (raw as TuneStatus)
+      : null;
+  });
 
   const chooseView = (mode: ViewMode) => {
     setViewMode(mode);
@@ -293,22 +324,41 @@ export default function Repertoire() {
   };
 
   const tokens = createMemo(() => tokenizeQuery(query()));
+  const counts = createMemo(() => statusCounts(rows()));
 
-  /** Las filas en el orden elegido; ambas vistas consumen este memo. */
-  const visible = createMemo(() => sortRepertoire(rows(), sortKey()));
+  /** Las cuatro bandas, cada una ordenada por staleness. */
+  const groups = createMemo(() => groupIntoBands(rows(), now()));
 
-  const viewButtonClass = (mode: ViewMode) =>
-    `px-3 py-1.5 text-sm ${
-      viewMode() === mode
-        ? 'bg-amber-500 font-medium text-gray-900'
-        : 'text-gray-300 hover:text-amber-300'
-    }`;
+  /**
+   * Lo que se pinta. Sin texto: las cuatro bandas, vacías incluidas, porque la
+   * pantalla es la escalera. Con texto: las bandas con aciertos, sin vacías. Y
+   * con una banda abierta, esa sola —el buscador sigue vivo dentro de ella—.
+   */
+  const visibleGroups = createMemo(() => {
+    const term = search();
+    const open = activeBand();
+    if (open) {
+      const group = groups().find((candidate) => candidate.band.status === open);
+      if (!group) return [];
+      if (term.trim().length === 0) return [group];
+      return [{ band: group.band, rows: group.rows.filter((row) => matchesQuery(row, term)) }];
+    }
+    return filterBands(groups(), term);
+  });
+
+  /** La tabla consume las filas filtradas y el orden elegido a mano. */
+  const tableRows = createMemo(() => {
+    const term = search().trim();
+    const filtered = term.length === 0 ? rows() : rows().filter((row) => matchesQuery(row, term));
+    return sortRepertoire(filtered, sortKey());
+  });
 
   const load = async () => {
     setLoading(true);
     setError(null);
     try {
       setRows(await fetchRepertoire());
+      setNow(Date.now());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -318,12 +368,12 @@ export default function Repertoire() {
 
   /**
    * Recarga silenciosa tras apuntar un ensayo: no vuelve a poner `loading` para
-   * que el grid no parpadee justo cuando se cierra el panel. El instante `now` no
-   * se recalcula: la etiqueta pasa a «Practiced today» con la misma referencia.
+   * que la rejilla no parpadee con el menú recién cerrado.
    */
   const reload = async () => {
     try {
       setRows(await fetchRepertoire());
+      setNow(Date.now());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -405,7 +455,7 @@ export default function Repertoire() {
         rhythm: entry.type,
         meter: entry.meter,
       });
-      setRows(await fetchRepertoire());
+      await reload();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -418,7 +468,7 @@ export default function Repertoire() {
     setError(null);
     try {
       await removeFromRepertoire(row.id);
-      setRows(await fetchRepertoire());
+      await reload();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -426,39 +476,61 @@ export default function Repertoire() {
     }
   };
 
+  /**
+   * «Practise» del menú: apunta el ensayo de un clic, sin puntuarlo. La calidad
+   * es opcional por diseño (#10) y se puntúa en el detalle; obligar a pasar por
+   * un formulario para apuntar que has tocado una tune mataría el gesto.
+   */
+  const practise = async (row: RepertoireRow) => {
+    setBusyId(row.id);
+    setError(null);
+    try {
+      await logPractice(row.id, { quality: null, comment: null });
+      await reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const showAll = (status: TuneStatus) => setParams({ band: status });
+  const backToAll = () => setParams({ band: undefined });
+
+  const searchTerm = () => search().trim().length > 0;
+
   return (
-    <div class="space-y-6">
-      <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="repertoire-home">
+      <header class="page-head">
         <div>
-          <h2 class="text-xl font-semibold text-gray-100">Your repertoire</h2>
-          <p class="text-sm text-gray-400">
+          <h1>Repertoire</h1>
+          <p class="sub">
             <Show when={!loading()} fallback="Loading…">
-              {rows().length} {rows().length === 1 ? 'tune' : 'tunes'}
+              <b>{tuneCountLabel(rows().length)}</b>
+              {' · '}
+              {counts().to_learn} to learn · {counts().learning} learning ·{' '}
+              {counts().playing_along} playing along · {counts().solo_ready} solo-ready
             </Show>
           </p>
         </div>
-        <div class="flex flex-wrap items-center gap-3">
-          <label class="flex items-center gap-2 text-sm text-gray-400" for="repertoire-sort">
-            Sort by
-            <select
-              id="repertoire-sort"
-              class="rounded border border-gray-600 bg-gray-900 px-2 py-1.5 text-sm text-gray-100 focus:border-amber-500 focus:outline-none"
-              value={sortKey()}
-              onChange={(event) => setSortKey(event.currentTarget.value as SortKey)}
-            >
-              {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
-                <option value={key}>{SORT_LABELS[key]}</option>
-              ))}
-            </select>
+        <div class="head-tools">
+          <label class="search">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.5-3.5" />
+            </svg>
+            <input
+              type="search"
+              placeholder={`Search ${rows().length} tunes`}
+              aria-label="Search tunes"
+              autocomplete="off"
+              value={search()}
+              onInput={(event) => setSearch(event.currentTarget.value)}
+            />
           </label>
-          <div
-            class="flex overflow-hidden rounded border border-gray-600"
-            role="group"
-            aria-label="Repertoire view"
-          >
+          <div class="viewswitch" role="group" aria-label="Repertoire view">
             <button
               type="button"
-              class={viewButtonClass('table')}
               aria-pressed={viewMode() === 'table'}
               onClick={() => chooseView('table')}
             >
@@ -466,104 +538,92 @@ export default function Repertoire() {
             </button>
             <button
               type="button"
-              class={viewButtonClass('grid')}
               aria-pressed={viewMode() === 'grid'}
               onClick={() => chooseView('grid')}
             >
-              Grid
+              Cards
             </button>
           </div>
-          <button
-            type="button"
-            class="rounded bg-amber-500 px-4 py-2 text-sm font-medium text-gray-900 hover:bg-amber-400"
-            onClick={() => setShowCatalogue((open) => !open)}
-          >
-            {showCatalogue() ? 'Close catalogue' : 'Add tunes'}
+          <button type="button" class="add" onClick={() => setShowCatalogue((open) => !open)}>
+            {showCatalogue() ? 'Close catalogue' : 'Add a tune'}
           </button>
         </div>
-      </div>
+      </header>
 
       <Show when={error()}>
-        <p class="rounded border border-red-800 bg-red-900/40 px-3 py-2 text-sm text-red-200" role="alert">
+        <p class="notice notice-error" role="alert">
           {error()}
         </p>
       </Show>
 
       <Show when={showCatalogue()}>
-        <section class="rounded-lg border border-gray-700 bg-gray-800 p-4">
-          <div class="mb-3 space-y-2">
-            <label class="block text-sm font-medium text-amber-300" for="catalogue-search">
-              Search the tune catalogue
-            </label>
-            <input
-              id="catalogue-search"
-              type="search"
-              autocomplete="off"
-              placeholder="Name or any alternative title — e.g. butterfly, red admiral…"
-              value={query()}
-              onInput={(event) => setQuery(event.currentTarget.value)}
-              class="w-full rounded bg-gray-900 border border-gray-600 px-3 py-2 text-sm text-gray-100 focus:border-amber-500 focus:outline-none"
-            />
-            <p class="text-xs text-gray-500">
-              <Show
-                when={catalogueError()}
-                fallback={
-                  <Show
-                    when={searchMs() !== null}
-                    fallback={
-                      tuneCount() === null
-                        ? 'Searches run on this device — no network per keystroke.'
-                        : `${tuneCount()!.toLocaleString()} tunes from a local database — no network per keystroke.`
-                    }
-                  >
-                    {results().length} {results().length === 1 ? 'match' : 'matches'} ·{' '}
-                    {(searchMs() ?? 0).toFixed(1)} ms · searched on this device
-                  </Show>
-                }
-              >
-                <span class="text-red-300">{catalogueError()}</span>
-              </Show>
-            </p>
-          </div>
+        <section class="catalogue">
+          <label for="catalogue-search">Search the tune catalogue</label>
+          <input
+            id="catalogue-search"
+            type="search"
+            autocomplete="off"
+            placeholder="Name or any alternative title — e.g. butterfly, red admiral…"
+            value={query()}
+            onInput={(event) => setQuery(event.currentTarget.value)}
+          />
+          <p class="hint">
+            <Show
+              when={catalogueError()}
+              fallback={
+                <Show
+                  when={searchMs() !== null}
+                  fallback={
+                    tuneCount() === null
+                      ? 'Searches run on this device — no network per keystroke.'
+                      : `${tuneCount()!.toLocaleString()} tunes from a local database — no network per keystroke.`
+                  }
+                >
+                  {results().length} {results().length === 1 ? 'match' : 'matches'} ·{' '}
+                  {(searchMs() ?? 0).toFixed(1)} ms · searched on this device
+                </Show>
+              }
+            >
+              <span>{catalogueError()}</span>
+            </Show>
+          </p>
 
           <Show when={!catalogueReady()}>
-            <p class="text-sm text-gray-400">Loading the catalogue (4.5 MB, downloaded once)…</p>
+            <p class="hint">Loading the catalogue (4.5 MB, downloaded once)…</p>
           </Show>
 
           <Show when={catalogueReady() && query().trim().length > 0}>
             <Show
               when={results().length > 0}
               fallback={
-                <p class="text-sm text-gray-400">
-                  {searching() ? 'Searching…' : 'No tune matches that search.'}
-                </p>
+                <p class="hint">{searching() ? 'Searching…' : 'No tune matches that search.'}</p>
               }
             >
-              <ul class="divide-y divide-gray-700">
+              <ul>
                 <For each={results()}>
                   {(entry) => {
                     const alias = aliasExcerpt(entry, tokens());
                     const viaAlias = matchedViaAlias(entry, tokens());
                     const owned = () => ownedRefs().has(String(entry.tuneId));
                     return (
-                      <li class="flex items-start justify-between gap-3 py-2">
-                        <div class="min-w-0">
-                          <p class="truncate text-gray-100">{normalizeTitle(entry.name)}</p>
-                          <p class="text-xs text-gray-500">
+                      <li>
+                        <div>
+                          <p class="cat-title">{normalizeTitle(entry.name)}</p>
+                          <p class="cat-meta">
                             {entry.type ?? '—'}
                             {entry.meter ? ` · ${entry.meter}` : ''}
-                            <span class="text-gray-600"> · thesession #{entry.tuneId}</span>
+                            <span> · thesession #{entry.tuneId}</span>
                           </p>
                           <Show when={viaAlias && alias}>
-                            <p class="text-xs text-gray-400">
-                              Also known as <span class="text-amber-300">{alias}</span>
+                            <p class="cat-meta">
+                              Also known as <b>{alias}</b>
                             </p>
                           </Show>
                         </div>
                         <button
                           type="button"
+                          class="cat-add"
                           disabled={busyId() === entry.tuneId || owned()}
-                          class="shrink-0 rounded border border-gray-600 px-3 py-1 text-sm text-gray-200 hover:border-amber-500 hover:text-amber-300 disabled:opacity-60"
                           onClick={() => void add(entry)}
                         >
                           {owned()
@@ -581,7 +641,7 @@ export default function Repertoire() {
           </Show>
 
           <Show when={catalogueReady() && query().trim().length === 0}>
-            <p class="text-sm text-gray-400">
+            <p class="hint">
               Type a name — or an alternative one. The search looks at titles and at every
               alternative title in the catalogue.
             </p>
@@ -589,26 +649,90 @@ export default function Repertoire() {
         </section>
       </Show>
 
+      {/* El buscador de la home sigue en pantalla con una banda abierta (§2.7);
+          el que se oculta es el resto de bandas, no la herramienta. */}
+      <Show when={viewMode() === 'grid'}>
+        <div class="sortbar">
+          <Show
+            when={activeBand()}
+            fallback={
+              <>
+                <span class="lbl">Within each level</span>
+                <span>Staleness — longest untouched first</span>
+              </>
+            }
+          >
+              <span class="lbl">Showing</span>
+              <span>{bandFor(activeBand()!).label}</span>
+              <button type="button" class="back-to-all" onClick={backToAll}>
+                Back to all
+              </button>
+          </Show>
+          <span class="spacer" />
+          <span class="heat">
+            <i />
+            going cold
+          </span>
+        </div>
+      </Show>
+
+      <Show when={viewMode() === 'table'}>
+        <div class="sortbar">
+          <span class="lbl">Sort by</span>
+          <select
+            aria-label="Sort by"
+            value={sortKey()}
+            onChange={(event) => setSortKey(event.currentTarget.value as SortKey)}
+          >
+            {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
+              <option value={key}>{SORT_LABELS[key]}</option>
+            ))}
+          </select>
+          <span class="spacer" />
+        </div>
+      </Show>
+
       <Show
         when={!loading()}
-        fallback={<p class="text-sm text-gray-400">Loading your repertoire…</p>}
+        fallback={<p class="notice">Loading your repertoire…</p>}
       >
         <Show
           when={rows().length > 0}
           fallback={
-            <div class="rounded-lg border border-dashed border-gray-700 bg-gray-800/50 p-8 text-center">
-              <p class="text-gray-300">Your repertoire is empty.</p>
-              <p class="text-sm text-gray-500 mt-1">
-                Open the catalogue and add the first tune you want to keep track of.
-              </p>
+            <div class="empty">
+              <p>Your repertoire is empty.</p>
+              <p>Open the catalogue and add the first tune you want to keep track of.</p>
             </div>
           }
         >
           <Show
             when={viewMode() === 'grid'}
-            fallback={<RepertoireTable rows={visible()} busyId={busyId()} onRemove={remove} />}
+            fallback={
+              <RepertoireTable rows={tableRows()} busyId={busyId()} onRemove={remove} />
+            }
           >
-            <GridView rows={visible()} now={now} busyId={busyId()} onRemove={remove} onLogged={reload} />
+            <Show
+              when={visibleGroups().length > 0}
+              fallback={
+                <p class="notice">
+                  No tune in your repertoire matches “{search().trim()}”.
+                </p>
+              }
+            >
+              <For each={visibleGroups()}>
+                {(group) => (
+                  <BandView
+                    group={group}
+                    now={now()}
+                    searching={searchTerm()}
+                    expanded={activeBand() === group.band.status}
+                    onShowAll={() => showAll(group.band.status)}
+                    onBackToAll={backToAll}
+                    onPractise={practise}
+                  />
+                )}
+              </For>
+            </Show>
           </Show>
         </Show>
       </Show>
