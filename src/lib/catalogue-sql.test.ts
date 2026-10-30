@@ -15,6 +15,7 @@ import {
   CATALOGUE_SEARCH_SQL,
   CATALOGUE_STATS_SQL,
   aliasExcerpt,
+  buildCatalogueByIdSql,
   buildFtsMatch,
   mapCatalogueRow,
   matchedViaAlias,
@@ -95,6 +96,31 @@ describe('títulos alternativos', () => {
     const tokens = tokenizeQuery('jylhan');
     expect(tokens).toEqual(['jylhan']);
     expect(search('jylhan').map((entry) => entry.tuneId)).toContain(6657);
+  });
+});
+
+describe('compás por id para la importación (#32)', () => {
+  it('resuelve el compás de los ids del tunebook y no devuelve nada para un id ausente', () => {
+    const rows = db
+      .prepare(buildCatalogueByIdSql(2))
+      .all(6970, 1075) as unknown as Record<string, unknown>[];
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => Number(row.tune_id))).toEqual([1075, 6970]);
+    for (const row of rows) {
+      expect(row.meter).not.toBeNull();
+      expect(String(row.meter)).toMatch(/^\d+\/\d+$/);
+    }
+
+    expect(db.prepare(buildCatalogueByIdSql(1)).all(99999999)).toHaveLength(0);
+  });
+
+  it('la sentencia lleva un marcador por id y exige al menos uno', () => {
+    expect(buildCatalogueByIdSql(3)).toBe(
+      'SELECT tune_id, meter FROM tunes WHERE tune_id IN (?,?,?)'
+    );
+    expect(() => buildCatalogueByIdSql(0)).toThrow();
+    expect(() => buildCatalogueByIdSql(-2)).toThrow();
   });
 });
 

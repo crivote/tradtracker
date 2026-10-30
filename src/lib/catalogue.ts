@@ -56,6 +56,25 @@ export const CATALOGUE_STATS_SQL = `
            WHERE aliases IS NOT NULL AND aliases <> '') AS with_aliases
 `;
 
+/**
+ * Tunes por tanda en la consulta por id. SQLite tiene un tope de parámetros
+ * ligados por sentencia; 400 deja aire de sobra y hace tandas pequeñas.
+ */
+export const CATALOGUE_BY_ID_CHUNK = 400;
+
+/**
+ * Sentencia del compás para una lista de ids (`IN (?,?,…)`). La usa la
+ * importación del tunebook (issue #32): el listado del API no trae `meter` y el
+ * catálogo lo tiene para todo lo medido.
+ */
+export function buildCatalogueByIdSql(count: number): string {
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error(`buildCatalogueByIdSql needs a positive whole number of ids, got ${count}.`);
+  }
+  const placeholders = Array.from({ length: count }, () => '?').join(',');
+  return `SELECT tune_id, meter FROM tunes WHERE tune_id IN (${placeholders})`;
+}
+
 /** Máximo de tokens que se aceptan de una consulta: acota la expresión FTS. */
 const MAX_TOKENS = 8;
 

@@ -10,8 +10,10 @@
  * artefacto real con `node:sqlite`; aquí solo está el transporte.
  */
 import {
+  CATALOGUE_BY_ID_CHUNK,
   CATALOGUE_SEARCH_SQL,
   CATALOGUE_STATS_SQL,
+  buildCatalogueByIdSql,
   buildFtsMatch,
   mapCatalogueRow,
   orderCatalogue,
@@ -130,6 +132,42 @@ export async function searchCatalogue(query: string, limit = 15): Promise<Catalo
   }) as CatalogueRow[];
 
   return orderCatalogue(rows.map(mapCatalogueRow), tokens, query, limit);
+}
+
+/**
+ * Compás de una lista de tunes del catálogo (issue #32).
+ *
+ * El listado del tunebook no trae `meter`; el catálogo sí. Se trocea la
+ * consulta para no chocar con el tope de parámetros de SQLite y se devuelve solo
+ * lo que existe: los ids ausentes **no** aparecen en el mapa, y quien la usa
+ * decide (la importación deja el compás en `null`).
+ */
+export async function lookupCatalogueMeters(
+  tuneIds: number[]
+): Promise<Map<number, string | null>> {
+  const meters = new Map<number, string | null>();
+  const unique = [...new Set(tuneIds)].filter(
+    (tuneId) => Number.isInteger(tuneId) && tuneId > 0
+  );
+  if (unique.length === 0) return meters;
+
+  const { db } = await loadCatalogue();
+
+  for (let start = 0; start < unique.length; start += CATALOGUE_BY_ID_CHUNK) {
+    const chunk = unique.slice(start, start + CATALOGUE_BY_ID_CHUNK);
+    const rows = db.exec({
+      sql: buildCatalogueByIdSql(chunk.length),
+      bind: chunk,
+      returnValue: 'resultRows',
+      rowMode: 'object',
+    }) as CatalogueRow[];
+
+    for (const row of rows) {
+      meters.set(Number(row.tune_id), row.meter == null ? null : String(row.meter));
+    }
+  }
+
+  return meters;
 }
 
 export async function getCatalogueStats(): Promise<CatalogueStats> {
