@@ -655,6 +655,18 @@ export function filterBands(groups: readonly BandGroup[], term: string): BandGro
 }
 
 /**
+ * Cuántas tunes están en el cajón (`shelved`). Va aparte de `statusCounts`
+ * porque aparcar no es un peldaño: la cabecera de la home necesita los dos
+ * números para que el total del repertorio sea la suma de sus partes (las cuatro
+ * bandas más el cajón) y no un total que no cuadra con lo que se pinta debajo.
+ */
+export function shelvedCount(rows: readonly RepertoireRow[]): number {
+  let count = 0;
+  for (const row of rows) if (row.shelved) count += 1;
+  return count;
+}
+
+/**
  * Las aparcadas, para el cajón del final de la home (#11). El orden es el mismo
  * de dentro de las bandas —nunca tocada primero, después las más abandonadas—
  * y el buscador de la home también manda aquí: con texto solo vuelven las que

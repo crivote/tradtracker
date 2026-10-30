@@ -17,6 +17,7 @@ import {
   matchesQuery,
   parseViewMode,
   removeFromRepertoire,
+  shelvedCount,
   sortRepertoire,
   statusCounts,
   VIEW_MODE_KEY,
@@ -387,6 +388,8 @@ export default function Repertoire() {
 
   const tokens = createMemo(() => tokenizeQuery(query()));
   const counts = createMemo(() => statusCounts(rows()));
+  /** Las del cajón, para que la cabecera sume: bandas + aparcadas = repertorio. */
+  const shelvedTotal = createMemo(() => shelvedCount(rows()));
 
   /** Las cuatro bandas, cada una ordenada por staleness. */
   const groups = createMemo(() => groupIntoBands(rows(), now()));
@@ -580,6 +583,12 @@ export default function Repertoire() {
               {' · '}
               {counts().to_learn} to learn · {counts().learning} learning ·{' '}
               {counts().playing_along} playing along · {counts().solo_ready} solo-ready
+              {/* Las aparcadas se nombran para que el total cuadre: las cuatro
+                  bandas más el cajón son el repertorio entero. */}
+              <Show when={shelvedTotal() > 0}>
+                {' · '}
+                {shelvedTotal()} shelved
+              </Show>
             </Show>
           </p>
         </div>

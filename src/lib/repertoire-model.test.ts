@@ -22,6 +22,7 @@ import {
   practiceSummary,
   qualityDots,
   sortRepertoire,
+  shelvedCount,
   stalenessColor,
   stalenessDays,
   stalenessIntensity,
@@ -439,6 +440,21 @@ describe('bandas de la escalera (#29)', () => {
       playing_along: 0,
       solo_ready: 0,
     });
+  });
+
+  it('shelvedCount cierra la cuenta de la cabecera: bandas + cajón = repertorio', () => {
+    const rows = [
+      makeRow({ id: 'a', status: 'to_learn' }),
+      makeRow({ id: 'b', status: 'learning', shelved: true }),
+      makeRow({ id: 'c', status: 'solo_ready', shelved: true }),
+    ];
+    const counts = statusCounts(rows);
+    const enBandas = counts.to_learn + counts.learning + counts.playing_along + counts.solo_ready;
+
+    expect(shelvedCount(rows)).toBe(2);
+    expect(enBandas + shelvedCount(rows)).toBe(rows.length);
+    expect(shelvedCount([])).toBe(0);
+    expect(shelvedCount([makeRow({ id: 'd', shelved: false })])).toBe(0);
   });
 });
 
