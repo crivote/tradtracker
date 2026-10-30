@@ -15,6 +15,19 @@ const REPERTOIRE_SELECT = [
   'notes',
   'added_at',
   'last_practiced_at',
+  // Fondo del tune (#31): las doce columnas de la migración 005.
+  'image_source',
+  'image_id',
+  'image_thumb_url',
+  'image_full_url',
+  'image_page_url',
+  'image_author',
+  'image_license',
+  'image_license_url',
+  'image_focal_x',
+  'image_focal_y',
+  'image_zoom',
+  'image_chosen_at',
   'pr_tunes!inner(id,origin,origin_ref,name,rhythm,meter,key,abc)',
 ].join(',');
 
@@ -137,4 +150,98 @@ export async function addToRepertoire(tuneId: string): Promise<void> {
 export async function removeFromRepertoire(repertoireId: string): Promise<void> {
   const { error } = await supabase.from('pr_repertoire').delete().eq('id', repertoireId);
   if (error) throw new Error(`Could not remove the tune: ${error.message}`);
+}
+
+/**
+ * Lo que se guarda al elegir un fondo (#31). Son los datos del candidato más el
+ * encuadre; el id del proveedor va aparte porque es lo que permite deduplicar y
+ * volver a pedir el grande.
+ */
+export interface ImageSelection {
+  source: 'commons' | 'pexels';
+  id: string;
+  thumbUrl: string;
+  fullUrl: string;
+  pageUrl: string;
+  author: string;
+  license: string;
+  licenseUrl: string | null;
+  focalX?: number;
+  focalY?: number;
+  zoom?: number;
+}
+
+/** Redondeo del focal y recorte del zoom a la ventana del esquema: 0–100 y 1–2,2. */
+function focalValue(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value as number)) return fallback;
+  return Math.round(Math.min(100, Math.max(0, value as number)));
+}
+
+function zoomValue(value: number | undefined): number {
+  if (!Number.isFinite(value as number)) return 1;
+  return Math.min(2.2, Math.max(1, value as number));
+}
+
+/**
+ * Guarda la elección en la fila de repertorio. Se escribe **por id de fila**: la
+ * fila ya existe (estamos en su detalle) y `user_id` lo pone la base, igual que
+ * en el alta. Un `upsert` no serviría: la rama de inserción necesitaría
+ * `tune_id` y podría crear una fila fantasma. El `select('id')` convierte un
+ * no-op silencioso (fila ajena por RLS) en error visible.
+ */
+export async function saveImageChoice(
+  repertoireId: string,
+  selection: ImageSelection
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .update({
+      image_source: selection.source,
+      image_id: selection.id,
+      image_thumb_url: selection.thumbUrl,
+      image_full_url: selection.fullUrl,
+      image_page_url: selection.pageUrl,
+      image_author: selection.author,
+      image_license: selection.license,
+      image_license_url: selection.licenseUrl,
+      image_focal_x: focalValue(selection.focalX, 50),
+      image_focal_y: focalValue(selection.focalY, 50),
+      image_zoom: zoomValue(selection.zoom),
+      image_chosen_at: new Date().toISOString(),
+    })
+    .eq('id', repertoireId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not save the background: ${error.message}`);
+  if (!data?.id) throw new Error('Could not save the background: that tune is not yours.');
+}
+
+/**
+ * Quita el fondo y deja los valores por defecto del esquema (centro y 100 %),
+ * para que volver a elegir no herede el encuadre de la imagen anterior.
+ */
+export async function clearImageChoice(repertoireId: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .update({
+      image_source: null,
+      image_id: null,
+      image_thumb_url: null,
+      image_full_url: null,
+      image_page_url: null,
+      image_author: null,
+      image_license: null,
+      image_license_url: null,
+      image_focal_x: 50,
+      image_focal_y: 50,
+      image_zoom: 1,
+      image_chosen_at: null,
+    })
+    .eq('id', repertoireId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not clear the background: ${error.message}`);
+  if (!data?.id) throw new Error('Could not clear the background: that tune is not yours.');
 }

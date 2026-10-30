@@ -18,6 +18,27 @@ export interface TuneRecord {
   abc: string | null;
 }
 
+/**
+ * Fondo elegido para la tune (issue #31). Vive en la fila del repertorio, no en
+ * una tabla aparte: dos usuarios pueden querer imágenes distintas para la misma
+ * tune. `null` cuando no hay fondo, y entonces la carta se pinta como antes.
+ */
+export interface ChosenImage {
+  source: 'commons' | 'pexels' | 'upload';
+  id: string | null;
+  thumbUrl: string | null;
+  fullUrl: string | null;
+  pageUrl: string | null;
+  author: string | null;
+  license: string | null;
+  licenseUrl: string | null;
+  /** Punto focal en % y zoom 1–2,2: el encuadre manual sobre el recorte 5:4. */
+  focalX: number;
+  focalY: number;
+  zoom: number;
+  chosenAt: string | null;
+}
+
 export interface RepertoireRow {
   id: string;
   status: TuneStatus;
@@ -29,6 +50,51 @@ export interface RepertoireRow {
   added_at: string;
   last_practiced_at: string | null;
   tune: TuneRecord;
+  /** Fondo elegido; null si la tune no tiene imagen todavía. */
+  image: ChosenImage | null;
+}
+
+/** Los valores por defecto son los de la migración 005: centro y 100 %. */
+const IMAGE_FOCAL_DEFAULT = 50;
+const IMAGE_ZOOM_DEFAULT = 1;
+
+function clampFocalValue(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return IMAGE_FOCAL_DEFAULT;
+  return Math.min(100, Math.max(0, parsed));
+}
+
+function clampZoomValue(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return IMAGE_ZOOM_DEFAULT;
+  return Math.min(2.2, Math.max(1, parsed));
+}
+
+/**
+ * Normaliza las doce columnas de imagen de una fila de PostgREST. Sin
+ * `image_thumb_url` no hay fondo que pintar: se devuelve null y la carta queda
+ * como estaba (la imagen elegida puede haber quedado sin URL por un borrado
+ * manual en la base, y eso no debe romper la rejilla).
+ */
+export function mapImageRow(row: Record<string, any>): ChosenImage | null {
+  const source = row.image_source;
+  if (source !== 'commons' && source !== 'pexels' && source !== 'upload') return null;
+  if (!row.image_thumb_url) return null;
+
+  return {
+    source,
+    id: row.image_id ?? null,
+    thumbUrl: row.image_thumb_url,
+    fullUrl: row.image_full_url ?? row.image_thumb_url,
+    pageUrl: row.image_page_url ?? null,
+    author: row.image_author ?? null,
+    license: row.image_license ?? null,
+    licenseUrl: row.image_license_url ?? null,
+    focalX: clampFocalValue(row.image_focal_x),
+    focalY: clampFocalValue(row.image_focal_y),
+    zoom: clampZoomValue(row.image_zoom),
+    chosenAt: row.image_chosen_at ?? null,
+  };
 }
 
 /**
@@ -51,11 +117,24 @@ export function mapRepertoireRow(row: Record<string, any>): RepertoireRow {
     added_at: row.added_at,
     last_practiced_at: row.last_practiced_at ?? null,
     tune: embedded as TuneRecord,
+    image: mapImageRow(row),
   };
 }
 
 export function displayTitle(item: RepertoireRow): string {
   return item.custom_title?.trim() || normalizeTitle(item.tune.name);
+}
+
+/**
+ * Crédito del fondo, tal y como se pinta en el detalle: «autor · licencia».
+ * La licencia de Commons llega a veces vacía; entonces se enseña solo el autor.
+ * El enlace a la ficha lo pone la vista con `image.pageUrl`.
+ */
+export function imageCredit(image: ChosenImage | null): string {
+  if (!image) return '';
+  const author = (image.author ?? '').trim() || 'Unknown author';
+  const license = (image.license ?? '').trim();
+  return license ? `${author} · ${license}` : author;
 }
 
 export function displayRhythm(item: RepertoireRow): string {
