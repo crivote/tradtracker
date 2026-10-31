@@ -52,6 +52,12 @@ export interface RepertoireRow {
   status: TuneStatus;
   /** Bandera transversal: la tune está en el cajón, en cualquier peldaño. */
   shelved: boolean;
+  /**
+   * Palanca de priorización de F6 (listas de ensayo), **no sustituye al
+   * `rating`**: el rating dice cómo salió la última práctica, esto solo dice
+   * «ponla en la lista de hoy». Convive con `shelved` y con el peldaño.
+   */
+  favorite: boolean;
   rating: number | null;
   custom_title: string | null;
   custom_rhythm: string | null;
@@ -164,6 +170,9 @@ export function mapRepertoireRow(
     id: row.id,
     status: row.status as TuneStatus,
     shelved: row.shelved === true,
+    // Tolerante a propósito: `undefined` (filas anteriores a la migración 008,
+    // dobles de test) y `null` significan «no es favorita», igual que `false`.
+    favorite: row.favorite === true,
     rating: row.rating ?? null,
     custom_title: row.custom_title ?? null,
     custom_rhythm: row.custom_rhythm ?? null,
