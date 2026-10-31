@@ -239,6 +239,45 @@ export function displayKey(item: RepertoireRow): string {
 }
 
 /**
+ * Los invariantes de la pieza —tipo · compás · autor— tal y como van bajo el
+ * título del listado (#42). `null` en lo que falte: la fila **omite** la parte
+ * que no tiene y nunca pinta un guion, porque un guion ahí se lee como un dato.
+ * El compás y el autor no tienen override personal; el tipo sí.
+ */
+export interface RowInvariants {
+  rhythm: string | null;
+  meter: string | null;
+  composer: string | null;
+}
+
+export function rowInvariants(row: RepertoireRow): RowInvariants {
+  const text = (value: string | null | undefined): string | null => {
+    const trimmed = (value ?? '').trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+  return {
+    rhythm: text(row.custom_rhythm) ?? text(row.tune.rhythm),
+    meter: text(row.tune.meter),
+    composer: text(row.tune.composer),
+  };
+}
+
+/** Barras encendidas del icono de peldaño (1–4), desde `bandFor`. */
+export function rungOf(row: RepertoireRow): number {
+  return bandFor(row.status).rung;
+}
+
+/**
+ * Nombre accesible del icono de peldaño: la etiqueta y su definición, el mismo
+ * texto del `title`. El `title` **no** es un nombre accesible, así que quien
+ * pinte el icono tiene que llevar los dos y actualizarlos a la vez.
+ */
+export function levelText(row: RepertoireRow): string {
+  const band = bandFor(row.status);
+  return `${band.label} — ${band.definition}`;
+}
+
+/**
  * Las cuatro bandas de la home (#29), en orden de escalera. Cada una lleva el
  * nombre, la definición que se pinta al lado y el peldaño que enciende el
  * indicador de cuatro barras.
@@ -422,7 +461,19 @@ export function collationKey(title: string): string {
     .replace(/\p{M}+/gu, '');
 }
 
-export type SortKey = 'urgency' | 'alphabetical' | 'added' | 'rating';
+/**
+ * Criterios de orden. `urgency` es el de la tabla por defecto —nunca ensayada
+ * primero, después la más abandonada— y las tres últimas claves son las
+ * columnas nuevas del listado (#42): peldaño, ensayos y media.
+ */
+export type SortKey =
+  | 'urgency'
+  | 'alphabetical'
+  | 'added'
+  | 'rating'
+  | 'level'
+  | 'practices'
+  | 'quality';
 
 /** Etiquetas del selector de orden, para ambas vistas. */
 export const SORT_LABELS: Record<SortKey, string> = {
@@ -430,6 +481,28 @@ export const SORT_LABELS: Record<SortKey, string> = {
   alphabetical: 'A to Z',
   added: 'Recently added',
   rating: 'Rating',
+  level: 'Level',
+  practices: 'Practices',
+  quality: 'Average',
+};
+
+/** Sentido de un orden, tal y como lo dice la cabecera ordenable. */
+export type SortDirection = 'asc' | 'desc';
+
+/**
+ * El sentido con el que cada criterio se lee **por defecto**, que es el que
+ * enciende la flecha al abrir la tabla: la columna de título va de la A a la Z
+ * y las demás empiezan por el valor alto (más ensayos, peldaño más alto, alta
+ * más reciente, la más abandonada). Un segundo clic invierte desde aquí.
+ */
+export const SORT_DEFAULT_DIRECTION: Record<SortKey, SortDirection> = {
+  urgency: 'desc',
+  alphabetical: 'asc',
+  added: 'desc',
+  rating: 'desc',
+  level: 'desc',
+  practices: 'desc',
+  quality: 'desc',
 };
 
 /** Comparación de cadenas por code unit: -1, 0 o 1. Determinista en cualquier runtime. */
@@ -466,6 +539,47 @@ function addedTime(row: RepertoireRow): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
+/**
+ * Antigüedad del tune en el repertorio, en palabras (#42): `3 days`,
+ * `4 months`, `1 year 1 month`. La fecha exacta va en el `title` de la celda,
+ * así que aquí lo útil es la magnitud, no el día.
+ *
+ * Los tramos son los del boceto aprobado: menos de un mes en días, menos de un
+ * año en meses redondeados, y a partir de ahí años con los meses que sobren.
+ * Los plurales se componen uno a uno porque `1 months` es justo el defecto que
+ * se ve en cuanto uno escribe el plural a mano. Un `added_at` que no se puede
+ * leer no inventa una antigüedad: devuelve `—`, el hueco de la columna.
+ */
+export function addedAge(addedAt: string, now: number): string {
+  const days = daysSince(addedAt, now);
+  if (days === null) return '—';
+  if (days < 30) return `${days} ${days === 1 ? 'day' : 'days'}`;
+  if (days < 365) {
+    const months = Math.round(days / 30);
+    if (months >= 12) return '1 year';
+    return `${months} ${months === 1 ? 'month' : 'months'}`;
+  }
+  let years = Math.floor(days / 365);
+  let months = Math.round((days - years * 365) / 30);
+  // 11 meses y medio redondean a 12: es un año, no «12 months».
+  if (months === 12) {
+    years += 1;
+    months = 0;
+  }
+  const yearPart = `${years} ${years === 1 ? 'year' : 'years'}`;
+  if (months === 0) return yearPart;
+  return `${yearPart} ${months} ${months === 1 ? 'month' : 'months'}`;
+}
+
+/**
+ * Comparadores de cada criterio, **solo por su clave primaria**: devuelven 0
+ * cuando empatan y el desempate lo pone `sortRepertoire` (título mostrado y, en
+ * última instancia, id). Así invertir la columna invierte lo que el lector ve
+ * —el valor— y no el orden alfabético de las filas empatadas, que se quedaría
+ * al revés sin que nadie lo hubiera pedido.
+ *
+ * Cada comparador está escrito en el sentido de `SORT_DEFAULT_DIRECTION`.
+ */
 const SORT_COMPARATORS: Record<SortKey, (left: RepertoireRow, right: RepertoireRow) => number> = {
   /**
    * Urgencia: primero los nunca ensayados; después los más antiguos de
@@ -476,37 +590,68 @@ const SORT_COMPARATORS: Record<SortKey, (left: RepertoireRow, right: RepertoireR
   urgency: (left, right) => {
     const leftTime = practiceTime(left);
     const rightTime = practiceTime(right);
-    if (leftTime === null || rightTime === null) {
-      if (leftTime === rightTime) return tieBreak(left, right);
-      return leftTime === null ? -1 : 1;
-    }
-    if (leftTime !== rightTime) return leftTime - rightTime;
-    return tieBreak(left, right);
+    if (leftTime === rightTime) return 0;
+    if (leftTime === null) return -1;
+    if (rightTime === null) return 1;
+    return leftTime - rightTime;
   },
   /** Alfabético por `displayTitle`, sin distinguir mayúsculas ni acentos. */
-  alphabetical: (left, right) => tieBreak(left, right),
+  alphabetical: (left, right) =>
+    compareStrings(collationKey(displayTitle(left)), collationKey(displayTitle(right))),
   /** Fecha de alta: la más reciente primero, como ordena ya la consulta. */
-  added: (left, right) => {
-    const leftTime = addedTime(left);
-    const rightTime = addedTime(right);
-    if (leftTime !== rightTime) return rightTime - leftTime;
-    return tieBreak(left, right);
-  },
+  added: (left, right) => addedTime(right) - addedTime(left),
   /** Rating descendente; los null van al final. */
   rating: (left, right) => {
     const leftRating = left.rating ?? Number.NEGATIVE_INFINITY;
     const rightRating = right.rating ?? Number.NEGATIVE_INFINITY;
-    if (leftRating !== rightRating) return rightRating - leftRating;
-    return tieBreak(left, right);
+    if (leftRating === rightRating) return 0;
+    return rightRating - leftRating;
+  },
+  /** Peldaño de la escalera: la más alta primero (#42). */
+  level: (left, right) => bandFor(right.status).rung - bandFor(left.status).rung,
+  /**
+   * Ensayos: más primero. `null` es «no hay dato» y va al final —un 0 sí es un
+   * dato y solo queda detrás de los que tienen alguno—. Al invertir la columna
+   * los `null` pasan delante, como en cualquier tabla: la fila sin dato no
+   * tiene un valor con el que competir.
+   */
+  practices: (left, right) => {
+    const leftCount = left.practice_count;
+    const rightCount = right.practice_count;
+    if (leftCount === rightCount) return 0;
+    if (leftCount === null) return 1;
+    if (rightCount === null) return -1;
+    return rightCount - leftCount;
+  },
+  /** Media de calidad: más alta primero, y `null` (sin ensayos) al final. */
+  quality: (left, right) => {
+    const leftAvg = left.avg_quality;
+    const rightAvg = right.avg_quality;
+    if (leftAvg === rightAvg) return 0;
+    if (leftAvg === null) return 1;
+    if (rightAvg === null) return -1;
+    return rightAvg - leftAvg;
   },
 };
 
 /**
- * Devuelve una copia ordenada, sin mutar la de entrada. El comparador lleva
- * desempate propio, así que el resultado no depende del orden de la consulta.
+ * Devuelve una copia ordenada, sin mutar la de entrada. `direction` invierte el
+ * criterio primario; el desempate se queda siempre en el mismo sentido, así que
+ * dos filas empatadas no bailan al cambiar la flecha y el resultado no depende
+ * del orden en que lleguen de la consulta.
  */
-export function sortRepertoire(rows: readonly RepertoireRow[], key: SortKey): RepertoireRow[] {
-  return [...rows].sort(SORT_COMPARATORS[key]);
+export function sortRepertoire(
+  rows: readonly RepertoireRow[],
+  key: SortKey,
+  direction: SortDirection = SORT_DEFAULT_DIRECTION[key]
+): RepertoireRow[] {
+  const primary = SORT_COMPARATORS[key];
+  const flip = direction !== SORT_DEFAULT_DIRECTION[key];
+  return [...rows].sort((left, right) => {
+    const result = primary(left, right);
+    if (result === 0) return tieBreak(left, right);
+    return flip ? -result : result;
+  });
 }
 
 /** Modo de presentación del repertorio: la tabla clásica o las tarjetas. */
