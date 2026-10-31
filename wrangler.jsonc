@@ -1,12 +1,16 @@
 {
   // Cloudflare Workers con assets estáticos (no Pages).
   // El fallback SPA NO va en _redirects: /* -> /index.html 200 se detecta como
-  // bucle infinito en Workers (error 100324). Se declara aquí.
+  // bucle infinito en Workers (error 100324). Lo pone worker/index.ts, que sí
+  // distingue un asset ausente (404) de una ruta de la app (index.html).
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "tradtracker",
   "compatibility_date": "2026-10-23",
+  "main": "worker/index.ts",
   "assets": {
     "directory": "./dist",
-    "not_found_handling": "single-page-application"
+    "binding": "ASSETS",
+    // "none": env.ASSETS.fetch devuelve 404 en vez de la página SPA.
+    "not_found_handling": "none"
   }
 }
