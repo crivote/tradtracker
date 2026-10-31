@@ -63,16 +63,50 @@ export const CATALOGUE_STATS_SQL = `
 export const CATALOGUE_BY_ID_CHUNK = 400;
 
 /**
- * Sentencia del compás para una lista de ids (`IN (?,?,…)`). La usa la
- * importación del tunebook (issue #32): el listado del API no trae `meter` y el
- * catálogo lo tiene para todo lo medido.
+ * Lo que el catálogo sabe de un tune por su id: los dos invariantes que el
+ * listado del API no trae (`meter`) o que no existen en ninguna otra fuente
+ * (`composer`). Se usa en el alta (#32) y en el relleno de #44.
+ */
+export interface CatalogueTuneMeta {
+  meter: string | null;
+  composer: string | null;
+}
+
+/**
+ * Sentencia del compás y el autor para una lista de ids (`IN (?,?,…)`). La usa
+ * la importación del tunebook (issue #32) para el compás y el relleno de #44
+ * para el autor: el listado del API no trae ninguno de los dos y el catálogo
+ * tiene el compás para todo lo medido.
+ *
+ * El autor se devuelve tal cual viene del artefacto —vacío cuando es
+ * tradicional— y la normalización de «vacío» a `null` es de `mapCatalogueMetaRow`:
+ * la sentencia no inventa datos.
  */
 export function buildCatalogueByIdSql(count: number): string {
   if (!Number.isInteger(count) || count < 1) {
     throw new Error(`buildCatalogueByIdSql needs a positive whole number of ids, got ${count}.`);
   }
   const placeholders = Array.from({ length: count }, () => '?').join(',');
-  return `SELECT tune_id, meter FROM tunes WHERE tune_id IN (${placeholders})`;
+  return `SELECT tune_id, meter, composer FROM tunes WHERE tune_id IN (${placeholders})`;
+}
+
+/**
+ * Texto con contenido o `null`. El artefacto guarda la ausencia de autor como
+ * cadena vacía, y en la base y en la UI «sin autor» es `null`: escribir `''`
+ * haría que el subtexto pintara un separador con nada detrás.
+ */
+function textOrNull(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text === '' ? null : text;
+}
+
+/** Normaliza una fila de `buildCatalogueByIdSql` al dato del catálogo. */
+export function mapCatalogueMetaRow(row: CatalogueRow): CatalogueTuneMeta {
+  return {
+    meter: textOrNull(row.meter),
+    composer: textOrNull(row.composer),
+  };
 }
 
 /** Máximo de tokens que se aceptan de una consulta: acota la expresión FTS. */

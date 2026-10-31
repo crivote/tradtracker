@@ -12,6 +12,7 @@
  *   · `perpage`, `page` y `total` llegan como texto O como número según cómo se
  *     pida, así que el parseo no puede asumir un tipo.
  */
+import type { CatalogueTuneMeta } from './catalogue';
 
 export interface SessionTune {
   tuneId: number;
@@ -235,6 +236,8 @@ export interface TuneInsertRow {
   name: string;
   rhythm: string | null;
   meter: string | null;
+  /** Autor de la pieza (#44); `null` cuando es tradicional o el catálogo no lo trae. */
+  composer: string | null;
 }
 
 /** Fila de `pr_repertoire`. `added_at` solo viaja si hay fecha. */
@@ -245,21 +248,26 @@ export interface RepertoireInsertRow {
 }
 
 /**
- * Filas de `pr_tunes` con el compás del catálogo local. Un id que no esté en el
- * mapa deja `meter: null` —el tune se importa igual, el compás se puede
- * completar luego— en vez de romper la tanda entera.
+ * Filas de `pr_tunes` con el compás y el autor del catálogo local. Un id que no
+ * esté en el mapa deja `meter` y `composer` en `null` —el tune se importa
+ * igual, los invariantes se pueden completar luego— en vez de romper la tanda
+ * entera. El autor no se inventa: sin dato, el subtexto de la fila lo omite.
  */
 export function tuneRowsFor(
   tunes: SessionTune[],
-  meterById: Map<number, string | null>
+  metaById: Map<number, CatalogueTuneMeta>
 ): TuneInsertRow[] {
-  return tunes.map((tune) => ({
-    origin: 'thesession',
-    origin_ref: String(tune.tuneId),
-    name: tune.name,
-    rhythm: tune.rhythm,
-    meter: meterById.get(tune.tuneId) ?? null,
-  }));
+  return tunes.map((tune) => {
+    const meta = metaById.get(tune.tuneId);
+    return {
+      origin: 'thesession',
+      origin_ref: String(tune.tuneId),
+      name: tune.name,
+      rhythm: tune.rhythm,
+      meter: meta?.meter ?? null,
+      composer: meta?.composer ?? null,
+    };
+  });
 }
 
 /**

@@ -45,6 +45,7 @@ function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
       meter: '6/8',
       key: 'D',
       abc: null,
+      composer: null,
     },
     image: null,
     practice_count: null,

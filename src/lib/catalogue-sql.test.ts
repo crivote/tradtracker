@@ -17,6 +17,7 @@ import {
   aliasExcerpt,
   buildCatalogueByIdSql,
   buildFtsMatch,
+  mapCatalogueMetaRow,
   mapCatalogueRow,
   matchedViaAlias,
   orderCatalogue,
@@ -99,25 +100,34 @@ describe('títulos alternativos', () => {
   });
 });
 
-describe('compás por id para la importación (#32)', () => {
-  it('resuelve el compás de los ids del tunebook y no devuelve nada para un id ausente', () => {
+describe('compás y autor por id para la importación (#32, #44)', () => {
+  it('resuelve compás y autor de los ids del tunebook y no devuelve nada para un id ausente', () => {
     const rows = db
-      .prepare(buildCatalogueByIdSql(2))
-      .all(6970, 1075) as unknown as Record<string, unknown>[];
+      .prepare(buildCatalogueByIdSql(3))
+      .all(6970, 1075, 10) as unknown as Record<string, unknown>[];
 
-    expect(rows).toHaveLength(2);
-    expect(rows.map((row) => Number(row.tune_id))).toEqual([1075, 6970]);
+    expect(rows).toHaveLength(3);
+    expect(rows.map((row) => Number(row.tune_id))).toEqual([10, 1075, 6970]);
     for (const row of rows) {
       expect(row.meter).not.toBeNull();
       expect(String(row.meter)).toMatch(/^\d+\/\d+$/);
     }
+
+    // El autor de verdad: 10 es de Tommy Potts; 1075 y 6970 son tradicionales y
+    // el artefacto lo dice con cadena vacía, que el mapeo convierte en «sin
+    // autor» —el dato que la fila del listado omite—.
+    const meta = new Map(rows.map((row) => [Number(row.tune_id), mapCatalogueMetaRow(row)]));
+    expect(meta.get(10)?.composer).toBe('Tommy Potts');
+    expect(meta.get(1075)?.composer).toBeNull();
+    expect(meta.get(1075)?.meter).toBe('2/4');
+    expect(meta.get(6970)?.composer).toBeNull();
 
     expect(db.prepare(buildCatalogueByIdSql(1)).all(99999999)).toHaveLength(0);
   });
 
   it('la sentencia lleva un marcador por id y exige al menos uno', () => {
     expect(buildCatalogueByIdSql(3)).toBe(
-      'SELECT tune_id, meter FROM tunes WHERE tune_id IN (?,?,?)'
+      'SELECT tune_id, meter, composer FROM tunes WHERE tune_id IN (?,?,?)'
     );
     expect(() => buildCatalogueByIdSql(0)).toThrow();
     expect(() => buildCatalogueByIdSql(-2)).toThrow();

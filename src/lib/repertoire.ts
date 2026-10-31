@@ -1,7 +1,7 @@
 import { supabase } from './supabase';
 import type { RepertoireRow, RepertoireStats, TuneStatus } from './repertoire-model';
 import { mapRepertoireRow, mapStatsRow } from './repertoire-model';
-import { lookupCatalogueMeters } from './catalogue-db';
+import { lookupCatalogueMeta } from './catalogue-db';
 import {
   repertoireRowsFor,
   tuneRowsFor,
@@ -9,6 +9,7 @@ import {
   type SessionTune,
   type TuneInsertRow,
 } from './thesession-import';
+import type { CatalogueTuneMeta } from './catalogue';
 
 export * from './repertoire-model';
 
@@ -42,7 +43,7 @@ const REPERTOIRE_SELECT = [
   'image_focal_y',
   'image_zoom',
   'image_chosen_at',
-  'pr_tunes!inner(id,origin,origin_ref,name,rhythm,meter,key,abc)',
+  'pr_tunes!inner(id,origin,origin_ref,name,rhythm,meter,key,abc,composer)',
 ].join(',');
 
 /** Columnas de la vista de agregados (#29); una fila por fila de repertorio. */
@@ -110,6 +111,8 @@ export interface CatalogueTune {
   name: string;
   rhythm?: string | null;
   meter?: string | null;
+  /** Autor de la pieza (#44); `null` cuando es tradicional o no se conoce. */
+  composer?: string | null;
 }
 
 /**
@@ -158,6 +161,10 @@ export async function ensureTune(tune: CatalogueTune): Promise<string> {
       name: tune.name,
       rhythm: tune.rhythm ?? null,
       meter: tune.meter ?? null,
+      // Autor (#44): sin él, el subtexto de la fila llega vacío y el relleno de
+      // hoy caduca en la próxima alta. Se escribe solo si se conoce, y un texto
+      // en blanco es no conocerlo: la columna guarda `null`, no `''`.
+      composer: tune.composer?.trim() || null,
       created_by: userData.user.id,
     })
     .select('id')
@@ -388,9 +395,10 @@ function batches<T>(items: T[], size: number): T[][] {
  * cuelga de ellos las filas de repertorio, **por tandas de 100**.
  *
  * El orden y las trampas:
- *   1. El `meter` sale del catálogo local. Si el catálogo no está cargado o la
- *      consulta falla, se sigue con un mapa vacío: el compás queda `null` y el
- *      tune entra igual — no se pierde una importación de 400 por un adorno.
+ *   1. El `meter` y el `composer` salen del catálogo local. Si el catálogo no
+ *      está cargado o la consulta falla, se sigue con un mapa vacío: compás y
+ *      autor quedan `null` y el tune entra igual — no se pierde una importación
+ *      de 400 por un adorno.
  *   2. `pr_tunes` es compartida: se pregunta qué `origin_ref` ya tienen uuid
  *      antes de insertar (la columna es `text`, de ahí `String`).
  *   3. Los que faltan se insertan de una tanda en una llamada; después se
@@ -418,10 +426,10 @@ export async function importSessionTunes(
 
   if (total === 0) return { createdTunes, added, alreadyPresent, status };
 
-  // 1. Compás del catálogo local; sin catálogo, `meter: null`.
-  let meters = new Map<number, string | null>();
+  // 1. Compás y autor del catálogo local; sin catálogo, los dos a `null`.
+  let metaById = new Map<number, CatalogueTuneMeta>();
   try {
-    meters = await lookupCatalogueMeters(tunes.map((tune) => tune.tuneId));
+    metaById = await lookupCatalogueMeta(tunes.map((tune) => tune.tuneId));
   } catch {
     /* el catálogo es un adorno del alta: no aborta la importación */
   }
@@ -467,7 +475,7 @@ export async function importSessionTunes(
     };
 
     for (const batch of batches(missing, IMPORT_BATCH)) {
-      const rows = tuneRowsFor(batch, meters).map((row) => ({ ...row, created_by: createdBy }));
+      const rows = tuneRowsFor(batch, metaById).map((row) => ({ ...row, created_by: createdBy }));
 
       const { data, error } = await supabase
         .from('pr_tunes')

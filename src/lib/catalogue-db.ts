@@ -15,12 +15,14 @@ import {
   CATALOGUE_STATS_SQL,
   buildCatalogueByIdSql,
   buildFtsMatch,
+  mapCatalogueMetaRow,
   mapCatalogueRow,
   orderCatalogue,
   tokenizeQuery,
   type CatalogueEntry,
   type CatalogueRow,
   type CatalogueStats,
+  type CatalogueTuneMeta,
 } from './catalogue';
 
 const BASE = import.meta.env.BASE_URL ?? '/';
@@ -135,21 +137,23 @@ export async function searchCatalogue(query: string, limit = 15): Promise<Catalo
 }
 
 /**
- * Compás de una lista de tunes del catálogo (issue #32).
+ * Compás y autor de una lista de tunes del catálogo (issues #32 y #44).
  *
- * El listado del tunebook no trae `meter`; el catálogo sí. Se trocea la
- * consulta para no chocar con el tope de parámetros de SQLite y se devuelve solo
- * lo que existe: los ids ausentes **no** aparecen en el mapa, y quien la usa
- * decide (la importación deja el compás en `null`).
+ * El listado del tunebook no trae `meter` ni `composer`; el catálogo sí. Una
+ * sola consulta por clave: pedir el autor en un segundo viaje sobre las mismas
+ * filas sería trabajo tirado. Se trocea para no chocar con el tope de
+ * parámetros de SQLite y se devuelve solo lo que existe: los ids ausentes
+ * **no** aparecen en el mapa, y quien la usa decide (la importación deja compás
+ * y autor en `null`).
  */
-export async function lookupCatalogueMeters(
+export async function lookupCatalogueMeta(
   tuneIds: number[]
-): Promise<Map<number, string | null>> {
-  const meters = new Map<number, string | null>();
+): Promise<Map<number, CatalogueTuneMeta>> {
+  const meta = new Map<number, CatalogueTuneMeta>();
   const unique = [...new Set(tuneIds)].filter(
     (tuneId) => Number.isInteger(tuneId) && tuneId > 0
   );
-  if (unique.length === 0) return meters;
+  if (unique.length === 0) return meta;
 
   const { db } = await loadCatalogue();
 
@@ -163,11 +167,11 @@ export async function lookupCatalogueMeters(
     }) as CatalogueRow[];
 
     for (const row of rows) {
-      meters.set(Number(row.tune_id), row.meter == null ? null : String(row.meter));
+      meta.set(Number(row.tune_id), mapCatalogueMetaRow(row));
     }
   }
 
-  return meters;
+  return meta;
 }
 
 export async function getCatalogueStats(): Promise<CatalogueStats> {

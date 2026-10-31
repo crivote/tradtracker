@@ -17,15 +17,15 @@ vi.mock('./supabase', () => ({
 }));
 
 vi.mock('./catalogue-db', () => ({
-  lookupCatalogueMeters: vi.fn(),
+  lookupCatalogueMeta: vi.fn(),
 }));
 
-import { lookupCatalogueMeters } from './catalogue-db';
-import { importSessionTunes } from './repertoire';
+import { lookupCatalogueMeta } from './catalogue-db';
+import { ensureTune, importSessionTunes } from './repertoire';
 import { supabase } from './supabase';
 import type { SessionTune } from './thesession-import';
 
-const mockedMeters = vi.mocked(lookupCatalogueMeters);
+const mockedMeta = vi.mocked(lookupCatalogueMeta);
 const client = supabase as unknown as {
   from: any;
   auth: { getUser: any };
@@ -46,6 +46,7 @@ function fakeClient(options: FakeOptions = {}) {
     (options.existingRefs ?? []).map((ref, index) => [ref, `existing-${index + 1}`])
   );
   const tuneBatches: number[] = [];
+  const tuneRows: any[] = [];
   const repertoireInserts: any[][] = [];
   let seq = 0;
 
@@ -68,6 +69,7 @@ function fakeClient(options: FakeOptions = {}) {
       if (table === 'pr_tunes' && op === 'insert') {
         const rows = Array.isArray(payload) ? payload : [payload];
         tuneBatches.push(rows.length);
+        tuneRows.push(...rows);
         const data = rows.map((row: any) => {
           if (!refs.has(row.origin_ref)) {
             seq += 1;
@@ -123,7 +125,7 @@ function fakeClient(options: FakeOptions = {}) {
   });
 
   const getUser = vi.fn(async () => ({ data: { user: { id: 'user-1' } }, error: null }));
-  return { from, getUser, tuneBatches, repertoireInserts };
+  return { from, getUser, tuneBatches, tuneRows, repertoireInserts };
 }
 
 /** Tunes sintéticos: el id y el nombre son lo único que viaja. */
@@ -142,8 +144,8 @@ function install(fake: ReturnType<typeof fakeClient>) {
 }
 
 beforeEach(() => {
-  mockedMeters.mockReset();
-  mockedMeters.mockResolvedValue(new Map());
+  mockedMeta.mockReset();
+  mockedMeta.mockResolvedValue(new Map());
   client.from = vi.fn();
   client.auth.getUser = vi.fn();
 });
@@ -175,12 +177,19 @@ describe('importSessionTunes (#32)', () => {
     expect(result.added).toBe(120);
   });
 
-  it('rellena el compás del catálogo y deja null el que no está', async () => {
-    mockedMeters.mockResolvedValue(new Map([[2, '4/4']]));
+  it('rellena el compás y el autor del catálogo y los deja null si no está', async () => {
+    mockedMeta.mockResolvedValue(new Map([[2, { meter: '4/4', composer: 'Tommy Potts' }]]));
     const fake = fakeClient();
     install(fake);
 
     await importSessionTunes(tunes(3), 'to_learn');
+
+    // El compás y el autor llegan a la fila de `pr_tunes`, no solo al mapa.
+    expect(fake.tuneRows.map((row) => [row.origin_ref, row.meter, row.composer])).toEqual([
+      ['1', null, null],
+      ['2', '4/4', 'Tommy Potts'],
+      ['3', null, null],
+    ]);
 
     const rows = fake.repertoireInserts[0];
     expect(rows.every((row) => row.status === 'to_learn')).toBe(true);
@@ -188,16 +197,18 @@ describe('importSessionTunes (#32)', () => {
     expect(Object.keys(rows[0]).sort()).toEqual(['status', 'tune_id']);
   });
 
-  it('si el catálogo falla, importa igual con el compás vacío', async () => {
-    mockedMeters.mockRejectedValue(new Error('the catalogue is not loaded'));
+  it('si el catálogo falla, importa igual con compás y autor vacíos', async () => {
+    mockedMeta.mockRejectedValue(new Error('the catalogue is not loaded'));
     const fake = fakeClient();
     install(fake);
 
     const result = await importSessionTunes(tunes(2), 'learning');
 
-    // El `meter` lo escribe `tuneRowsFor`; aquí basta con que no aborte.
+    // El `meter` y el `composer` los escribe `tuneRowsFor`; aquí basta con que
+    // no aborte y que el hueco se quede vacío en vez de inventarse.
     expect(result.added).toBe(2);
     expect(fake.tuneBatches).toEqual([2]);
+    expect(fake.tuneRows.every((row) => row.meter === null && row.composer === null)).toBe(true);
   });
 
   it('un 23505 en la tanda es una carrera, no un error: reintenta fila a fila', async () => {
@@ -243,5 +254,65 @@ describe('importSessionTunes (#32)', () => {
       'Your session expired — sign in again to add tunes.'
     );
     expect(fake.repertoireInserts).toEqual([]);
+  });
+});
+
+describe('ensureTune escribe el autor en el alta desde el catálogo (#44)', () => {
+  /**
+   * Cliente mínimo para el camino de alta suelta: la búsqueda no encuentra el
+   * tune (dos `eq` y `maybeSingle` vacío) y el `insert` devuelve un uuid. Lo que
+   * se mira es la fila enviada, no la respuesta.
+   */
+  function tuneClient() {
+    const inserted: any[] = [];
+    const from = vi.fn(() => {
+      let mode: 'select' | 'insert' = 'select';
+      const builder: any = {
+        select: () => builder,
+        eq: () => builder,
+        insert: (row: any) => {
+          mode = 'insert';
+          inserted.push(row);
+          return builder;
+        },
+        maybeSingle: async () =>
+          mode === 'insert'
+            ? { data: { id: 'new-tune-uuid' }, error: null }
+            : { data: null, error: null },
+      };
+      return builder;
+    });
+    client.from = from;
+    client.auth.getUser = vi.fn(async () => ({ data: { user: { id: 'user-1' } }, error: null }));
+    return { inserted };
+  }
+
+  it('manda el autor cuando lo conoce', async () => {
+    const { inserted } = tuneClient();
+
+    await ensureTune({
+      tuneId: 10,
+      name: 'Butterfly, The',
+      rhythm: 'slip jig',
+      meter: '9/8',
+      composer: 'Tommy Potts',
+    });
+
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({
+      origin_ref: '10',
+      meter: '9/8',
+      composer: 'Tommy Potts',
+      created_by: 'user-1',
+    });
+  });
+
+  it('sin autor —o con un texto en blanco— guarda null, no `\'\'`', async () => {
+    const { inserted } = tuneClient();
+
+    await ensureTune({ tuneId: 11, name: 'Trad tune', composer: '   ' });
+    await ensureTune({ tuneId: 12, name: 'Otra trad tune' });
+
+    expect(inserted.map((row) => row.composer)).toEqual([null, null]);
   });
 });

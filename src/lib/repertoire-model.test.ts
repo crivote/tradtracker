@@ -94,6 +94,25 @@ describe('mapRepertoireRow', () => {
   it('does not take a non-string custom_abc as an ABC', () => {
     expect(mapRepertoireRow({ ...baseRow, custom_abc: 42, pr_tunes: tune }).customAbc).toBeNull();
   });
+
+  it('lleva el autor de la tune desde la relación embebida (#44)', () => {
+    const row = mapRepertoireRow({
+      ...baseRow,
+      pr_tunes: { ...tune, composer: 'Turlough O’Carolan' },
+    });
+    expect(row.tune.composer).toBe('Turlough O’Carolan');
+  });
+
+  it('sin autor —null, ausente o en blanco— la fila dice null, nunca undefined (#44)', () => {
+    // El 72 % del repertorio es tradicional: la ausencia es el caso normal, y la
+    // fila que la lea no puede recibir `undefined` (el subtexto omite la parte
+    // del autor en vez de pintar un guion).
+    expect(mapRepertoireRow({ ...baseRow, pr_tunes: { ...tune, composer: null } }).tune.composer)
+      .toBeNull();
+    expect(mapRepertoireRow({ ...baseRow, pr_tunes: tune }).tune.composer).toBeNull();
+    expect(mapRepertoireRow({ ...baseRow, pr_tunes: { ...tune, composer: '   ' } }).tune.composer)
+      .toBeNull();
+  });
 });
 
 describe('display helpers', () => {

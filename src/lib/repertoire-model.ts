@@ -24,6 +24,12 @@ export interface TuneRecord {
   meter: string | null;
   key: string | null;
   abc: string | null;
+  /**
+   * Autor de la pieza (#44, migración 010), tal y como lo trae el catálogo.
+   * `null` en el 72 % del repertorio —tradicional sin autor conocido— y ahí el
+   * subtexto de la fila **omite** la parte del autor: nunca «trad.» ni un guion.
+   */
+  composer: string | null;
 }
 
 /**
@@ -96,6 +102,13 @@ function toNumberOrNull(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** Texto con contenido o `null`: «sin dato» es una sola cosa, no tres. */
+function toTextOrNull(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' ? null : trimmed;
 }
 
 /**
@@ -190,7 +203,10 @@ export function mapRepertoireRow(
     notes: row.notes ?? null,
     added_at: row.added_at,
     last_practiced_at: row.last_practiced_at ?? null,
-    tune: embedded as TuneRecord,
+    // El autor viaja en la relación embebida (#44) y se normaliza aquí: una fila
+    // anterior a la migración 010, un doble de test o un `composer` vacío son lo
+    // mismo —no hay autor— y la fila que lo lea no puede recibir `undefined`.
+    tune: { ...(embedded as TuneRecord), composer: toTextOrNull(embedded.composer) },
     image: mapImageRow(row),
     practice_count: aggregates.practice_count,
     avg_quality: aggregates.avg_quality,

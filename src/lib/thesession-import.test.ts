@@ -233,24 +233,46 @@ describe('importPlan', () => {
 });
 
 describe('tuneRowsFor', () => {
-  it('compone la fila de pr_tunes con origin_ref en texto y el compás del catálogo', () => {
-    const rows = tuneRowsFor([tune({ tuneId: 6970, name: '72nd', rhythm: 'march' })], new Map([[6970, '4/4']]));
+  it('compone la fila de pr_tunes con origin_ref en texto, el compás y el autor del catálogo', () => {
+    const rows = tuneRowsFor(
+      [tune({ tuneId: 6970, name: '72nd', rhythm: 'march' })],
+      new Map([[6970, { meter: '4/4', composer: 'Turlough O’Carolan' }]])
+    );
 
     expect(rows).toEqual([
-      { origin: 'thesession', origin_ref: '6970', name: '72nd', rhythm: 'march', meter: '4/4' },
+      {
+        origin: 'thesession',
+        origin_ref: '6970',
+        name: '72nd',
+        rhythm: 'march',
+        meter: '4/4',
+        composer: 'Turlough O’Carolan',
+      },
     ]);
   });
 
-  it('deja el compás en null cuando el id no está en el catálogo', () => {
-    const [row] = tuneRowsFor([tune({ tuneId: 999999 })], new Map([[6970, '4/4']]));
+  it('deja compás y autor en null cuando el id no está en el catálogo', () => {
+    const [row] = tuneRowsFor(
+      [tune({ tuneId: 999999 })],
+      new Map([[6970, { meter: '4/4', composer: 'Tommy Potts' }]])
+    );
 
     expect(row.meter).toBeNull();
+    // Tradicional sin autor: el hueco se deja vacío, no se rellena de nada.
+    expect(row.composer).toBeNull();
     expect(row.origin_ref).toBe('999999');
   });
 
   it('no pone created_by: lo exige la RLS y lo rellena el llamador', () => {
     const [row] = tuneRowsFor([tune()], new Map());
-    expect(Object.keys(row)).toEqual(['origin', 'origin_ref', 'name', 'rhythm', 'meter']);
+    expect(Object.keys(row)).toEqual([
+      'origin',
+      'origin_ref',
+      'name',
+      'rhythm',
+      'meter',
+      'composer',
+    ]);
   });
 });
 
