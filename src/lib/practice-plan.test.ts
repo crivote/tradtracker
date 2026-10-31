@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { TuneStatus } from './repertoire-model';
+import type { PracticeCandidate } from './practice-plan';
 import { 
   computeTargets, 
   urgencyOf, 
@@ -193,4 +194,67 @@ describe('Practice Plan Model', () => {
       }
     });
   });
+
+  describe('umbrales y estructura (estos tests muerden)', () => {
+    const iso = (daysAgo: number) => new Date(nowMs - daysAgo * 86_400_000).toISOString();
+    const mk = (id: string, over: Partial<PracticeCandidate> = {}): PracticeCandidate => ({
+      id, status: 'learning', addedAt: iso(0), lastPracticedAt: iso(0), rhythm: 'Reel', favorite: false, ...over,
+    });
+
+    it('fija el umbral de la regla dura en 2: 1.99 no entra, 2.01 si', () => {
+      // 100 candidatas y dailyTarget 10 => T(learning) = 10 dias => urgencia = dias / 10
+      const base = Array.from({ length: 98 }, (_, i) => mk(`z${String(i).padStart(3, '0')}`));
+      const low = mk('a-low', { lastPracticedAt: iso(19.9) });   // 1.99
+      const high = mk('b-high', { lastPracticedAt: iso(20.1) }); // 2.01
+      const res = buildPracticeList([...base, low, high], { seed: 7, nowMs, dailyTarget: 10 });
+      const eHigh = res.entries.find((e) => e.candidate.id === 'b-high');
+      const eLow = res.entries.find((e) => e.candidate.id === 'a-low');
+      expect(eHigh?.reason).toBe('overdue');
+      expect(eLow).toBeDefined();
+      expect(eLow?.reason).not.toBe('overdue');
+    });
+
+    it('el orden de entrada no influye en el resultado', () => {
+      const cands = Array.from({ length: 20 }, (_, i) =>
+        mk(`id${String(i).padStart(2, '0')}`, {
+          addedAt: iso(10), rhythm: i % 2 === 0 ? 'Jig' : 'Reel', favorite: i % 3 === 0,
+        }));
+      const opts = { seed: 4242, nowMs, dailyTarget: 10 };
+      expect(buildPracticeList(cands, opts)).toEqual(buildPracticeList([...cands].reverse(), opts));
+    });
+
+    it('el respiro ocupa solo las posiciones 4 y 8, no las intermedias', () => {
+      const cands = Array.from({ length: 15 }, (_, i) =>
+        mk(`id${String(i).padStart(2, '0')}`, {
+          status: (i < 10 ? 'solo_ready' : 'to_learn') as TuneStatus, addedAt: iso(1),
+        }));
+      const res = buildPracticeList(cands, { seed: 123, nowMs, dailyTarget: 12, knownThreshold: 8 });
+      expect(res.entries[3].reason).toBe('rest');
+      expect(res.entries[4].reason).not.toBe('rest');
+      expect(res.entries[5].reason).not.toBe('rest');
+      expect(res.entries[6].reason).not.toBe('rest');
+      expect(res.entries[7].reason).toBe('rest');
+    });
+
+    it('la diversificacion corta la racha que el muestreo produciria', () => {
+      // Urgencias dispares pero <2 (sin regla dura): los jigs dominan el peso y saldrian seguidos.
+      const jigs = Array.from({ length: 6 }, (_, i) => mk(`j${i}`, { lastPracticedAt: iso(2.5), rhythm: 'Jig' }));
+      const reels = Array.from({ length: 6 }, (_, i) => mk(`r${i}`, { lastPracticedAt: iso(0.1), rhythm: 'Reel' }));
+      const res = buildPracticeList([...jigs, ...reels], { seed: 99, nowMs, dailyTarget: 8, maxConsecutiveRhythm: 3 });
+      let run = 1;
+      for (let i = 1; i < res.entries.length; i++) {
+        const prev = res.entries[i - 1].candidate.rhythm?.toLowerCase();
+        const curr = res.entries[i].candidate.rhythm?.toLowerCase();
+        run = curr && curr === prev ? run + 1 : 1;
+        expect(run).toBeLessThan(4);
+      }
+      expect(new Set(res.entries.map((e) => e.candidate.rhythm)).size).toBeGreaterThan(1);
+    });
+
+    it('mulberry32 no degenera con semilla 0', () => {
+      const rng = mulberry32(0);
+      expect(new Set([rng(), rng(), rng(), rng()]).size).toBe(4);
+    });
+  });
+
 });

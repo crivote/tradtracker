@@ -79,6 +79,10 @@ export interface PracticeList {
   overflow: number;               // vencidas que no cupieron; 0 si no desborda
 }
 
+/** Comparación por code unit: NO localeCompare (depende de la ICU y rompe el determinismo
+ *  entre Node y navegador; la lista del día debe ser idéntica en ambos). */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 export function hashSeed(userId: string, dateKey: string): number {
   const str = userId + dateKey;
   let hash = 0;
@@ -90,7 +94,8 @@ export function hashSeed(userId: string, dateKey: string): number {
 }
 
 export function mulberry32(seed: number): () => number {
-  let s = seed >>> 0;
+  // seed 0 es punto fijo del mezclador (devolvería 0 siempre): se sustituye por una constante.
+  let s = (seed >>> 0) || 0x9e3779b9;
   return function() {
     s = Math.imul(s ^ (s >>> 16), 0x21f0aaad);
     s = Math.imul(s ^ (s >>> 15), 0x735a2d97);
@@ -113,7 +118,7 @@ export function buildPracticeList(
   } = opts;
 
   // 1. Determinismo: Sort by ID
-  const sortedCandidates = [...candidates].sort((a, b) => a.id.localeCompare(b.id));
+  const sortedCandidates = [...candidates].sort((a, b) => byCodeUnit(a.id, b.id));
   const rng = mulberry32(seed);
 
   // Targets
@@ -132,7 +137,7 @@ export function buildPracticeList(
     .sort((a, b) => {
       if (b.urgency !== a.urgency) return b.urgency - a.urgency;
       if (a.candidate.favorite !== b.candidate.favorite) return a.candidate.favorite ? -1 : 1;
-      return a.candidate.id.localeCompare(b.candidate.id);
+      return byCodeUnit(a.candidate.id, b.candidate.id);
     });
 
   if (overdue.length > dailyTarget) {
@@ -202,7 +207,7 @@ export function buildPracticeList(
           const aDays = (nowMs - Date.parse(a.lastPracticedAt ?? a.addedAt)) / 86_400_000;
           const bDays = (nowMs - Date.parse(b.lastPracticedAt ?? b.addedAt)) / 86_400_000;
           if (bDays !== aDays) return bDays - aDays;
-          return a.id.localeCompare(b.id);
+          return byCodeUnit(a.id, b.id);
         });
 
       if (knownCandidates.length > 0) {
