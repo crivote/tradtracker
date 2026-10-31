@@ -168,10 +168,11 @@ describe('TuneDetail', () => {
 
     const select = screen.getByLabelText('Level') as HTMLSelectElement;
     expect(select.value).toBe('learning');
-    // Las cuatro etiquetas canónicas, en orden de escalera.
+    // Las cinco etiquetas canónicas, en orden de escalera.
     expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
       'To learn',
       'Learning',
+      'Shaky',
       'Playing along',
       'Solo-ready',
     ]);

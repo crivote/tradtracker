@@ -26,10 +26,12 @@ describe('Practice Plan Model', () => {
       // T(status) = factor * (421 / 8) = factor * 52.625
       // to_learn: 0.5 * 52.625 = 26.3125
       // learning: 1 * 52.625 = 52.625
+      // shaky: 1.5 * 52.625 = 78.9375
       // playing_along: 2 * 52.625 = 105.25
       // solo_ready: 4 * 52.625 = 210.5
       expect(targets.byStatus.to_learn).toBeCloseTo(26.3, 1);
       expect(targets.byStatus.learning).toBeCloseTo(52.6, 1);
+      expect(targets.byStatus.shaky).toBeCloseTo(78.9, 1);
       expect(targets.byStatus.playing_along).toBeCloseTo(105.3, 1);
       expect(targets.byStatus.solo_ready).toBeCloseTo(210.5, 1);
     });

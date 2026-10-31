@@ -13,7 +13,12 @@ import { daysSince, normalizeTitle } from './format';
  * es una bandera transversal (`shelved`), y una tune aparcada conserva su
  * peldaño.
  */
-export type TuneStatus = 'to_learn' | 'learning' | 'playing_along' | 'solo_ready';
+export type TuneStatus =
+  | 'to_learn'
+  | 'learning'
+  | 'shaky'
+  | 'playing_along'
+  | 'solo_ready';
 
 export interface TuneRecord {
   id: string;
@@ -262,7 +267,7 @@ export function rowInvariants(row: RepertoireRow): RowInvariants {
   };
 }
 
-/** Barras encendidas del icono de peldaño (1–4), desde `bandFor`. */
+/** Barras encendidas del icono de peldaño (1–5), desde `bandFor`. */
 export function rungOf(row: RepertoireRow): number {
   return bandFor(row.status).rung;
 }
@@ -278,15 +283,16 @@ export function levelText(row: RepertoireRow): string {
 }
 
 /**
- * Las cuatro bandas de la home (#29), en orden de escalera. Cada una lleva el
- * nombre, la definición que se pinta al lado y el peldaño que enciende el
- * indicador de cuatro barras.
+ * Las cinco bandas de la home (#29, quinta en #46), en orden de escalera. Cada
+ * una lleva el nombre, la definición que se pinta al lado y el peldaño que
+ * enciende el indicador de barras.
  *
  * **Una sola densidad.** La dirección anterior partía la pantalla en dos —carta
  * grande en las bandas de trabajo, miniatura en las de biblioteca— porque daba
  * por hecho que las bandas grandes se recorrían enteras en la home. No es así:
- * la home enseña como mucho dos filas por banda y el listado completo de un
- * peldaño es una **lista**, no una rejilla (decisión de Víctor, 2026-10-31). Con
+ * la home enseña como mucho **tres** filas por banda (#46) y el listado completo
+ * de un peldaño es una **lista**, no una rejilla (decisión de Víctor,
+ * 2026-10-31). Con
  * eso la miniatura se queda sin oficio, y además costaba dos cosas caras: el
  * medidor de calidad desaparecía justo en las bandas con más historial de
  * ensayos, y su kebab de 22 px quedaba por debajo del mínimo táctil de 24.
@@ -295,7 +301,7 @@ export interface BandDefinition {
   status: TuneStatus;
   label: string;
   definition: string;
-  /** Barras encendidas del indicador, 1–4. */
+  /** Barras encendidas del indicador, 1–5. */
   rung: number;
 }
 
@@ -313,16 +319,27 @@ export const BANDS: readonly BandDefinition[] = [
     rung: 2,
   },
   {
+    // El peldaño que faltaba (#46): la pieza se sabe de arriba abajo —no es
+    // «learning», que no la pasa entera— pero hay fragmentos que no salen o
+    // donde el ritmo se va. Va **antes** de «Playing along» a propósito: seguir
+    // a otro es más fácil que sacarla uno solo con agujeros.
+    status: 'shaky',
+    label: 'Shaky',
+    definition:
+      'Get through it, but some passages don’t come out or the rhythm slips.',
+    rung: 3,
+  },
+  {
     status: 'playing_along',
     label: 'Playing along',
     definition: 'Can follow it when someone else leads.',
-    rung: 3,
+    rung: 4,
   },
   {
     status: 'solo_ready',
     label: 'Solo-ready',
     definition: 'If someone asks for a tune, this is one you’d give them.',
-    rung: 4,
+    rung: 5,
   },
 ];
 
@@ -355,6 +372,7 @@ export function parseScope(raw: unknown): RepertoireScope | null {
 export const STATUS_LABELS: Record<TuneStatus, string> = {
   to_learn: 'To learn',
   learning: 'Learning',
+  shaky: 'Shaky',
   playing_along: 'Playing along',
   solo_ready: 'Solo-ready',
 };
@@ -363,12 +381,13 @@ export const STATUS_LABELS: Record<TuneStatus, string> = {
 export const STATUS_STYLES: Record<TuneStatus, string> = {
   to_learn: 'bg-sky-900/60 text-sky-300 border-sky-700',
   learning: 'bg-amber-900/60 text-amber-300 border-amber-700',
+  shaky: 'bg-orange-900/60 text-orange-300 border-orange-700',
   playing_along: 'bg-violet-900/60 text-violet-300 border-violet-700',
   solo_ready: 'bg-emerald-900/60 text-emerald-300 border-emerald-700',
 };
 
 /**
- * Cuántas tunes hay en cada peldaño; las cuatro claves siempre están.
+ * Cuántas tunes hay en cada peldaño; las cinco claves siempre están.
  *
  * Las aparcadas **no** cuentan: aparcar no cambia el peldaño, así que contarlas
  * aquí daría una cabecera que no cuadra con las bandas, que tampoco las pintan.
@@ -378,6 +397,7 @@ export function statusCounts(rows: readonly RepertoireRow[]): Record<TuneStatus,
   const counts: Record<TuneStatus, number> = {
     to_learn: 0,
     learning: 0,
+    shaky: 0,
     playing_along: 0,
     solo_ready: 0,
   };
@@ -821,9 +841,9 @@ export interface BandGroup {
 }
 
 /**
- * Las cuatro bandas en orden de escalera, cada una ordenada por staleness.
+ * Las cinco bandas en orden de escalera, cada una ordenada por staleness.
  *
- * Las aparcadas quedan fuera de las cuatro bandas: una tune en el cajón no está
+ * Las aparcadas quedan fuera de las bandas: una tune en el cajón no está
  * en rotación y encabezar «To learn» por no haberla tocado nunca es justo el
  * defecto que corrige #11. Conservan su peldaño y se pintan en su propia
  * sección al final de la home (`visibleShelved`).
@@ -922,7 +942,7 @@ export function rhythmOptions(rows: readonly RepertoireRow[]): string[] {
 /**
  * Cuántas tunes están en el cajón (`shelved`). Va aparte de `statusCounts`
  * porque aparcar no es un peldaño: la cabecera de la home necesita los dos
- * números para que el total del repertorio sea la suma de sus partes (las cuatro
+ * números para que el total del repertorio sea la suma de sus partes (las cinco
  * bandas más el cajón) y no un total que no cuadra con lo que se pinta debajo.
  */
 export function shelvedCount(rows: readonly RepertoireRow[]): number {
@@ -938,7 +958,7 @@ export function shelvedCount(rows: readonly RepertoireRow[]): number {
  * casan, y sin coincidencias la lista va vacía y la sección no se pinta.
  *
  * Aparcar no cambia el peldaño, así que la fila conserva el suyo y la sección
- * no agrupa: es un cajón, no una quinta banda.
+ * no agrupa: es un cajón, no una banda más.
  */
 export function visibleShelved(
   rows: readonly RepertoireRow[],
@@ -950,10 +970,13 @@ export function visibleShelved(
     .sort((left, right) => compareStaleness(left, right, now));
 }
 
-/** Tope de dos filas: depende de las columnas reales, no de un número fijo. */
+/**
+ * Tope de **tres filas** (#46): depende de las columnas reales, no de un número
+ * fijo. Con la rejilla de cuatro son 12 cartas por banda.
+ */
 export function capForColumns(columns: number): number {
   if (!Number.isFinite(columns) || columns < 1) return 0;
-  return Math.floor(columns) * 2;
+  return Math.floor(columns) * 3;
 }
 
 /** Las filas que se pintan con un tope (o sin tope, con `Infinity`). */

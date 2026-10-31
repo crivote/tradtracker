@@ -41,7 +41,7 @@ export interface TuneCardProps {
    * Añade el peldaño al final de `rhythm · key` (#9), por ejemplo
    * `Reel · D · Learning`. Es opt-in y por defecto va apagado: en la home la
    * banda ya dice el peldaño y repetirlo en cada carta sería ruido. La búsqueda
-   * sí lo enciende, porque cruza los cuatro peldaños y la carta tiene que decir
+   * sí lo enciende, porque cruza los cinco peldaños y la carta tiene que decir
    * de dónde sale cada resultado. Una fila aparcada dice `Shelved`, no su
    * peldaño: el cajón manda sobre la escalera.
    */
@@ -222,7 +222,7 @@ export default function TuneCard(props: TuneCardProps) {
             {key()}
           </Show>
           {/* El peldaño, solo cuando la pantalla lo pide (#9): la búsqueda
-              cruza los cuatro y necesita decir de qué nivel es cada carta. */}
+              cruza los cinco y necesita decir de qué nivel es cada carta. */}
           <Show when={props.showLevel}>
             {' '}
             <span class="gap">·</span>{' '}

@@ -15,13 +15,24 @@ export interface UrgencyTargets {
   dailyTarget: number;
 }
 
+/**
+ * Factor de urgencia por peldaño (#46). `shaky` va interpolado entre `learning`
+ * y `playing_along`: lo que se cae por fragmentos pide máquina más a menudo que
+ * lo que ya se sigue sin problema, y menos que lo que aún no se pasa entero.
+ */
 export const PRACTICE_FACTORS: Record<TuneStatus, number> = {
   to_learn: 0.5,
   learning: 1,
+  shaky: 1.5,
   playing_along: 2,
   solo_ready: 4,
 };
 
+/**
+ * Peldaños que sirven para un hueco de descanso. `shaky` **no** entra (#46): una
+ * tune con fragmentos que no salen no es descanso, es trabajo — y su urgencia ya
+ * la sube el factor 1,5.
+ */
 export const KNOWN_STATUSES: readonly TuneStatus[] = ['playing_along', 'solo_ready'];
 
 export function computeTargets(activeCount: number, dailyTarget: number): UrgencyTargets {

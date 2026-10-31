@@ -330,7 +330,7 @@
   color: var(--faint);
 }
 
-/* indicador de peldaño: cuatro barras encendidas hasta el nivel */
+/* indicador de peldaño: cinco barras encendidas hasta el nivel (#46) */
 .repertoire-home .rungs {
   display: flex;
   align-items: flex-end;
@@ -348,12 +348,15 @@
   height: 4px;
 }
 .repertoire-home .rungs i:nth-child(2) {
-  height: 6px;
+  height: 5.75px;
 }
 .repertoire-home .rungs i:nth-child(3) {
-  height: 8.5px;
+  height: 7.5px;
 }
 .repertoire-home .rungs i:nth-child(4) {
+  height: 9.25px;
+}
+.repertoire-home .rungs i:nth-child(5) {
   height: 11px;
 }
 .repertoire-home .rungs i.on {
@@ -1120,7 +1123,7 @@
 .repertoire-home .row-invariants i { font-style: italic; }
 .repertoire-home .row-invariants .sep { color: var(--faint); padding: 0 5px; }
 
-/* el peldaño: cuatro barras. El color no se gasta (sigue reservado al abandono) */
+/* el peldaño: cinco barras. El color no se gasta (sigue reservado al abandono) */
 .repertoire-home .rung {
   display: inline-flex;
   align-items: flex-end;
@@ -1131,9 +1134,10 @@
 .repertoire-home .rung span { width: 3.5px; background: var(--line); border-radius: 1px; }
 .repertoire-home .rung span.on { background: var(--ink); }
 .repertoire-home .rung span:nth-child(1) { height: 6px; }
-.repertoire-home .rung span:nth-child(2) { height: 9px; }
-.repertoire-home .rung span:nth-child(3) { height: 13px; }
-.repertoire-home .rung span:nth-child(4) { height: 17px; }
+.repertoire-home .rung span:nth-child(2) { height: 8.75px; }
+.repertoire-home .rung span:nth-child(3) { height: 11.5px; }
+.repertoire-home .rung span:nth-child(4) { height: 14.25px; }
+.repertoire-home .rung span:nth-child(5) { height: 17px; }
 
 /* el tag de la carta va girado y pegado a la foto: en la fila es estático.
    El filete es obligatorio: el extremo bajo del gradiente ES el color del papel

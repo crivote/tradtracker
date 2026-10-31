@@ -383,7 +383,7 @@ describe('invariantes y peldaño de la fila (#42)', () => {
 
   it('el icono de peldaño sale de bandFor y su nombre accesible lleva etiqueta y definición', () => {
     const solo = makeRow({ id: 'e', status: 'solo_ready' });
-    expect(rungOf(solo)).toBe(4);
+    expect(rungOf(solo)).toBe(5);
     expect(levelText(solo)).toBe(
       'Solo-ready — If someone asks for a tune, this is one you’d give them.'
     );
@@ -586,21 +586,23 @@ describe('mapRepertoireRow con los agregados de la vista (#29)', () => {
   });
 });
 
-describe('bandas de la escalera (#29)', () => {
-  it('son cuatro, en orden de capacidad, con su definición y su peldaño', () => {
+describe('bandas de la escalera (#29, quinta en #46)', () => {
+  it('son cinco, en orden de capacidad, con su definición y su peldaño', () => {
     expect(BANDS.map((band) => band.status)).toEqual([
       'to_learn',
       'learning',
+      'shaky',
       'playing_along',
       'solo_ready',
     ]);
     expect(BANDS.map((band) => band.label)).toEqual([
       'To learn',
       'Learning',
+      'Shaky',
       'Playing along',
       'Solo-ready',
     ]);
-    expect(BANDS.map((band) => band.rung)).toEqual([1, 2, 3, 4]);
+    expect(BANDS.map((band) => band.rung)).toEqual([1, 2, 3, 4, 5]);
     // Una sola carta para todas las filas: la banda no lleva densidad.
     for (const band of BANDS) {
       expect('density' in band).toBe(false);
@@ -609,13 +611,27 @@ describe('bandas de la escalera (#29)', () => {
       expect(band.definition.length).toBeGreaterThan(10);
     }
     expect(BANDS[0].definition).toBe('Want to learn it. Not started.');
-    expect(BANDS[3].definition).toBe("If someone asks for a tune, this is one you’d give them.");
+    expect(BANDS[4].definition).toBe("If someone asks for a tune, this is one you’d give them.");
   });
 
-  it('parseScope acepta los cuatro peldaños y el cajón, y rechaza lo demás', () => {
+  it('el quinto peldaño es el del medio: se pasa entera, pero con fragmentos que fallan', () => {
+    // Está **entre** learning y playing_along a propósito: seguir a otro es más
+    // fácil que sacarla solo con agujeros, así que no puede cotizar por encima.
+    const index = BANDS.findIndex((band) => band.status === 'shaky');
+    expect(index).toBe(2);
+    expect(BANDS[index].label).toBe('Shaky');
+    expect(BANDS[index].definition).toBe(
+      'Get through it, but some passages don’t come out or the rhythm slips.'
+    );
+    // Y el nombre accesible lo compone con las dos piezas, no con la etiqueta sola.
+    expect(levelText(makeRow({ id: 's', status: 'shaky' }))).toBe(`Shaky — ${BANDS[2].definition}`);
+  });
+
+  it('parseScope acepta los cinco peldaños y el cajón, y rechaza lo demás', () => {
     for (const band of BANDS) {
       expect(parseScope(band.status)).toBe(band.status);
     }
+    expect(parseScope('shaky')).toBe('shaky');
     expect(parseScope('shelved')).toBe('shelved');
     expect(parseScope(undefined)).toBeNull();
     expect(parseScope('nueva')).toBeNull();
@@ -624,26 +640,30 @@ describe('bandas de la escalera (#29)', () => {
   });
 
   it('bandFor devuelve la banda del estado y no rompe con un valor desconocido', () => {
-    expect(bandFor('playing_along').rung).toBe(3);
+    expect(bandFor('shaky').rung).toBe(3);
+    expect(bandFor('playing_along').rung).toBe(4);
     expect(bandFor('nueva' as TuneStatus).status).toBe('to_learn');
   });
 
-  it('statusCounts cuenta por peldaño y deja las cuatro claves siempre', () => {
+  it('statusCounts cuenta por peldaño y deja las cinco claves siempre', () => {
     const rows = [
       makeRow({ id: 'a', status: 'to_learn' }),
       makeRow({ id: 'b', status: 'learning' }),
       makeRow({ id: 'c', status: 'learning' }),
+      makeRow({ id: 'e', status: 'shaky' }),
       makeRow({ id: 'd', status: 'solo_ready' }),
     ];
     expect(statusCounts(rows)).toEqual({
       to_learn: 1,
       learning: 2,
+      shaky: 1,
       playing_along: 0,
       solo_ready: 1,
     });
     expect(statusCounts([])).toEqual({
       to_learn: 0,
       learning: 0,
+      shaky: 0,
       playing_along: 0,
       solo_ready: 0,
     });
@@ -656,7 +676,12 @@ describe('bandas de la escalera (#29)', () => {
       makeRow({ id: 'c', status: 'solo_ready', shelved: true }),
     ];
     const counts = statusCounts(rows);
-    const enBandas = counts.to_learn + counts.learning + counts.playing_along + counts.solo_ready;
+    const enBandas =
+      counts.to_learn +
+      counts.learning +
+      counts.shaky +
+      counts.playing_along +
+      counts.solo_ready;
 
     expect(shelvedCount(rows)).toBe(2);
     expect(enBandas + shelvedCount(rows)).toBe(rows.length);
@@ -767,11 +792,12 @@ describe('medidor de calidad (#29)', () => {
 });
 
 describe('groupIntoBands y orden por staleness (#29)', () => {
-  it('devuelve las cuatro bandas en orden de escalera, aunque estén vacías', () => {
+  it('devuelve las cinco bandas en orden de escalera, aunque estén vacías', () => {
     const groups = groupIntoBands([], NOW);
     expect(groups.map((group) => group.band.status)).toEqual([
       'to_learn',
       'learning',
+      'shaky',
       'playing_along',
       'solo_ready',
     ]);
@@ -847,11 +873,11 @@ describe('coincidencia por título y topes (#29)', () => {
     expect(matchesQuery(custom, 'zzz')).toBe(false);
   });
 
-  it('el tope son dos filas sobre las columnas reales', () => {
-    expect(capForColumns(4)).toBe(8);
-    expect(capForColumns(3)).toBe(6);
-    expect(capForColumns(6)).toBe(12);
-    expect(capForColumns(1)).toBe(2);
+  it('el tope son tres filas sobre las columnas reales (#46)', () => {
+    expect(capForColumns(4)).toBe(12);
+    expect(capForColumns(3)).toBe(9);
+    expect(capForColumns(6)).toBe(18);
+    expect(capForColumns(1)).toBe(3);
     expect(capForColumns(0)).toBe(0);
     expect(capForColumns(-2)).toBe(0);
     expect(capForColumns(Number.NaN)).toBe(0);
@@ -971,24 +997,26 @@ describe('aparcadas (#11): fuera de las bandas y del recuento', () => {
       ['work'],
       [],
       [],
+      [],
     ]);
   });
 
-  it('con todas aparcadas las cuatro bandas quedan vacías', () => {
+  it('con todas aparcadas las cinco bandas quedan vacías', () => {
     const allShelved = [
       makeRow({ id: 'a', status: 'to_learn', shelved: true }),
       makeRow({ id: 'b', status: 'solo_ready', shelved: true }),
     ];
     const groups = groupIntoBands(allShelved, NOW);
     expect(groups.every((group) => group.rows.length === 0)).toBe(true);
-    // Siguen siendo cuatro: la escalera se pinta aunque no haya nada en ella.
-    expect(groups.length).toBe(4);
+    // Siguen siendo cinco: la escalera se pinta aunque no haya nada en ella.
+    expect(groups.length).toBe(5);
   });
 
   it('statusCounts no las cuenta, para que la cabecera cuadre con las bandas', () => {
     expect(statusCounts(rows)).toEqual({
       to_learn: 0,
       learning: 1,
+      shaky: 0,
       playing_along: 0,
       solo_ready: 0,
     });
@@ -996,6 +1024,7 @@ describe('aparcadas (#11): fuera de las bandas y del recuento', () => {
     expect(statusCounts([makeRow({ id: 'x', status: 'solo_ready' })])).toEqual({
       to_learn: 0,
       learning: 0,
+      shaky: 0,
       playing_along: 0,
       solo_ready: 1,
     });

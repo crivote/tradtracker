@@ -58,24 +58,24 @@ import './repertoire.css';
 /**
  * Home del repertorio (#29).
  *
- * La pantalla ya no es una lista ordenada sino cuatro bandas en orden de
- * escalera (to_learn → learning → playing_along → solo_ready), cada una con su
+ * La pantalla ya no es una lista ordenada sino cinco bandas en orden de
+ * escalera (to_learn → learning → shaky → playing_along → solo_ready), cada una con su
  * definición escrita y su recuento, y **una sola carta** para todas las filas.
  *
  * Cuatro reglas mandan sobre el resto:
  *   · Dentro de cada banda, orden por staleness: nunca tocada primero, después
  *     días descendentes. El orden es del modelo puro (`groupIntoBands`), no del
  *     JSX ni de la base.
- *   · La home enseña **dos filas por banda y nada más** (8 cartas con cuatro
- *     columnas). El tope se mide sobre las columnas reales de la rejilla y se
+ *   · La home enseña **tres filas por banda y nada más** (12 cartas con cuatro
+ *     columnas, #46). El tope se mide sobre las columnas reales de la rejilla y se
  *     recalcula al cambiar el ancho; no es un número fijo. Así el máximo de la
- *     pantalla son 32 cartas y la página no crece con el repertorio.
+ *     pantalla son 60 cartas y la página no crece con el repertorio.
  *   · El listado completo de un peldaño **es una lista**, no una rejilla: el
  *     título de la banda y «See all N as list» abren esa sola banda en la tabla,
  *     con su orden elegido a mano. De ahí se vuelve con «Back to all».
  *   · Las aparcadas **no se ven en la home**: solo su recuento, en la cabecera,
  *     que es la puerta a su listado. Aparcar no cambia el peldaño, así que no
- *     son una quinta banda.
+ *     son una banda más.
  *
  * El listado de un peldaño —y el cajón de aparcadas— es la **tabla del boceto
  * 014-b** (#42): se recorre entera y se ordena por las cabeceras; en la fila
@@ -167,7 +167,7 @@ function BandView(props: {
     <section class="band" data-band={props.group.band.status} aria-labelledby={`band-${props.group.band.status}`}>
       <div class="band-head">
         <span class="rungs" aria-hidden="true">
-          <For each={[1, 2, 3, 4]}>
+          <For each={[1, 2, 3, 4, 5]}>
             {(rung) => <i classList={{ on: rung <= props.group.band.rung }} />}
           </For>
         </span>
@@ -354,7 +354,7 @@ function RepertoireRowView(props: {
             `aria-label`, y los dos se pintan del mismo texto para que cambiar
             de peldaño los mueva a la vez. */}
         <span class="rung" role="img" aria-label={`Level: ${level()}`} title={level()}>
-          <For each={[1, 2, 3, 4]}>
+          <For each={[1, 2, 3, 4, 5]}>
             {(rung) => <span classList={{ on: rung <= rungOf(props.row) }} />}
           </For>
         </span>
@@ -520,7 +520,7 @@ function SortHeader(props: {
  * peldaño entero y se ordena por los metadatos del dueño.
  *
  * Ocho columnas: corazón, Tune con los invariantes debajo, Level como icono de
- * cuatro barras, Practices, Last played, Average, Added y el menú. Fuera la
+ * cinco barras, Practices, Last played, Average, Added y el menú. Fuera la
  * columna `Key` —nula en toda la tabla—, el `#origin_ref` como segunda línea y
  * el botón «Remove», que es acción de la ficha (#45).
  *
@@ -659,7 +659,7 @@ export default function Repertoire() {
   };
 
   // Lo que se está mirando vive en la URL (§2.7): recargar mantiene la vista.
-  // `?band=` acepta los cuatro peldaños y `shelved`, que es el cajón.
+  // `?band=` acepta los cinco peldaños y `shelved`, que es el cajón.
   const [params, setParams] = useSearchParams<{ band?: string }>();
   const scope = createMemo<RepertoireScope | null>(() => parseScope(params.band));
   /** El ámbito es un peldaño (no el cajón): lo que aísla una banda de la home. */
@@ -686,11 +686,11 @@ export default function Repertoire() {
   /** Las del cajón, para que la cabecera sume: bandas + aparcadas = repertorio. */
   const shelvedTotal = createMemo(() => shelvedCount(rows()));
 
-  /** Las cuatro bandas, cada una ordenada por staleness. */
+  /** Las cinco bandas, cada una ordenada por staleness. */
   const groups = createMemo(() => groupIntoBands(rows(), now()));
 
   /**
-   * Lo que se pinta: las cuatro bandas, vacías incluidas, porque la pantalla es
+   * Lo que se pinta: las cinco bandas, vacías incluidas, porque la pantalla es
    * la escalera. Con una banda aislada (`?band=`), esa sola.
    *
    * La home ya no filtra por título (#9): el texto se busca en /search, que
@@ -921,7 +921,7 @@ export default function Repertoire() {
   /** La puerta de las aparcadas: su recuento en la cabecera lleva a su listado. */
   const seeShelved = () => seeList(SHELVED_SCOPE);
   /**
-   * «Back to all». Desde el cajón se vuelve a la **home** —las cuatro bandas—,
+   * «Back to all». Desde el cajón se vuelve a la **home** —las cinco bandas—,
    * que es lo que se estaba mirando antes de entrar: dejar la lista completa de
    * todo el repertorio es otra pantalla y el lector no la ha pedido. Desde un
    * peldaño solo se limpia el ámbito, sin cambiar el modo de vista.
@@ -945,7 +945,8 @@ export default function Repertoire() {
               <b>{tuneCountLabel(rows().length)}</b>
               {' · '}
               {counts().to_learn} to learn · {counts().learning} learning ·{' '}
-              {counts().playing_along} playing along · {counts().solo_ready} solo-ready
+              {counts().shaky} shaky · {counts().playing_along} playing along ·{' '}
+              {counts().solo_ready} solo-ready
               {/* Las aparcadas no se pintan en la home, solo su recuento —y ese
                   recuento es la puerta a su listado, que si no no habría dónde
                   mirarlas—. Se nombran para que el total cuadre: bandas más

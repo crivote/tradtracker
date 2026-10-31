@@ -187,7 +187,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('home del repertorio con peldaños (#11, #29)', () => {
-  it('la cabecera cuadra: las aparcadas se nombran aparte de las cuatro bandas', async () => {
+  it('la cabecera cuadra: las aparcadas se nombran aparte de las cinco bandas', async () => {
     renderHome();
 
     await waitFor(() => expect(screen.getByText('Repertoire')).toBeTruthy());
@@ -198,6 +198,7 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
     expect(sub).toContain('4 tunes');
     expect(sub).toContain('1 to learn');
     expect(sub).toContain('1 learning');
+    expect(sub).toContain('0 shaky');
     expect(sub).toContain('0 playing along');
     expect(sub).toContain('1 solo-ready');
     expect(sub).toContain('1 shelved');
@@ -239,6 +240,64 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
       expect(card.classList.contains('tile')).toBe(false);
       // El medidor de calidad no se cae en ninguna banda.
       expect(card.querySelector('.quality')).toBeTruthy();
+    }
+  });
+
+  it('la home pinta las cinco bandas, en orden de escalera', async () => {
+    renderHome();
+
+    await waitFor(() => expect(screen.getByText('Morning Dew')).toBeTruthy());
+    const bands = Array.from(document.querySelectorAll('.repertoire-home .band')).map(
+      (node) => node.getAttribute('data-band')
+    );
+    expect(bands).toEqual(['to_learn', 'learning', 'shaky', 'playing_along', 'solo_ready']);
+  });
+
+  it('el tope son tres filas: 12 cartas por banda, y el resto va al listado (#46)', async () => {
+    // 14 en el mismo peldaño con la rejilla de cuatro columnas: caben 12 (3 × 4).
+    const bulk = Array.from({ length: 14 }, (_, index) =>
+      row({
+        id: `bulk-${index}`,
+        status: 'learning',
+        tune: { ...row().tune, id: `t-bulk-${index}`, name: `Bulk Tune ${index}` },
+      })
+    );
+    mockedFetch.mockResolvedValue(bulk as any);
+
+    // jsdom no resuelve `grid-template-columns`, así que el tope se mediría sobre
+    // una rejilla de una columna. Se dobla **solo** esa propiedad con el valor
+    // calculado de un navegador —cuatro pistas— y se delega el resto al estilo
+    // real: devolver un objeto pelado rompe el cálculo de nombres accesibles.
+    const realStyle = window.getComputedStyle.bind(window);
+    const computed = vi
+      .spyOn(window, 'getComputedStyle')
+      .mockImplementation(((element: Element, pseudo?: string | null) => {
+        const style = realStyle(element, pseudo ?? undefined);
+        return new Proxy(style, {
+          get(target, prop, receiver) {
+            if (prop === 'gridTemplateColumns' && element.classList.contains('grid-4')) {
+              return '282px 282px 282px 282px';
+            }
+            const value = Reflect.get(target, prop, receiver);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      }) as typeof window.getComputedStyle);
+
+    try {
+      renderHome();
+
+      await waitFor(() => expect(screen.getByText('Bulk Tune 0')).toBeTruthy());
+      const band = document.querySelector('[data-band="learning"]') as HTMLElement;
+      expect(band.querySelectorAll('.card').length).toBe(12);
+      // Dos de las catorce se quedan fuera (el orden dentro de la banda es por
+      // título, así que no se afirma *cuáles*: solo que son doce de catorce).
+      const painted = bulk.filter((_, index) => screen.queryByText(`Bulk Tune ${index}`) !== null);
+      expect(painted.length).toBe(12);
+      // Y la banda avisa de que hay más, con la puerta a la lista completa.
+      expect(screen.getByRole('button', { name: /See all 14 as list/ })).toBeTruthy();
+    } finally {
+      computed.mockRestore();
     }
   });
 
@@ -398,7 +457,7 @@ describe('tabla del listado (#42)', () => {
     expect(rowOf('Cooley’s Reel').querySelector('.row-invariants')!.textContent).not.toContain('—');
   });
 
-  it('el peldaño se pinta como cuatro barras con su aria-label', async () => {
+  it('el peldaño se pinta como cinco barras con su aria-label', async () => {
     renderTable();
     await ready();
 
@@ -407,8 +466,8 @@ describe('tabla del listado (#42)', () => {
     expect(icon.getAttribute('aria-label')).toBe(
       'Level: Solo-ready — If someone asks for a tune, this is one you’d give them.'
     );
-    expect(icon.querySelectorAll('span').length).toBe(4);
-    expect(icon.querySelectorAll('span.on').length).toBe(4);
+    expect(icon.querySelectorAll('span').length).toBe(5);
+    expect(icon.querySelectorAll('span.on').length).toBe(5);
 
     // Un peldaño bajo enciende solo la primera: las barras dicen la altura.
     expect(rowOf('Drowsy Maggie').querySelectorAll('.rung span.on').length).toBe(1);
@@ -425,13 +484,15 @@ describe('tabla del listado (#42)', () => {
     );
 
     // Segundo nivel: el menú principal dice el peldaño actual y el submenú trae
-    // las cuatro opciones, con la actual marcada.
+    // las cinco opciones, con la actual marcada.
     fireEvent.click(within(row).getByRole('button', { name: /^Level/ }));
 
     const options = within(row).getAllByRole('menuitemradio');
-    expect(options.length).toBe(4);
+    expect(options.length).toBe(5);
     for (const option of options) {
-      expect(option.textContent).toMatch(/to learn|know the parts|someone else leads|asks for a tune/i);
+      expect(option.textContent).toMatch(
+        /to learn|know the parts|passages|someone else leads|asks for a tune/i
+      );
     }
     expect(
       within(row).getByRole('menuitemradio', { name: /^Learning/ }).getAttribute('aria-checked')
@@ -449,7 +510,7 @@ describe('tabla del listado (#42)', () => {
     const described = 'Solo-ready — If someone asks for a tune, this is one you’d give them.';
     expect(updated.getAttribute('aria-label')).toBe(`Level: ${described}`);
     expect(updated.getAttribute('title')).toBe(described);
-    expect(updated.querySelectorAll('span.on').length).toBe(4);
+    expect(updated.querySelectorAll('span.on').length).toBe(5);
   });
 
   it('un solo menú abierto a la vez, y Escape cierra antes el submenú que el menú', async () => {
