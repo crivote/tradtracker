@@ -728,6 +728,20 @@ describe('searchRepertoire (#9)', () => {
     expect(searchRepertoire(rows, 'sligo', 'jig')).toEqual([]);
   });
 
+  it('el ritmo filtra sin distinguir mayúsculas, igual que lo deduplica el selector', () => {
+    // `rhythmOptions` junta «Reel» y «reel» en una sola opción; si el filtro
+    // comparase el texto exacto, elegir esa opción escondería la mitad de las
+    // filas —y el recuento no cuadraría con lo que ofrece el selector—.
+    const mixed = [
+      makeRow({ id: 'a', name: 'A', rhythm: 'Reel' }),
+      makeRow({ id: 'b', name: 'B', rhythm: 'reel' }),
+      makeRow({ id: 'c', name: 'C', rhythm: 'Reel', custom_rhythm: 'REEL' }),
+    ];
+    expect(rhythmOptions(mixed)).toEqual(['Reel']);
+    expect(searchRepertoire(mixed, '', 'Reel').map((row) => row.id)).toEqual(['a', 'b', 'c']);
+    expect(searchRepertoire(mixed, '', 'reel').map((row) => row.id)).toEqual(['a', 'b', 'c']);
+  });
+
   it('cruza todos los peldaños y también las aparcadas', () => {
     // Una fila por peldaño, la última en el cajón: todas responden a la consulta.
     expect(searchRepertoire(rows, 'e', null).map((row) => row.id)).toContain('sligo');

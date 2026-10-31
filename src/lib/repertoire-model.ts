@@ -707,11 +707,16 @@ export function searchRepertoire(
 ): RepertoireRow[] {
   const hasTerm = term.trim().length > 0;
   if (!hasTerm && rhythm === null) return [];
+  // El ritmo se compara **sin mayúsculas ni diacríticos**, igual que lo
+  // deduplica `rhythmOptions`: comparar el texto exacto escondería la mitad de
+  // las filas de una opción que el selector ofrece como una sola («Reel» y
+  // «reel» conviven en el repertorio en cuanto uno se escribe a mano).
+  const wanted = rhythm === null ? null : collationKey(rhythm);
   return rows
     .filter(
       (row) =>
         (!hasTerm || matchesQuery(row, term)) &&
-        (rhythm === null || displayRhythm(row) === rhythm)
+        (wanted === null || collationKey(displayRhythm(row)) === wanted)
     )
     .sort(compareSearchOrder);
 }
