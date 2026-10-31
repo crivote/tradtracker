@@ -10,7 +10,9 @@ import {
   displayKey,
   displayRhythm,
   displayTitle,
+  addedAge,
   groupIntoBands,
+  levelText,
   mapRepertoireRow,
   mapStatsRow,
   matchesQuery,
@@ -22,6 +24,8 @@ import {
   practiceSummary,
   qualityDots,
   rhythmOptions,
+  rowInvariants,
+  rungOf,
   searchRepertoire,
   sortRepertoire,
   shelvedCount,
@@ -146,6 +150,8 @@ function makeRow(input: {
   custom_title?: string | null;
   custom_rhythm?: string | null;
   rhythm?: string | null;
+  meter?: string | null;
+  composer?: string | null;
   rating?: number | null;
   added_at?: string;
   last_practiced_at?: string | null;
@@ -154,7 +160,7 @@ function makeRow(input: {
   key?: string | null;
   stats?: RepertoireStats;
 }): RepertoireRow {
-  const { name, key, rhythm, stats, ...overrides } = input;
+  const { name, key, rhythm, meter, composer, stats, ...overrides } = input;
   return mapRepertoireRow(
     {
       ...baseRow,
@@ -164,6 +170,8 @@ function makeRow(input: {
         ...tune,
         name: name ?? tune.name,
         rhythm: rhythm === undefined ? tune.rhythm : rhythm,
+        meter: meter === undefined ? tune.meter : meter,
+        composer: composer === undefined ? null : composer,
         key: key === undefined ? tune.key : key,
       },
     },
@@ -259,6 +267,129 @@ describe('sortRepertoire', () => {
     const sorted = sortRepertoire(input, 'alphabetical');
     expect(sorted.map((row) => row.id)).toEqual(['b', 'a']);
     expect([...input].map((row) => row.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('orden del listado (#42): peldaño, ensayos y media', () => {
+  const stats = (practice_count: number | null, avg_quality: number | null): RepertoireStats => ({
+    practice_count,
+    avg_quality,
+    days_since_last_practice: null,
+  });
+
+  it('level ordena por peldaño, la más alta primero', () => {
+    const learn = makeRow({ id: 'learn', name: 'Alpha', status: 'to_learn' });
+    const solo = makeRow({ id: 'solo', name: 'Beta', status: 'solo_ready' });
+    const along = makeRow({ id: 'along', name: 'Gamma', status: 'playing_along' });
+    const sorted = sortRepertoire([learn, along, solo], 'level');
+    expect(sorted.map((row) => row.id)).toEqual(['solo', 'along', 'learn']);
+  });
+
+  it('practices ordena por número de ensayos y deja los null al final', () => {
+    const many = makeRow({ id: 'many', name: 'Alpha', stats: stats(9, 4) });
+    const few = makeRow({ id: 'few', name: 'Beta', stats: stats(2, 4) });
+    const none = makeRow({ id: 'none', name: 'Gamma', stats: stats(null, null) });
+    const sorted = sortRepertoire([none, few, many], 'practices');
+    expect(sorted.map((row) => row.id)).toEqual(['many', 'few', 'none']);
+  });
+
+  it('un 0 de ensayos es un dato: queda detrás de los que tienen alguno, pero delante del null', () => {
+    const zero = makeRow({ id: 'zero', name: 'Alpha', stats: stats(0, null) });
+    const one = makeRow({ id: 'one', name: 'Beta', stats: stats(1, null) });
+    const unk = makeRow({ id: 'unk', name: 'Gamma', stats: stats(null, null) });
+    const sorted = sortRepertoire([unk, zero, one], 'practices');
+    expect(sorted.map((row) => row.id)).toEqual(['one', 'zero', 'unk']);
+  });
+
+  it('quality ordena por media y deja los null al final', () => {
+    const high = makeRow({ id: 'high', name: 'Alpha', stats: stats(3, 4.8) });
+    const mid = makeRow({ id: 'mid', name: 'Beta', stats: stats(3, 3.1) });
+    const none = makeRow({ id: 'none', name: 'Gamma', stats: stats(0, null) });
+    const sorted = sortRepertoire([none, mid, high], 'quality');
+    expect(sorted.map((row) => row.id)).toEqual(['high', 'mid', 'none']);
+  });
+
+  it('invertir la columna invierte el número, no el desempate de las filas empatadas', () => {
+    const many = makeRow({ id: 'many', name: 'Alpha', stats: stats(9, 4) });
+    const few = makeRow({ id: 'few', name: 'Beta', stats: stats(2, 4) });
+    const zed = makeRow({ id: 'zed', name: 'Zed', stats: stats(2, 4) });
+    // Descendente (el sentido por defecto): 9 y luego los dos de 2, por título.
+    expect(sortRepertoire([few, zed, many], 'practices').map((row) => row.id)).toEqual([
+      'many',
+      'few',
+      'zed',
+    ]);
+    // Al revés, los de 2 siguen empatados y el desempate no baila.
+    expect(sortRepertoire([few, zed, many], 'practices', 'asc').map((row) => row.id)).toEqual([
+      'few',
+      'zed',
+      'many',
+    ]);
+  });
+});
+
+describe('addedAge: la antigüedad del listado en palabras (#42)', () => {
+  const NOW = Date.parse('2026-10-31T12:00:00Z');
+
+  it('los primeros días se cuentan en días, en singular y en plural', () => {
+    expect(addedAge('2026-10-31T09:00:00Z', NOW)).toBe('0 days');
+    expect(addedAge('2026-10-30T12:00:00Z', NOW)).toBe('1 day');
+    expect(addedAge('2026-10-28T12:00:00Z', NOW)).toBe('3 days');
+  });
+
+  it('los meses, en singular y en plural', () => {
+    expect(addedAge('2026-09-28T12:00:00Z', NOW)).toBe('1 month');
+    expect(addedAge('2026-06-25T12:00:00Z', NOW)).toBe('4 months');
+  });
+
+  it('un año y un mes dice «1 year 1 month», no «1 months»', () => {
+    expect(addedAge('2025-09-26T12:00:00Z', NOW)).toBe('1 year 1 month');
+    expect(addedAge('2025-10-31T12:00:00Z', NOW)).toBe('1 year');
+  });
+
+  it('los años, en plural, con los meses que sobren', () => {
+    expect(addedAge('2024-10-31T12:00:00Z', NOW)).toBe('2 years');
+    expect(addedAge('2023-08-20T12:00:00Z', NOW)).toBe('3 years 2 months');
+  });
+
+  it('una fecha ilegible no inventa antigüedad: deja el hueco de la columna', () => {
+    expect(addedAge('no-es-una-fecha', NOW)).toBe('—');
+    expect(addedAge('', NOW)).toBe('—');
+  });
+});
+
+describe('invariantes y peldaño de la fila (#42)', () => {
+  it('los invariantes son tipo · compás · autor, con null en lo que falta', () => {
+    const full = makeRow({ id: 'a', rhythm: 'march', meter: '4/4', composer: 'James Scott Skinner' });
+    expect(rowInvariants(full)).toEqual({
+      rhythm: 'march',
+      meter: '4/4',
+      composer: 'James Scott Skinner',
+    });
+
+    // Sin compás ni autor no hay guiones: hay huecos, y la fila los omite.
+    const bare = makeRow({ id: 'b', rhythm: 'reel', meter: null, composer: null });
+    expect(rowInvariants(bare)).toEqual({ rhythm: 'reel', meter: null, composer: null });
+
+    // Un autor en blanco no es un autor.
+    const blank = makeRow({ id: 'c', composer: '   ' });
+    expect(rowInvariants(blank).composer).toBeNull();
+  });
+
+  it('el tipo personal manda sobre el del catálogo', () => {
+    const overridden = makeRow({ id: 'd', rhythm: 'reel', custom_rhythm: 'hornpipe' });
+    expect(rowInvariants(overridden).rhythm).toBe('hornpipe');
+  });
+
+  it('el icono de peldaño sale de bandFor y su nombre accesible lleva etiqueta y definición', () => {
+    const solo = makeRow({ id: 'e', status: 'solo_ready' });
+    expect(rungOf(solo)).toBe(4);
+    expect(levelText(solo)).toBe(
+      'Solo-ready — If someone asks for a tune, this is one you’d give them.'
+    );
+
+    const learn = makeRow({ id: 'f', status: 'to_learn' });
+    expect(rungOf(learn)).toBe(1);
   });
 });
 

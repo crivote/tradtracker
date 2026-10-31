@@ -3,27 +3,36 @@ import { A, useNavigate, useSearchParams } from '@solidjs/router';
 import {
   BANDS,
   SHELVED_SCOPE,
+  SORT_DEFAULT_DIRECTION,
   SORT_LABELS,
   STATUS_LABELS,
   addCatalogueTune,
+  addedAge,
   bandFor,
   capForColumns,
   capRows,
-  displayKey,
-  displayRhythm,
   displayTitle,
   fetchRepertoire,
   groupIntoBands,
+  levelText,
   parseScope,
   parseViewMode,
-  removeFromRepertoire,
+  rowInvariants,
+  rungOf,
+  saveFavorite,
+  saveStatus,
   shelvedCount,
   sortRepertoire,
+  stalenessColor,
+  stalenessDays,
+  stalenessTag,
+  stalenessTitle,
   statusCounts,
   VIEW_MODE_KEY,
   type BandGroup,
   type RepertoireRow,
   type RepertoireScope,
+  type SortDirection,
   type SortKey,
   type TuneStatus,
   type ViewMode,
@@ -34,7 +43,12 @@ import {
   tokenizeQuery,
   type CatalogueEntry,
 } from '../lib/catalogue';
-import { preloadCatalogue, searchCatalogue, getCatalogueStats } from '../lib/catalogue-db';
+import {
+  preloadCatalogue,
+  searchCatalogue,
+  getCatalogueStats,
+  lookupCatalogueMeta,
+} from '../lib/catalogue-db';
 import { normalizeTitle } from '../lib/format';
 import { logPractice } from '../lib/practice';
 import TuneCard from '../components/TuneCard';
@@ -63,8 +77,9 @@ import './repertoire.css';
  *     que es la puerta a su listado. Aparcar no cambia el peldaño, así que no
  *     son una quinta banda.
  *
- * La vista de tabla se conserva: mismas columnas, mismo orden elegido a mano,
- * misma baja. Solo cambia el papel.
+ * El listado de un peldaño —y el cajón de aparcadas— es la **tabla del boceto
+ * 014-b** (#42): se recorre entera y se ordena por las cabeceras; en la fila
+ * solo se toca la favorita y el peldaño, y el borrado vive en la ficha.
  */
 
 /**
@@ -208,59 +223,386 @@ function BandView(props: {
   );
 }
 
-/** La tabla clásica (#7): mismas columnas y misma baja, sobre papel. */
+/**
+ * Un solo menú abierto a la vez en toda la tabla, compartido por todas las
+ * filas: abrir uno cierra el anterior sin que la pantalla lleve la cuenta. Es
+ * el mecanismo de `TuneCard` (#29), no un segundo invento.
+ */
+let activeRowMenu: (() => void) | null = null;
+
+/**
+ * La fila del listado (#42): ocho columnas —corazón, Tune, Level, Practices,
+ * Last played, Average, Added y el menú—.
+ *
+ * Lo que la fila NO es: una ficha. Dice los invariantes de la pieza bajo el
+ * título y los metadatos del dueño en columnas, y solo se toca en dos sitios
+ * —la favorita y el peldaño—; el resto de acciones están en el menú y el
+ * borrado, en la ficha.
+ */
+function RepertoireRowView(props: {
+  row: RepertoireRow;
+  now: number;
+  onToggleFavorite: (row: RepertoireRow) => void | Promise<void>;
+  onPractise: (row: RepertoireRow) => void | Promise<void>;
+  onStatusChange: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
+}) {
+  const [menuOpen, setMenuOpen] = createSignal(false);
+  const [subOpen, setSubOpen] = createSignal(false);
+  const [menuUp, setMenuUp] = createSignal(false);
+  let menuEl: HTMLDivElement | undefined;
+
+  const title = createMemo(() => displayTitle(props.row));
+  const invariants = createMemo(() => rowInvariants(props.row));
+  const days = createMemo(() => stalenessDays(props.row, props.now));
+  const tag = createMemo(() => stalenessTag(days()));
+  const colour = createMemo(() => stalenessColor(days()));
+  const level = createMemo(() => levelText(props.row));
+
+  const closeMenu = () => {
+    setSubOpen(false);
+    setMenuOpen(false);
+    if (activeRowMenu === closeMenu) activeRowMenu = null;
+  };
+
+  /**
+   * El menú tiene trece renglones con las definiciones dentro: pegado al pie de
+   * la ventana gira hacia arriba (`.menu--row.up`) en vez de salirse.
+   */
+  const toggleMenu = () => {
+    if (menuOpen()) {
+      closeMenu();
+      return;
+    }
+    if (activeRowMenu) activeRowMenu();
+    setMenuOpen(true);
+    activeRowMenu = closeMenu;
+    const rect = menuEl?.getBoundingClientRect();
+    setMenuUp(Boolean(rect && rect.bottom > window.innerHeight - 8));
+  };
+
+  /**
+   * Escape cierra **primero el submenú y después el menú**: son dos niveles y
+   * salir de los dos de un golpe deja al lector sin saber dónde estaba. Clic
+   * fuera cierra todo; los clics de dentro se ignoran aquí porque el disparador
+   * y el submenú viven dentro de `.row-actions` y el navegador ya entregó el
+   * evento antes de que el menú pudiera pararlo.
+   */
+  createEffect(() => {
+    if (!menuOpen()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (subOpen()) {
+        setSubOpen(false);
+        return;
+      }
+      closeMenu();
+    };
+    const onClickAway = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Node && menuEl?.parentElement?.contains(target)) return;
+      closeMenu();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('click', onClickAway);
+    onCleanup(() => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('click', onClickAway);
+    });
+  });
+
+  onCleanup(() => {
+    if (activeRowMenu === closeMenu) activeRowMenu = null;
+  });
+
+  return (
+    <tr>
+      <td class="fav">
+        <button
+          type="button"
+          class="fav-btn"
+          aria-pressed={props.row.favorite ? 'true' : 'false'}
+          aria-label={`Favourite: ${title()}`}
+          onClick={() => void props.onToggleFavorite(props.row)}
+        >
+          {props.row.favorite ? '♥' : '♡'}
+        </button>
+      </td>
+      <td>
+        <div class="row-title">
+          <A href={`/repertoire/${props.row.id}`}>{title()}</A>
+        </div>
+        {/* Los invariantes de la pieza. Lo que falte se omite: ni «trad.» ni un
+            guion, porque un guion aquí se lee como un dato. */}
+        <div class="row-invariants">
+          <Show when={invariants().rhythm}>{invariants().rhythm}</Show>
+          <Show when={invariants().meter}>
+            <Show when={invariants().rhythm}>
+              <span class="sep">·</span>
+            </Show>
+            {invariants().meter}
+          </Show>
+          <Show when={invariants().composer}>
+            <Show when={invariants().rhythm || invariants().meter}>
+              <span class="sep">·</span>
+            </Show>
+            <i>{invariants().composer}</i>
+          </Show>
+        </div>
+      </td>
+      <td>
+        {/* El `title` no es un nombre accesible: el icono lleva `role="img"` y
+            `aria-label`, y los dos se pintan del mismo texto para que cambiar
+            de peldaño los mueva a la vez. */}
+        <span class="rung" role="img" aria-label={`Level: ${level()}`} title={level()}>
+          <For each={[1, 2, 3, 4]}>
+            {(rung) => <span classList={{ on: rung <= rungOf(props.row) }} />}
+          </For>
+        </span>
+      </td>
+      <td class="num">{props.row.practice_count ?? 0}</td>
+      <td class="num">
+        <span
+          class="tag tag--row"
+          classList={{ 'is-never': days() === null }}
+          title={stalenessTitle(tag())}
+          style={
+            days() === null
+              ? undefined
+              : { background: colour().background, color: colour().foreground }
+          }
+        >
+          <Show when={tag().unit} fallback={tag().value}>
+            <b>{tag().value}</b> {tag().unit}
+          </Show>
+        </span>
+      </td>
+      <td class="num">
+        <Show when={props.row.avg_quality !== null} fallback={<span class="nodata">—</span>}>
+          {props.row.avg_quality!.toFixed(1)}
+        </Show>
+      </td>
+      <td class="num c-added" title={new Date(props.row.added_at).toLocaleDateString()}>
+        {addedAge(props.row.added_at, props.now)}
+      </td>
+      <td style={{ 'text-align': 'right' }}>
+        <span class="row-actions">
+          <button
+            type="button"
+            class="kebab kebab--row"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen()}
+            aria-label={`Actions for ${title()}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleMenu();
+            }}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+          <div
+            class="menu menu--row"
+            classList={{ open: menuOpen(), up: menuUp() }}
+            role="menu"
+            aria-label={`Actions for ${title()}`}
+            ref={menuEl}
+            onClick={(event) => event.stopPropagation()}
+          >
+            {/* El peldaño vive en un submenú de segundo nivel: desplegado en el
+                menú principal lo estiraba hasta necesitar un techo de altura, y
+                ese techo recortaba el submenú. El menú padre no lleva `overflow`. */}
+            <div class="has-sub">
+              <button
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={subOpen()}
+                onClick={() => setSubOpen((open) => !open)}
+              >
+                <span>
+                  Level
+                  <span class="current">{STATUS_LABELS[props.row.status]}</span>
+                </span>
+                <span aria-hidden="true">▸</span>
+              </button>
+              <div class="submenu" hidden={!subOpen()} role="menu" aria-label="Level">
+                <For each={BANDS}>
+                  {(band) => (
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={props.row.status === band.status ? 'true' : 'false'}
+                      onClick={() => {
+                        closeMenu();
+                        void props.onStatusChange(props.row, band.status);
+                      }}
+                    >
+                      {/* Un solo bloque dentro del botón: `.menu button` es una
+                          fila flex (viene de la carta) y así la etiqueta, el ✓ y
+                          la definición —que es un `small` de bloque— se apilan
+                          sin pelearse por la misma línea. */}
+                      <span>
+                        {band.label}
+                        <Show when={props.row.status === band.status}>
+                          <span class="check" aria-hidden="true">✓</span>
+                        </Show>
+                        <small>{band.definition}</small>
+                      </span>
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
+            <div class="sep" />
+            <A role="menuitem" href={`/repertoire/${props.row.id}`} onClick={closeMenu}>
+              View details
+            </A>
+            <A role="menuitem" href={`/repertoire/${props.row.id}`} onClick={closeMenu}>
+              Edit details
+            </A>
+            {/* «Add to set» no tiene destino todavía: los sets llegan en F7. Se
+                queda deshabilitado y con el motivo, no con una pantalla a medias. */}
+            <button type="button" role="menuitem" disabled title="Sets are not built yet">
+              Add to set
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="primary"
+              onClick={() => {
+                closeMenu();
+                void props.onPractise(props.row);
+              }}
+            >
+              Practise
+            </button>
+          </div>
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+/**
+ * La cabecera ordenable de una columna: el `th` lleva `aria-sort` cuando es la
+ * columna activa y entonces se enciende la flecha (`.arrow`), que en el resto
+ * de columnas ocupa su sitio apagada para que la cabecera no baile al ordenar.
+ */
+function SortHeader(props: {
+  label: string;
+  sortKey: SortKey;
+  active: SortKey;
+  direction: SortDirection;
+  numeric?: boolean;
+  extra?: string;
+  onSort: (key: SortKey) => void;
+}) {
+  const sorted = () => props.active === props.sortKey;
+  return (
+    <th
+      class={[props.numeric ? 'num' : '', props.extra ?? ''].filter(Boolean).join(' ') || undefined}
+      aria-sort={
+        sorted() ? (props.direction === 'asc' ? 'ascending' : 'descending') : undefined
+      }
+    >
+      <button type="button" onClick={() => props.onSort(props.sortKey)}>
+        {props.label}{' '}
+        <span class="arrow" aria-hidden="true">
+          {props.direction === 'asc' ? '▲' : '▼'}
+        </span>
+      </button>
+    </th>
+  );
+}
+
+/**
+ * La tabla del listado (#42, boceto 014-b): la superficie donde se **mira** un
+ * peldaño entero y se ordena por los metadatos del dueño.
+ *
+ * Ocho columnas: corazón, Tune con los invariantes debajo, Level como icono de
+ * cuatro barras, Practices, Last played, Average, Added y el menú. Fuera la
+ * columna `Key` —nula en toda la tabla—, el `#origin_ref` como segunda línea y
+ * el botón «Remove», que es acción de la ficha (#45).
+ *
+ * La tabla no lleva tarjeta contenedora: sobre papel, la línea de la cabecera y
+ * la de cada fila son toda la caja.
+ */
 function RepertoireTable(props: {
   rows: RepertoireRow[];
-  busyId: string | number | null;
-  onRemove: (row: RepertoireRow) => void;
+  now: number;
+  sortKey: SortKey;
+  sortDirection: SortDirection;
+  onSort: (key: SortKey) => void;
+  onPractise: (row: RepertoireRow) => void | Promise<void>;
+  onToggleFavorite: (row: RepertoireRow) => void | Promise<void>;
+  onStatusChange: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
 }) {
   return (
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Tune</th>
-            <th>Rhythm</th>
-            <th>Key</th>
-            <th>Level</th>
-            <th>Added</th>
+            <th />
+            <SortHeader
+              label="Tune"
+              sortKey="alphabetical"
+              active={props.sortKey}
+              direction={props.sortDirection}
+              onSort={props.onSort}
+            />
+            <SortHeader
+              label="Level"
+              sortKey="level"
+              active={props.sortKey}
+              direction={props.sortDirection}
+              onSort={props.onSort}
+            />
+            <SortHeader
+              label="Practices"
+              sortKey="practices"
+              active={props.sortKey}
+              direction={props.sortDirection}
+              numeric
+              onSort={props.onSort}
+            />
+            <SortHeader
+              label="Last played"
+              sortKey="urgency"
+              active={props.sortKey}
+              direction={props.sortDirection}
+              numeric
+              onSort={props.onSort}
+            />
+            <SortHeader
+              label="Average"
+              sortKey="quality"
+              active={props.sortKey}
+              direction={props.sortDirection}
+              numeric
+              onSort={props.onSort}
+            />
+            <SortHeader
+              label="Added"
+              sortKey="added"
+              active={props.sortKey}
+              direction={props.sortDirection}
+              numeric
+              extra="c-added"
+              onSort={props.onSort}
+            />
             <th />
           </tr>
         </thead>
         <tbody>
           <For each={props.rows}>
             {(row) => (
-              <tr>
-                <td>
-                  <A href={`/repertoire/${row.id}`} title={displayTitle(row)}>
-                    {displayTitle(row)}
-                  </A>
-                  <p class="dim">
-                    {row.tune.origin}
-                    {row.tune.origin_ref ? ` #${row.tune.origin_ref}` : ''}
-                  </p>
-                </td>
-                <td>{displayRhythm(row)}</td>
-                <td>{displayKey(row)}</td>
-                <td>
-                  <span class="pill">{STATUS_LABELS[row.status]}</span>
-                  <Show when={row.shelved}>
-                    {' '}
-                    <span class="dim">shelved</span>
-                  </Show>
-                </td>
-                <td class="dim">{new Date(row.added_at).toLocaleDateString()}</td>
-                <td style={{ 'text-align': 'right' }}>
-                  <button
-                    type="button"
-                    class="remove"
-                    disabled={props.busyId === row.id}
-                    onClick={() => props.onRemove(row)}
-                  >
-                    {props.busyId === row.id ? 'Removing…' : 'Remove'}
-                  </button>
-                </td>
-              </tr>
+              <RepertoireRowView
+                row={row}
+                now={props.now}
+                onPractise={props.onPractise}
+                onToggleFavorite={props.onToggleFavorite}
+                onStatusChange={props.onStatusChange}
+              />
             )}
           </For>
         </tbody>
@@ -294,7 +636,27 @@ export default function Repertoire() {
   const [tuneCount, setTuneCount] = createSignal<number | null>(null);
 
   const [viewMode, setViewMode] = createSignal<ViewMode>(loadViewMode());
+  /**
+   * El orden del listado: la columna y su sentido. Por defecto **urgencia
+   * descendente** —nunca ensayada primero, después la más abandonada—, que es
+   * el orden que la tabla tiene desde #7. Las cabeceras y el selector de la
+   * barra mueven las mismas dos señales.
+   */
   const [sortKey, setSortKey] = createSignal<SortKey>('urgency');
+  const [sortDirection, setSortDirection] = createSignal<SortDirection>(
+    SORT_DEFAULT_DIRECTION.urgency
+  );
+
+  /** Clic en una cabecera: la misma columna invierte; una nueva entra por su
+   *  sentido natural (números descendente, título ascendente). */
+  const chooseSort = (key: SortKey) => {
+    if (sortKey() === key) {
+      setSortDirection((direction) => (direction === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortKey(key);
+    setSortDirection(SORT_DEFAULT_DIRECTION[key]);
+  };
 
   // Lo que se está mirando vive en la URL (§2.7): recargar mantiene la vista.
   // `?band=` acepta los cuatro peldaños y `shelved`, que es el cajón.
@@ -353,7 +715,7 @@ export default function Repertoire() {
     let pool = rows();
     if (current === SHELVED_SCOPE) pool = pool.filter((row) => row.shelved);
     else if (current !== null) pool = pool.filter((row) => row.status === current && !row.shelved);
-    return sortRepertoire(pool, sortKey());
+    return sortRepertoire(pool, sortKey(), sortDirection());
   });
 
   /** Título del ámbito para la barra: el peldaño o «Shelved». */
@@ -459,11 +821,17 @@ export default function Repertoire() {
     setBusyId(entry.tuneId);
     setError(null);
     try {
+      // El autor no viaja en el resultado del buscador; sí en la consulta por
+      // id del catálogo (#44). Sin este viaje la tune nace sin autor y el
+      // subtexto de la fila —tipo · compás · autor— queda cojo hasta el
+      // próximo relleno.
+      const meta = await lookupCatalogueMeta([entry.tuneId]);
       await addCatalogueTune({
         tuneId: entry.tuneId,
         name: entry.name,
         rhythm: entry.type,
         meter: entry.meter,
+        composer: meta.get(entry.tuneId)?.composer ?? null,
       });
       await reload();
     } catch (cause) {
@@ -473,16 +841,55 @@ export default function Repertoire() {
     }
   };
 
-  const remove = async (row: RepertoireRow) => {
-    setBusyId(row.id);
+  /**
+   * La favorita de la fila, optimista y con reversión: el corazón responde al
+   * toque y, si el guardado falla, se deshace y se dice. Una favorita fantasma
+   * envenenaría el ×1,4 del generador de la lista de hoy. Mismo patrón que
+   * `/practice`.
+   */
+  const toggleFavorite = async (row: RepertoireRow) => {
+    const before = row.favorite;
+    const next = !before;
+    const paint = (value: boolean) =>
+      setRows((previous) =>
+        previous.map((candidate) =>
+          candidate.id === row.id ? { ...candidate, favorite: value } : candidate
+        )
+      );
+
+    paint(next);
     setError(null);
     try {
-      await removeFromRepertoire(row.id);
-      await reload();
+      await saveFavorite(row.id, next);
     } catch (cause) {
+      paint(before);
       setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusyId(null);
+    }
+  };
+
+  /**
+   * El peldaño desde el submenú del menú. Optimista por la misma razón que el
+   * corazón: el icono, su `title` y su `aria-label` se pintan del mismo dato y
+   * cambian juntos en cuanto se elige. Si el guardado falla, la fila vuelve a su
+   * peldaño y se dice.
+   */
+  const changeStatus = async (row: RepertoireRow, status: TuneStatus) => {
+    const before = row.status;
+    if (before === status) return;
+    const paint = (value: TuneStatus) =>
+      setRows((previous) =>
+        previous.map((candidate) =>
+          candidate.id === row.id ? { ...candidate, status: value } : candidate
+        )
+      );
+
+    paint(status);
+    setError(null);
+    try {
+      await saveStatus(row.id, status);
+    } catch (cause) {
+      paint(before);
+      setError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
@@ -513,7 +920,20 @@ export default function Repertoire() {
   };
   /** La puerta de las aparcadas: su recuento en la cabecera lleva a su listado. */
   const seeShelved = () => seeList(SHELVED_SCOPE);
-  const backToAll = () => setParams({ band: undefined });
+  /**
+   * «Back to all». Desde el cajón se vuelve a la **home** —las cuatro bandas—,
+   * que es lo que se estaba mirando antes de entrar: dejar la lista completa de
+   * todo el repertorio es otra pantalla y el lector no la ha pedido. Desde un
+   * peldaño solo se limpia el ámbito, sin cambiar el modo de vista.
+   */
+  const backToAll = () => {
+    if (scope() === SHELVED_SCOPE) {
+      navigate('/');
+      chooseView('grid');
+      return;
+    }
+    setParams({ band: undefined });
+  };
 
   return (
     <div class="repertoire-home">
@@ -731,10 +1151,17 @@ export default function Repertoire() {
       <Show when={effectiveMode() === 'table'}>
         <div class="sortbar">
           <span class="lbl">Sort by</span>
+          {/* El selector y las cabeceras mueven las mismas dos señales: aquí se
+              elige columna (con su sentido natural) y en la tabla se invierte
+              con un segundo clic. */}
           <select
             aria-label="Sort by"
             value={sortKey()}
-            onChange={(event) => setSortKey(event.currentTarget.value as SortKey)}
+            onChange={(event) => {
+              const key = event.currentTarget.value as SortKey;
+              setSortKey(key);
+              setSortDirection(SORT_DEFAULT_DIRECTION[key]);
+            }}
           >
             {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
               <option value={key}>{SORT_LABELS[key]}</option>
@@ -768,7 +1195,16 @@ export default function Repertoire() {
           <Show
             when={effectiveMode() === 'grid'}
             fallback={
-              <RepertoireTable rows={tableRows()} busyId={busyId()} onRemove={remove} />
+              <RepertoireTable
+                rows={tableRows()}
+                now={now()}
+                sortKey={sortKey()}
+                sortDirection={sortDirection()}
+                onSort={chooseSort}
+                onPractise={practise}
+                onToggleFavorite={toggleFavorite}
+                onStatusChange={changeStatus}
+              />
             }
           >
             <For each={visibleGroups()}>
