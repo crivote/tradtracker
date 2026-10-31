@@ -1,0 +1,174 @@
+/*
+ * Reproductor ABC de la lista de ensayo (#38).
+ *
+ * Todo vive bajo `.practice-player`, que es la raíz que el componente pinta
+ * dentro de una fila de `/practice`. No se redeclara ninguna variable: la
+ * paleta de papel (`--paper`, `--ink`, `--muted`, `--faint`, `--line`,
+ * `--accent`, `--serif`, `--sans`) la trae `.repertoire-home` y esta barra la
+ * hereda. Nada de Tailwind oscuro: la pantalla es papel.
+ *
+ * La barra ocupa el ancho entero de la fila, en su propio renglón: en la fila
+ * de #36 va después de las acciones, así que se pide las cuatro columnas
+ * enteras (`grid-column: 1 / -1`) y no parte la rejilla.
+ */
+
+.practice-player {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin-top: 6px;
+}
+
+.practice-player__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── ▶ y ⟳: los dos botones redondos ───────────────────────────── */
+.practice-player .pp-btn {
+  /* 28 px: por encima del mínimo táctil de 24 que ya costó una iteración. */
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.practice-player .pp-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.practice-player .pp-btn:disabled {
+  color: var(--faint);
+  border-color: var(--line);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.practice-player .pp-play {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.practice-player .pp-play[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--paper);
+}
+
+.practice-player .pp-loop[aria-pressed='true'] {
+  background: rgba(138, 53, 36, 0.1);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── tempo −/+ ─────────────────────────────────────────────────── */
+.practice-player .pp-tempo {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px 1px 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.practice-player .pp-step {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.practice-player .pp-step:hover {
+  background: rgba(120, 104, 80, 0.1);
+}
+
+.practice-player .pp-tempo__value {
+  min-width: 26px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+/* ── instrumento y partitura ───────────────────────────────────── */
+.practice-player .pp-instrument,
+.practice-player .pp-score-toggle {
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  padding: 4px 2px;
+  cursor: pointer;
+}
+
+.practice-player .pp-instrument:hover,
+.practice-player .pp-score-toggle:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.practice-player .pp-score-toggle[aria-expanded='true'] {
+  color: var(--ink);
+  border-bottom-color: var(--line);
+}
+
+/* ── los dos avisos que no son errores crudos ──────────────────── */
+.practice-player .pp-status {
+  font-size: 11.5px;
+  color: var(--faint);
+  font-style: italic;
+}
+
+/* ── la partitura, plegada hasta que se pide ───────────────────── */
+.practice-player .pp-score {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.35);
+  overflow-x: auto;
+}
+
+.practice-player .pp-score svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/*
+ * El blanco donde `abcjs` dibuja para sacar el `TuneObject` del audio. Fuera de
+ * la vista pero **no** `display:none`: el engraver mide texto y un contenedor
+ * oculto le da medidas de cero.
+ */
+.practice-player .pp-sink {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  width: 640px;
+  height: 1px;
+  overflow: hidden;
+  pointer-events: none;
+}
