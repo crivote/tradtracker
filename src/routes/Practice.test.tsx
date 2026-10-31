@@ -189,6 +189,29 @@ describe('lista del día (#36)', () => {
     expect(idsInOrder()).toEqual(before);
   });
 
+  it('congelar la lista la deja en el histórico (la penalización ×0,5 de D3 no lee de la nada)', async () => {
+    renderPractice();
+    await waitForRows(8);
+
+    const stored = JSON.parse(localStorage.getItem('tt-practice-recent') ?? '[]');
+    expect(stored).toHaveLength(1);
+    expect(stored[0].date).toBe(todayKeyFor(Date.now()));
+    expect(stored[0].ids).toEqual(idsInOrder());
+  });
+
+  it('re-congelar el mismo día reemplaza la entrada del histórico en vez de duplicarla', async () => {
+    renderPractice();
+    await waitForRows(8);
+
+    const stepUp = document.querySelector('[aria-label="Increase daily target"]') as HTMLElement;
+    fireEvent.click(stepUp);
+    await waitForRows(9);
+
+    const stored = JSON.parse(localStorage.getItem('tt-practice-recent') ?? '[]');
+    expect(stored).toHaveLength(1);
+    expect(stored[0].ids).toHaveLength(9);
+  });
+
   it('con ids congelados manda su orden, no el del generador', async () => {
     const today = todayKeyFor(Date.now());
     writeTodayList(localStorage, today, ['row-03', 'row-01', 'row-09'], 0);

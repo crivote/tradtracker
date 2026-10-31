@@ -29,6 +29,7 @@ import {
   previousIds,
   readPrefs,
   readTodayList,
+  recordRecentList,
   startOfLocalDay,
   todayKeyFor,
   writePrefs,
@@ -165,6 +166,20 @@ export default function Practice() {
     return { ids, overflow: built.overflow };
   };
 
+  /**
+   * Congela la lista del día **y la deja en el histórico**. Sin el histórico la
+   * penalización ×0,5 de D3 —la tune que salió ayer no vuelve a salir hoy— no
+   * tiene de dónde leer, y la anti-repetición no llega a existir: la penalización
+   * siempre vería un conjunto vacío. `recordRecentList` deduplica por fecha, así
+   * que re-congelar hoy reemplaza la entrada de hoy en vez de duplicarla.
+   */
+  const freezeToday = (ids: readonly string[], overflowNow: number) => {
+    tryPersist(() => {
+      writeTodayList(storage(), dateKey, ids, overflowNow);
+      recordRecentList(storage(), { date: dateKey, ids: [...ids] });
+    });
+  };
+
   const load = async () => {
     setLoading(true);
     setError(null);
@@ -189,7 +204,7 @@ export default function Practice() {
         const built = generate(loaded, storedPrefs.dailyTarget);
         ids = built.ids;
         overflowNow = built.overflow;
-        tryPersist(() => writeTodayList(storage(), dateKey, ids, overflowNow));
+        freezeToday(ids, overflowNow);
       }
 
       setListIds(ids);
@@ -225,7 +240,7 @@ export default function Practice() {
     const built = generate(rows(), next);
     setListIds(built.ids);
     setOverflow(built.overflow);
-    tryPersist(() => writeTodayList(storage(), dateKey, built.ids, built.overflow));
+    freezeToday(built.ids, built.overflow);
   };
 
   // ── marcas ────────────────────────────────────────────────────────
