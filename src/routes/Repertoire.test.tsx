@@ -97,11 +97,14 @@ function renderHome() {
 beforeEach(() => {
   mockedFetch.mockReset();
   mockedFetch.mockResolvedValue(ROWS as any);
+  // La preferencia de vista vive en `sessionStorage`: sin limpiar, la prueba que
+  // abre la lista dejaría «table» puesto para la siguiente.
+  sessionStorage.clear();
 });
 
 afterEach(() => cleanup());
 
-describe('home del repertorio con peldaños y cajón (#11)', () => {
+describe('home del repertorio con peldaños (#11, #29)', () => {
   it('la cabecera cuadra: las aparcadas se nombran aparte de las cuatro bandas', async () => {
     renderHome();
 
@@ -109,7 +112,7 @@ describe('home del repertorio con peldaños y cajón (#11)', () => {
     await waitFor(() => expect(screen.getByText(/1 shelved/)).toBeTruthy());
 
     const sub = document.querySelector('.page-head .sub')!.textContent!.replace(/\s+/g, ' ');
-    // El total es el repertorio entero y las partes lo suman: 3 en bandas + 1 en el cajón.
+    // El total es el repertorio entero y las partes lo suman: 3 en bandas + 1 aparcada.
     expect(sub).toContain('4 tunes');
     expect(sub).toContain('1 to learn');
     expect(sub).toContain('1 learning');
@@ -118,7 +121,7 @@ describe('home del repertorio con peldaños y cajón (#11)', () => {
     expect(sub).toContain('1 shelved');
   });
 
-  it('la aparcada no pisa su banda y espera en el cajón, cerrado hasta que se abre', async () => {
+  it('la aparcada no pisa su banda y en la home solo queda su recuento', async () => {
     renderHome();
 
     const playingAlong = await waitFor(() => {
@@ -131,21 +134,33 @@ describe('home del repertorio con peldaños y cajón (#11)', () => {
     expect(playingAlong.textContent).toContain('Nothing at this level yet.');
     expect(playingAlong.textContent).not.toContain('Sligo Creek');
 
-    // Y no aparece en ninguna otra banda.
+    // Y no aparece en ninguna otra banda ni en un cajón: en la home no se pinta.
     expect(screen.queryByText('Sligo Creek')).toBeNull();
+    expect(document.querySelector('.band--shelved')).toBeNull();
 
-    // El cajón anuncia su recuento y arranca cerrado.
-    const shelf = document.querySelector('.band--shelved') as HTMLElement;
-    expect(shelf).toBeTruthy();
-    expect(shelf.textContent).toContain('Shelved');
-    expect(shelf.textContent).toContain('1 tune');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Show' }));
+    // El recuento de la cabecera es la puerta: lleva a su listado.
+    fireEvent.click(screen.getByRole('button', { name: /1 shelved/ }));
 
     await waitFor(() => expect(screen.getByText('Sligo Creek')).toBeTruthy());
+    // La lista dice de qué es y deja volver.
+    expect(screen.getByText(/Showing/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Back to all/ })).toBeTruthy();
   });
 
-  it('el título de la banda aísla ese peldaño y el cajón se retira con él', async () => {
+  it('todas las cartas de la home son iguales: ni una sola en miniatura', async () => {
+    renderHome();
+
+    await waitFor(() => expect(screen.getByText('Morning Dew')).toBeTruthy());
+    const cards = document.querySelectorAll('.repertoire-home .card');
+    expect(cards.length).toBeGreaterThan(0);
+    for (const card of Array.from(cards)) {
+      expect(card.classList.contains('tile')).toBe(false);
+      // El medidor de calidad no se cae en ninguna banda.
+      expect(card.querySelector('.quality')).toBeTruthy();
+    }
+  });
+
+  it('el título de la banda la aísla en la rejilla y ofrece su listado', async () => {
     renderHome();
 
     await waitFor(() => expect(screen.getByText('Morning Dew')).toBeTruthy());
@@ -154,11 +169,17 @@ describe('home del repertorio con peldaños y cajón (#11)', () => {
 
     await waitFor(() => expect(screen.queryByText('Morning Dew')).toBeNull());
     expect(screen.getByText('Cooley’s Reel')).toBeTruthy();
-    // Con una banda aislada la pantalla es esa banda: el cajón no se pinta.
-    expect(document.querySelector('.band--shelved')).toBeNull();
-    // Y la barra dice qué se está viendo, con la vuelta disponible.
+    // La barra dice qué se está viendo, con la vuelta disponible.
     expect(screen.getByText(/Showing/)).toBeTruthy();
-    // Hay dos «Back to all» (la barra y el pie de la banda): basta con que exista.
-    expect(screen.getAllByRole('button', { name: /Back to all/ }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /Back to all/ })).toBeTruthy();
+
+    // El listado completo de un peldaño es una lista: la puerta está en la banda.
+    fireEvent.click(screen.getByRole('button', { name: /See all 1 as list/ }));
+
+    await waitFor(() => {
+      expect(document.querySelector('.repertoire-home table')).toBeTruthy();
+    });
+    expect(screen.getByText('Cooley’s Reel')).toBeTruthy();
+    expect(screen.queryByText('Morning Dew')).toBeNull();
   });
 });

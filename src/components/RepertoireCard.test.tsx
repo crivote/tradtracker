@@ -53,7 +53,7 @@ function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
 }
 
 /** Monta una o varias cartas dentro del router: la carta enlaza al detalle. */
-function mount(rows: RepertoireRow[], density: 'card' | 'tile' = 'card') {
+function mount(rows: RepertoireRow[]) {
   const history = createMemoryHistory();
   history.set({ value: '/' });
   const onPractise = vi.fn();
@@ -64,7 +64,7 @@ function mount(rows: RepertoireRow[], density: 'card' | 'tile' = 'card') {
         component={() => (
           <div class="repertoire-home">
             {rows.map((item) => (
-              <TuneCard row={item} now={NOW} density={density} onPractise={onPractise} />
+              <TuneCard row={item} now={NOW} onPractise={onPractise} />
             ))}
           </div>
         )}
@@ -175,10 +175,13 @@ describe('la carta (#29)', () => {
     expect(container.querySelector('.q')).toBeNull();
   });
 
-  it('la miniatura de biblioteca no lleva medidor', () => {
-    const { container } = mount([row({ practice_count: 4, avg_quality: 4 })], 'tile');
-    expect(container.querySelector('.card')?.classList.contains('tile')).toBe(true);
-    expect(container.querySelector('.quality')).toBeNull();
+  it('el medidor va en todas las cartas, no solo en las bandas de trabajo', () => {
+    // Regla retirada el 2026-10-31: la densidad de biblioteca escondía el
+    // medidor justamente donde hay historial de ensayos. Ahora se pinta siempre.
+    const { container } = mount([row({ practice_count: 4, avg_quality: 4 })]);
+    expect(container.querySelector('.card')?.classList.contains('tile')).toBe(false);
+    expect(container.querySelector('.quality')).toBeTruthy();
+    expect(container.querySelectorAll('.q i').length).toBe(5);
   });
 });
 

@@ -15,10 +15,13 @@ import { focalPosition } from '../lib/image-sources';
 
 /**
  * La carta del repertorio (#29): la foto ocupa toda la carta y todos los datos
- * van encima. Dos densidades con el mismo componente —`card` en las bandas de
- * trabajo, `tile` en las de biblioteca— porque solo cambian medidas y la
- * presencia del medidor de calidad: el marcado es el mismo, y así el tag, el
- * menú y la navegación no se duplican.
+ * van encima.
+ *
+ * **Una sola carta para todas las filas.** Hubo dos densidades —`card` en las
+ * bandas de trabajo, `tile` en las de biblioteca— y se retiraron el 2026-10-31:
+ * la home nunca recorre una banda entera (dos filas como mucho) y el listado
+ * completo de un peldaño es una lista, así que la miniatura no ahorraba nada y
+ * sí costaba el medidor de calidad y un kebab por debajo del mínimo táctil.
  *
  * Lo que la carta NO hace: decir el estado. La banda ya lo dice, y repetirlo en
  * cada carta con cien tunes es ruido (§2.2 del issue).
@@ -31,7 +34,6 @@ export interface TuneCardProps {
   row: RepertoireRow;
   /** Instante de la vista: los días del tag se calculan fuera, no aquí. */
   now: number;
-  density: 'card' | 'tile';
   /** El «Practise» del menú: lo resuelve la pantalla, que es quien recarga. */
   onPractise: (row: RepertoireRow) => void | Promise<void>;
 }
@@ -95,7 +97,6 @@ export default function TuneCard(props: TuneCardProps) {
     <article
       class="card"
       classList={{
-        tile: props.density === 'tile',
         'card--photo': Boolean(props.row.image),
         'card--bare': !props.row.image,
       }}
@@ -211,24 +212,25 @@ export default function TuneCard(props: TuneCardProps) {
             {key()}
           </Show>
         </p>
-        <Show when={props.density === 'card'}>
-          <p
-            class="quality"
-            classList={{ none: summary().empty }}
-            aria-label={
-              summary().empty
-                ? summary().text
-                : `Average quality ${props.row.avg_quality} of 5 over ${props.row.practice_count} practices`
-            }
-          >
-            <Show when={summary().dots.length > 0}>
-              <span class="q" aria-hidden="true">
-                <For each={summary().dots}>{(dot) => <i class={dot} />}</For>
-              </span>
-            </Show>
-            <span class="n">{summary().text}</span>
-          </p>
-        </Show>
+        {/* El medidor de calidad va en todas las cartas: es el dato que más dice
+            de una tune ya tocada, y estaba desapareciendo justo en las bandas de
+            biblioteca, que son las que tienen historial. */}
+        <p
+          class="quality"
+          classList={{ none: summary().empty }}
+          aria-label={
+            summary().empty
+              ? summary().text
+              : `Average quality ${props.row.avg_quality} of 5 over ${props.row.practice_count} practices`
+          }
+        >
+          <Show when={summary().dots.length > 0}>
+            <span class="q" aria-hidden="true">
+              <For each={summary().dots}>{(dot) => <i class={dot} />}</For>
+            </span>
+          </Show>
+          <span class="n">{summary().text}</span>
+        </p>
       </div>
     </article>
   );

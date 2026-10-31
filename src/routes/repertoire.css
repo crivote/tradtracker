@@ -1,11 +1,16 @@
 /*
  * Home del repertorio (#29) — contrato visual del boceto 008-escala.
  *
- * Los valores de la pantalla, la banda, la rejilla, la carta, el tag, el menú y
- * la miniatura están copiados del boceto (§2.6 del issue) y son contrato: están
- * medidos a 1280 px (carta 282 × 226, miniatura 186 × 149). No se reinterpretan
- * aquí: si un número no cuadra con la pantalla real se mide y se comenta en el
- * issue.
+ * Los valores de la pantalla, la banda, la rejilla, la carta, el tag y el menú
+ * están copiados del boceto (§2.6 del issue) y son contrato: están medidos a
+ * 1280 px (carta 282 × 226 en una rejilla de cuatro columnas). No se
+ * reinterpretan aquí: si un número no cuadra con la pantalla real se mide y se
+ * comenta en el issue.
+ *
+ * **Una sola carta.** La miniatura de 186 × 149 y su rejilla de seis columnas se
+ * retiraron el 2026-10-31: la home nunca recorre una banda entera (dos filas) y
+ * el listado completo de un peldaño es una lista. Una sola densidad también
+ * devuelve el medidor de calidad a todas las cartas.
  *
  * La paleta del boceto vive en el proyecto desde este corte; el resto de la app
  * sigue en la paleta oscura y esta pantalla se pinta sobre papel, así que las
@@ -288,13 +293,6 @@
   .repertoire-home .grid-4 {
     grid-template-columns: 1fr;
   }
-}
-
-/* biblioteca: miniatura, seis por fila */
-.repertoire-home .grid-tiles {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(166px, 1fr));
 }
 
 /* ── la carta ─────────────────────────────────────────────────── */
@@ -618,43 +616,10 @@
   background: rgba(255, 255, 255, 0.85);
 }
 
-/* ── miniatura de biblioteca: el dato mínimo ──────────────────── */
-.repertoire-home .tile h2 {
-  font-size: 15px;
-}
-.repertoire-home .tile .body {
-  padding: 0 10px 10px;
-}
-.repertoire-home .tile .tune-meta {
-  font-size: 10.5px;
-  margin-top: 2px;
-}
-.repertoire-home .tile .tag {
-  top: 8px;
-  left: 8px;
-  font-size: 11px;
-  padding: 4px 7px 3px;
-}
-.repertoire-home .tile .kebab {
-  width: 22px;
-  height: 22px;
-  top: 7px;
-  right: 7px;
-}
-.repertoire-home .tile .kebab span {
-  width: 2.5px;
-  height: 2.5px;
-}
-.repertoire-home .tile .menu {
-  top: 34px;
-  right: 7px;
-  min-width: 172px;
-}
-
 /* ── atajo al filtro por peldaño (#11) ────────────────────────────
    El título de la banda es un botón que deja esa sola banda en pantalla
-   (`?band=`, el mismo aislamiento de «Show all»). Se pinta como el
-   título, sin caja: el atajo no debe parecer un control nuevo. */
+   (`?band=`). Se pinta como el título, sin caja: el atajo no debe parecer un
+   control nuevo. */
 .repertoire-home .band-head h2 button {
   font: inherit;
   color: inherit;
@@ -676,27 +641,31 @@
   border-radius: 2px;
 }
 
-/* ── cajón de aparcadas (#11): al final, cerrado y sin tope ─────
-   Se separa de las bandas con una línea y su recuento va en caja baja:
-   no es una banda de trabajo, es una estantería. */
-.repertoire-home .band--shelved {
-  margin-top: 4px;
-  padding-top: 24px;
-  border-top: 1px solid var(--line);
+/* ── el recuento de aparcadas: puerta a su listado ─────────────────
+   En la home no se ven, solo se cuentan. El recuento es un botón con aspecto
+   de texto —no un control nuevo en la cabecera— porque su única función es
+   llevar a la lista: sin esa puerta, «3 shelved» sería un callejón sin salida. */
+.repertoire-home .shelved-link {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
 }
-.repertoire-home .band--shelved .band-head h2 {
-  color: var(--muted);
+.repertoire-home .shelved-link:hover {
+  text-decoration-thickness: 2px;
 }
-.repertoire-home .band--shelved .count {
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 12px;
-}
-.repertoire-home .band--shelved .toggle {
-  margin-top: 0;
+.repertoire-home .shelved-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
-/* ── tope de dos filas y «Show all» ───────────────────────────── */
+/* ── tope de dos filas y la puerta al listado ─────────────────── */
 .repertoire-home .more {
   margin-top: 14px;
   font: inherit;
@@ -722,9 +691,6 @@
   padding: 0;
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-.repertoire-home .band-sentinel {
-  height: 1px;
 }
 .repertoire-home .band-empty {
   font-family: var(--serif);

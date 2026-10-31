@@ -16,6 +16,7 @@ import {
   mapStatsRow,
   matchesQuery,
   overrideFields,
+  parseScope,
   parseViewMode,
   placeholderInitials,
   practiceRecency,
@@ -393,7 +394,7 @@ describe('mapRepertoireRow con los agregados de la vista (#29)', () => {
 });
 
 describe('bandas de la escalera (#29)', () => {
-  it('son cuatro, en orden de capacidad, con su definición, peldaño y densidad', () => {
+  it('son cuatro, en orden de capacidad, con su definición y su peldaño', () => {
     expect(BANDS.map((band) => band.status)).toEqual([
       'to_learn',
       'learning',
@@ -407,13 +408,26 @@ describe('bandas de la escalera (#29)', () => {
       'Solo-ready',
     ]);
     expect(BANDS.map((band) => band.rung)).toEqual([1, 2, 3, 4]);
-    // Las dos de trabajo piden carta; las dos de biblioteca, miniatura.
-    expect(BANDS.map((band) => band.density)).toEqual(['card', 'card', 'tile', 'tile']);
+    // Una sola carta para todas las filas: la banda no lleva densidad.
+    for (const band of BANDS) {
+      expect('density' in band).toBe(false);
+    }
     for (const band of BANDS) {
       expect(band.definition.length).toBeGreaterThan(10);
     }
     expect(BANDS[0].definition).toBe('Want to learn it. Not started.');
     expect(BANDS[3].definition).toBe("If someone asks for a tune, this is one you’d give them.");
+  });
+
+  it('parseScope acepta los cuatro peldaños y el cajón, y rechaza lo demás', () => {
+    for (const band of BANDS) {
+      expect(parseScope(band.status)).toBe(band.status);
+    }
+    expect(parseScope('shelved')).toBe('shelved');
+    expect(parseScope(undefined)).toBeNull();
+    expect(parseScope('nueva')).toBeNull();
+    expect(parseScope(['playing_along'])).toBeNull();
+    expect(parseScope(42)).toBeNull();
   });
 
   it('bandFor devuelve la banda del estado y no rompe con un valor desconocido', () => {

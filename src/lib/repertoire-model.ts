@@ -206,9 +206,16 @@ export function displayKey(item: RepertoireRow): string {
 /**
  * Las cuatro bandas de la home (#29), en orden de escalera. Cada una lleva el
  * nombre, la definición que se pinta al lado y el peldaño que enciende el
- * indicador de cuatro barras. La densidad no es estética: las dos bandas de
- * trabajo piden carta grande (ahí se mira la calidad de cada tune), y las dos de
- * biblioteca piden miniatura (ahí hay cien y no se vigilan una a una).
+ * indicador de cuatro barras.
+ *
+ * **Una sola densidad.** La dirección anterior partía la pantalla en dos —carta
+ * grande en las bandas de trabajo, miniatura en las de biblioteca— porque daba
+ * por hecho que las bandas grandes se recorrían enteras en la home. No es así:
+ * la home enseña como mucho dos filas por banda y el listado completo de un
+ * peldaño es una **lista**, no una rejilla (decisión de Víctor, 2026-10-31). Con
+ * eso la miniatura se queda sin oficio, y además costaba dos cosas caras: el
+ * medidor de calidad desaparecía justo en las bandas con más historial de
+ * ensayos, y su kebab de 22 px quedaba por debajo del mínimo táctil de 24.
  */
 export interface BandDefinition {
   status: TuneStatus;
@@ -216,7 +223,6 @@ export interface BandDefinition {
   definition: string;
   /** Barras encendidas del indicador, 1–4. */
   rung: number;
-  density: 'card' | 'tile';
 }
 
 export const BANDS: readonly BandDefinition[] = [
@@ -225,34 +231,51 @@ export const BANDS: readonly BandDefinition[] = [
     label: 'To learn',
     definition: 'Want to learn it. Not started.',
     rung: 1,
-    density: 'card',
   },
   {
     status: 'learning',
     label: 'Learning',
     definition: 'Know the parts, but can’t get through it end to end.',
     rung: 2,
-    density: 'card',
   },
   {
     status: 'playing_along',
     label: 'Playing along',
     definition: 'Can follow it when someone else leads.',
     rung: 3,
-    density: 'tile',
   },
   {
     status: 'solo_ready',
     label: 'Solo-ready',
     definition: 'If someone asks for a tune, this is one you’d give them.',
     rung: 4,
-    density: 'tile',
   },
 ];
 
 /** La banda de un estado; nunca undefined para un TuneStatus válido. */
 export function bandFor(status: TuneStatus): BandDefinition {
   return BANDS.find((band) => band.status === status) ?? BANDS[0];
+}
+
+/**
+ * Lo que se puede aislar en pantalla: un peldaño o el cajón de aparcadas.
+ *
+ * El cajón **no** es una banda —no agrupa, no tiene urgencia propia— pero sí se
+ * puede mirar entero, y su listado es la única puerta a esas tunes: en la home
+ * solo aparece su recuento.
+ */
+export type RepertoireScope = TuneStatus | 'shelved';
+
+export const SHELVED_SCOPE = 'shelved' as const;
+
+/**
+ * El ámbito que llega por la URL (`?band=`), validado. Un valor desconocido o
+ * ausente no rompe la pantalla: devuelve null y se ve la home entera.
+ */
+export function parseScope(raw: unknown): RepertoireScope | null {
+  if (typeof raw !== 'string') return null;
+  if (raw === SHELVED_SCOPE) return SHELVED_SCOPE;
+  return BANDS.some((band) => band.status === raw) ? (raw as TuneStatus) : null;
 }
 
 export const STATUS_LABELS: Record<TuneStatus, string> = {
