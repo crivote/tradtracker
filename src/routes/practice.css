@@ -187,6 +187,28 @@
 }
 
 /* ── corazón y marca ───────────────────────────────────────────── */
+/*
+ * Piezas opt-in de la fila (#37 vídeo, #38 reproductor). Van bajo el título y a
+ * lo ancho: la fila es una cola de trabajo y el vídeo no debe empujar el título
+ * ni el botón de marcar.
+ */
+.practice .practice-row__media {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 2px;
+}
+
+/* TradTube caído: se dice una vez y la lista sigue sirviendo. */
+.practice .practice-media-hint {
+  margin: 18px 0 0;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .practice .practice-row__actions {
   display: inline-flex;
   align-items: center;
