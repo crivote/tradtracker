@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { TuneStatus } from './repertoire-model';
+import type { RepertoireRow, TuneStatus } from './repertoire-model';
 import type { PracticeCandidate } from './practice-plan';
 import { 
   computeTargets, 
@@ -8,7 +8,11 @@ import {
   hashSeed, 
   mulberry32,
   PRACTICE_FACTORS,
-  KNOWN_STATUSES
+  KNOWN_STATUSES,
+  toCandidates,
+  rowsByIds,
+  favoriteSaturation,
+  FAVORITE_SATURATION_THRESHOLD,
 } from './practice-plan';
 
 describe('Practice Plan Model', () => {
@@ -257,4 +261,173 @@ describe('Practice Plan Model', () => {
     });
   });
 
+});
+
+/* ── vista de la lista del día (#36) ────────────────────────────── */
+
+/** Una fila de repertorio completa, con todo lo que la vista puede leer. */
+function repertoireRow(overrides: Partial<RepertoireRow> & { id: string; rhythm?: string | null }): RepertoireRow {
+  const { rhythm, ...rest } = overrides;
+  return {
+    status: 'learning',
+    shelved: false,
+    favorite: false,
+    rating: null,
+    custom_title: null,
+    custom_rhythm: null,
+    custom_key: null,
+    notes: null,
+    added_at: '2026-09-01T10:00:00Z',
+    last_practiced_at: null,
+    tune: {
+      id: `tune-${overrides.id}`,
+      origin: 'thesession',
+      origin_ref: '1',
+      name: `Tune ${overrides.id}`,
+      rhythm: rhythm === undefined ? 'Reel' : rhythm,
+      meter: '4/4',
+      key: 'D',
+      abc: null,
+    },
+    image: null,
+    practice_count: null,
+    avg_quality: null,
+    days_since_last_practice: null,
+    ...rest,
+  } as RepertoireRow;
+}
+
+describe('toCandidates (#36)', () => {
+  it('deja fuera las aparcadas: el cajón no está en rotación', () => {
+    const rows = [
+      repertoireRow({ id: 'a' }),
+      repertoireRow({ id: 'b', shelved: true }),
+      repertoireRow({ id: 'c' }),
+    ];
+
+    expect(toCandidates(rows).map((candidate) => candidate.id)).toEqual(['a', 'c']);
+  });
+
+  it('usa el ritmo personal, no el del catálogo', () => {
+    const rows = [repertoireRow({ id: 'a', rhythm: 'Reel', custom_rhythm: 'Hornpipe' })];
+    expect(toCandidates(rows)[0].rhythm).toBe('Hornpipe');
+  });
+
+  it('cae al ritmo del catálogo cuando el personal está en blanco', () => {
+    const rows = [repertoireRow({ id: 'a', rhythm: 'Jig', custom_rhythm: '   ' })];
+    expect(toCandidates(rows)[0].rhythm).toBe('Jig');
+  });
+
+  it('sin ritmo de ningún tipo devuelve null (no agrupa), no el guion de la vista', () => {
+    const rows = [repertoireRow({ id: 'a', rhythm: null })];
+    const blank = repertoireRow({ id: 'b', rhythm: null, custom_rhythm: null });
+    expect(toCandidates(rows)[0].rhythm).toBeNull();
+    expect(toCandidates([blank])[0].rhythm).toBeNull();
+  });
+
+  it('copia lo que decide la urgencia: peldaño, alta, última práctica y favorita', () => {
+    const rows = [
+      repertoireRow({
+        id: 'a',
+        status: 'solo_ready',
+        favorite: true,
+        last_practiced_at: '2026-10-20T09:00:00Z',
+      }),
+    ];
+
+    expect(toCandidates(rows)[0]).toEqual({
+      id: 'a',
+      status: 'solo_ready',
+      addedAt: '2026-09-01T10:00:00Z',
+      lastPracticedAt: '2026-10-20T09:00:00Z',
+      rhythm: 'Reel',
+      favorite: true,
+    });
+  });
+});
+
+describe('rowsByIds (#36)', () => {
+  const rows = [
+    repertoireRow({ id: 'a' }),
+    repertoireRow({ id: 'b' }),
+    repertoireRow({ id: 'c' }),
+  ];
+
+  it('conserva el orden de los ids, no el de las filas', () => {
+    expect(rowsByIds(rows, ['c', 'a', 'b']).map((row) => row.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('descarta los ids que ya no existen y no deja hueco', () => {
+    expect(rowsByIds(rows, ['b', 'gone', 'a']).map((row) => row.id)).toEqual(['b', 'a']);
+  });
+
+  it('una lista vacía devuelve una lista vacía', () => {
+    expect(rowsByIds(rows, [])).toEqual([]);
+  });
+
+  it('no inventa filas ni repite una id repetida', () => {
+    const picked = rowsByIds(rows, ['a', 'a', 'b']);
+    expect(picked.map((row) => row.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('favoriteSaturation (#36)', () => {
+  it('con el repertorio vacío no hay proporción ni aviso (0, no NaN)', () => {
+    expect(favoriteSaturation([])).toEqual({
+      favoriteCount: 0,
+      activeCount: 0,
+      ratio: 0,
+      overThreshold: false,
+    });
+  });
+
+  it('con el 30 % justo todavía discrimina: no avisa', () => {
+    const rows = [
+      repertoireRow({ id: 'a', favorite: true }),
+      repertoireRow({ id: 'b', favorite: true }),
+      repertoireRow({ id: 'c', favorite: true }),
+      repertoireRow({ id: 'd' }),
+      repertoireRow({ id: 'e' }),
+      repertoireRow({ id: 'f' }),
+      repertoireRow({ id: 'g' }),
+      repertoireRow({ id: 'h' }),
+      repertoireRow({ id: 'i' }),
+      repertoireRow({ id: 'j' }),
+    ];
+
+    const saturation = favoriteSaturation(rows);
+    expect(saturation.favoriteCount).toBe(3);
+    expect(saturation.activeCount).toBe(10);
+    expect(saturation.ratio).toBe(FAVORITE_SATURATION_THRESHOLD);
+    expect(saturation.overThreshold).toBe(false);
+  });
+
+  it('por encima del umbral avisa', () => {
+    const rows = [
+      repertoireRow({ id: 'a', favorite: true }),
+      repertoireRow({ id: 'b', favorite: true }),
+      repertoireRow({ id: 'c', favorite: true }),
+      repertoireRow({ id: 'd' }),
+      repertoireRow({ id: 'e' }),
+    ];
+
+    const saturation = favoriteSaturation(rows);
+    expect(saturation.ratio).toBeCloseTo(0.6, 5);
+    expect(saturation.overThreshold).toBe(true);
+  });
+
+  it('las aparcadas no cuentan: no están en rotación', () => {
+    const rows = [
+      repertoireRow({ id: 'a', favorite: true }),
+      repertoireRow({ id: 'b' }),
+      repertoireRow({ id: 'c', favorite: true, shelved: true }),
+      repertoireRow({ id: 'd', shelved: true }),
+    ];
+
+    const saturation = favoriteSaturation(rows);
+    expect(saturation.favoriteCount).toBe(1);
+    expect(saturation.activeCount).toBe(2);
+    expect(saturation.ratio).toBe(0.5);
+    expect(saturation.overThreshold).toBe(true);
+  });
 });

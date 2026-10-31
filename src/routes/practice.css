@@ -1,0 +1,288 @@
+/*
+ * Lista de ensayo del día (#36).
+ *
+ * Papel, no paleta oscura: el div raíz lleva `repertoire-home practice`, así que
+ * las variables (`--paper`, `--ink`, `--muted`, `--faint`, `--line`, `--accent`,
+ * `--serif`, `--sans`) vienen declaradas de `repertoire.css` y aquí no se
+ * redeclaran. Todas las reglas de este fichero viven bajo `.practice`: nada de
+ * esta pantalla puede teñir la home, el detalle ni el catálogo.
+ *
+ * Es una **cola de trabajo**: filas a lo ancho separadas por una línea de 1 px,
+ * no una rejilla de cartas. La posición manda el orden de lectura y el ojo baja
+ * por la columna, que es lo que se hace al ensayar.
+ */
+
+.practice .page-head {
+  margin-bottom: 18px;
+}
+
+/* ── objetivo diario y «Mark all» ──────────────────────────────── */
+.practice .practice-tools {
+  align-items: center;
+  gap: 12px;
+}
+
+.practice .practice-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 4px 2px 6px;
+  font-family: var(--sans);
+  color: var(--muted);
+}
+
+.practice .practice-target__step {
+  /* 28 px: por encima del mínimo táctil de 24 que ya costó una iteración. */
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.practice .practice-target__step:hover {
+  background: rgba(120, 104, 80, 0.1);
+}
+
+.practice .practice-target__value {
+  min-width: 18px;
+  text-align: center;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+/* ── avisos ────────────────────────────────────────────────────── */
+.practice .practice-overflow,
+.practice .practice-notice,
+.practice .practice-saturation {
+  max-width: 1260px;
+  margin: 0 auto 16px;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.practice .practice-overflow {
+  padding: 8px 12px;
+  border-left: 2px solid var(--accent);
+  background: rgba(138, 53, 36, 0.05);
+}
+
+.practice .practice-notice {
+  padding: 8px 12px;
+  border-left: 2px solid var(--accent);
+  color: var(--accent);
+  background: rgba(138, 53, 36, 0.07);
+}
+
+.practice .practice-saturation {
+  margin-top: 18px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+/* ── estados ───────────────────────────────────────────────────── */
+.practice .practice-state {
+  max-width: 1260px;
+  margin: 18px auto;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.practice .practice-state a {
+  color: var(--accent);
+}
+
+.practice .practice-retry {
+  margin-top: 10px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.practice .practice-retry:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── la cola ───────────────────────────────────────────────────── */
+.practice .practice-list {
+  list-style: none;
+  max-width: 1260px;
+  margin: 0 auto;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+
+.practice .practice-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 2px 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.practice .practice-row__pos {
+  font-family: var(--sans);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+  text-align: right;
+}
+
+.practice .practice-row__main {
+  min-width: 0;
+}
+
+.practice .practice-row__title {
+  display: inline-block;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 19px;
+  line-height: 1.2;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.practice .practice-row__title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.practice .practice-row__meta {
+  margin: 3px 0 0;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* El tag de abandono: mismo gradiente que la home, en pequeño. */
+.practice .practice-row__stale {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* ── corazón y marca ───────────────────────────────────────────── */
+.practice .practice-row__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.practice .practice-row__fav,
+.practice .practice-row__mark {
+  font: inherit;
+  cursor: pointer;
+  background: none;
+  border-radius: 999px;
+}
+
+.practice .practice-row__fav {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--faint);
+  border: 1px solid transparent;
+}
+
+.practice .practice-row__fav:hover {
+  color: var(--accent);
+  border-color: var(--line);
+}
+
+.practice .practice-row__fav[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+.practice .practice-row__mark {
+  min-width: 84px;
+  padding: 7px 14px;
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.practice .practice-row__mark:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.practice .practice-row__mark.is-marked {
+  color: var(--muted);
+  border-color: transparent;
+  background: rgba(120, 104, 80, 0.08);
+  cursor: pointer;
+}
+
+/*
+ * Una fila marcada **no desaparece**: se atenúa y lleva una barra de acento a la
+ * izquierda. Quitarla dejaría sin sitio el «desmarcar», que existe justo porque
+ * una marca puesta por error tiene que poder retirarse.
+ */
+.practice .practice-row.is-marked .practice-row__title {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+.practice .practice-row.is-marked .practice-row__meta {
+  opacity: 0.6;
+}
+
+.practice .practice-row.is-marked {
+  box-shadow: inset 2px 0 0 var(--accent);
+  padding-left: 8px;
+}
+
+@media (max-width: 560px) {
+  .practice .practice-row {
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'pos main stale'
+      'pos actions actions';
+    row-gap: 8px;
+  }
+  .practice .practice-row__pos {
+    grid-area: pos;
+    align-self: start;
+  }
+  .practice .practice-row__main {
+    grid-area: main;
+  }
+  .practice .practice-row__stale {
+    grid-area: stale;
+  }
+  .practice .practice-row__actions {
+    grid-area: actions;
+    justify-self: end;
+  }
+}

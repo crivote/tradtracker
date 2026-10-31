@@ -36,6 +36,9 @@ export const Layout: ParentComponent = (props) => {
               <A href="/" class="text-gray-300 hover:text-amber-300" end>
                 Repertoire
               </A>
+              <A href="/practice" class="text-gray-300 hover:text-amber-300">
+                Practice
+              </A>
               <A href="/search" class="text-gray-300 hover:text-amber-300">
                 Search
               </A>
@@ -71,11 +74,14 @@ export const Layout: ParentComponent = (props) => {
         sangre y las demás conservan el contenedor de siempre.
 
         La búsqueda (#9) se pinta sobre el mismo papel y con el mismo marco, así
-        que va a sangre igual que la home.
+        que va a sangre igual que la home. La lista de ensayo (#36) es la tercera
+        pantalla de papel y mide su propio marco por la misma razón.
       */}
       <main
         class={
-          location.pathname === '/' || location.pathname === '/search'
+          location.pathname === '/' ||
+          location.pathname === '/practice' ||
+          location.pathname === '/search'
             ? ''
             : 'max-w-7xl mx-auto px-6 py-8'
         }

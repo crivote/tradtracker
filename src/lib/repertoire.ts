@@ -330,6 +330,27 @@ export async function saveShelved(repertoireId: string, shelved: boolean): Promi
   if (!data?.id) throw new Error('Could not save the shelved flag: that tune is not yours.');
 }
 
+/**
+ * Marca o desmarca la tune como favorita (#36): la palanca rápida de F6, un
+ * toque desde la lista del día sin abrir la tune. **No es el `rating`**: el flag
+ * es binario y no dice cómo salió la práctica.
+ *
+ * Mismo patrón que `saveShelved` —`update` por id de fila y `select('id')` para
+ * que una fila ajena (que la RLS deja de afectar sin dar error) se vea como lo
+ * que es en vez de un no-op silencioso—. Nunca se envía `user_id`.
+ */
+export async function saveFavorite(repertoireId: string, favorite: boolean): Promise<void> {
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .update({ favorite })
+    .eq('id', repertoireId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not save the favourite: ${error.message}`);
+  if (!data?.id) throw new Error('Could not save the favourite: that tune is not yours.');
+}
+
 /* ── import del tunebook de The Session (#32, corte 2) ─────────────── */
 
 /**

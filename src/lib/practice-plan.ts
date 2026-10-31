@@ -1,4 +1,4 @@
-import type { TuneStatus } from './repertoire-model';
+import type { RepertoireRow, TuneStatus } from './repertoire-model';
 
 export interface PracticeCandidate {
   id: string;
@@ -259,5 +259,103 @@ export function buildPracticeList(
   return {
     entries,
     overflow: 0,
+  };
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Vista de la lista del día (#36): mapeos y umbrales.
+ * Puro y con el instante inyectado: la ruta solo consume.
+ * ──────────────────────────────────────────────────────────────── */
+
+/**
+ * Las filas del repertorio que entran en rotación, como candidatas del
+ * generador.
+ *
+ * Dos reglas que no son obvias:
+ *   · Las **aparcadas quedan fuera**: el cajón no es rotación. Si entraran, la
+ *     lista del día propondría justo lo que el usuario ha apartado.
+ *   · El ritmo es el **mostrado** (`custom_rhythm || tune.rhythm`), no el del
+ *     catálogo: el generador diversifica por lo que el usuario ve en la fila, y
+ *     un ritmo corregido a mano debe cortar la racha igual.
+ *
+ * Sin ritmo se devuelve `null` (no el guion de `displayRhythm`): `null` es «no
+ * agrupa» para la diversificación, mientras que un guion sería un ritmo más y
+ * acabaría formando rachas de tunes sin ritmo.
+ */
+export function toCandidates(rows: readonly RepertoireRow[]): PracticeCandidate[] {
+  const candidates: PracticeCandidate[] = [];
+  for (const row of rows) {
+    if (row.shelved) continue;
+    candidates.push({
+      id: row.id,
+      status: row.status,
+      addedAt: row.added_at,
+      lastPracticedAt: row.last_practiced_at,
+      rhythm: row.custom_rhythm?.trim() || row.tune.rhythm || null,
+      favorite: row.favorite,
+    });
+  }
+  return candidates;
+}
+
+/**
+ * Materializa una lista de ids contra las filas cargadas, **en el orden de los
+ * ids**: es lo que hace que la lista congelada mande sobre el generador.
+ *
+ * Un id que ya no existe (la tune se borró entre ayer y hoy) se descarta sin
+ * hueco; un id repetido se queda una sola vez, porque dos filas iguales en una
+ * cola de trabajo solo confunden la posición.
+ */
+export function rowsByIds(
+  rows: readonly RepertoireRow[],
+  ids: readonly string[],
+): RepertoireRow[] {
+  const byId = new Map<string, RepertoireRow>();
+  for (const row of rows) byId.set(row.id, row);
+
+  const picked: RepertoireRow[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) continue;
+    const row = byId.get(id);
+    if (!row) continue;
+    seen.add(id);
+    picked.push(row);
+  }
+  return picked;
+}
+
+/**
+ * Proporción de favoritas a partir de la cual el bonus ×1,4 deja de
+ * discriminar: si un tercio del repertorio activo es favorito, «favorita» ya no
+ * separa nada y el aviso del pie lo dice. Es un umbral de lectura, no de
+ * cálculo: el factor del generador no cambia.
+ */
+export const FAVORITE_SATURATION_THRESHOLD = 0.3;
+
+export interface FavoriteSaturation {
+  favoriteCount: number;
+  /** Filas en rotación: las mismas que ve el generador, sin aparcadas. */
+  activeCount: number;
+  /** 0 con el repertorio vacío (no `NaN`). */
+  ratio: number;
+  /** Estrictamente por encima del umbral: el 30 % justo todavía discrimina. */
+  overThreshold: boolean;
+}
+
+export function favoriteSaturation(rows: readonly RepertoireRow[]): FavoriteSaturation {
+  let favoriteCount = 0;
+  let activeCount = 0;
+  for (const row of rows) {
+    if (row.shelved) continue;
+    activeCount += 1;
+    if (row.favorite) favoriteCount += 1;
+  }
+  const ratio = activeCount === 0 ? 0 : favoriteCount / activeCount;
+  return {
+    favoriteCount,
+    activeCount,
+    ratio,
+    overThreshold: ratio > FAVORITE_SATURATION_THRESHOLD,
   };
 }

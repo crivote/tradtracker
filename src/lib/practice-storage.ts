@@ -245,3 +245,17 @@ export function todayKeyFor(nowMs: number): string {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+/**
+ * Instante del inicio del día **local** que contiene `nowMs`.
+ *
+ * Es la frontera de «la sesión de hoy»: la vista la compara con `started_at` en
+ * la base. Se compone con los setters locales por lo mismo que `todayKeyFor`:
+ * medianoche local, no UTC. `setHours` sobre la fecha local resuelve además los
+ * días de cambio de hora sin cuentas de 86 400 000 ms.
+ */
+export function startOfLocalDay(nowMs: number): number {
+  const date = new Date(nowMs);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}

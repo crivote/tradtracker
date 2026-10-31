@@ -14,6 +14,7 @@ import {
   writeTodayList,
   clearTodayList,
   todayKeyFor,
+  startOfLocalDay,
   type KeyValueStore,
   type RecentList,
 } from './practice-storage';
@@ -331,6 +332,45 @@ describe('todayKeyFor', () => {
     const ms = new Date(2026, 9, 31, 12, 0).getTime();
     expect(todayKeyFor(ms)).toBe(todayKeyFor(ms));
     expect(todayKeyFor(ms)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe('startOfLocalDay (#36)', () => {
+  it('devuelve la medianoche local del día que contiene el instante', () => {
+    const noon = new Date(2026, 9, 31, 12, 0).getTime();
+    const start = new Date(startOfLocalDay(noon));
+
+    expect(start.getFullYear()).toBe(2026);
+    expect(start.getMonth()).toBe(9);
+    expect(start.getDate()).toBe(31);
+    expect(start.getHours()).toBe(0);
+    expect(start.getMinutes()).toBe(0);
+    expect(start.getSeconds()).toBe(0);
+    expect(start.getMilliseconds()).toBe(0);
+  });
+
+  it('las 23:30 siguen siendo del mismo día local, no del siguiente', () => {
+    const late = new Date(2026, 9, 31, 23, 30).getTime();
+    expect(new Date(startOfLocalDay(late)).getDate()).toBe(31);
+    // Y la fecha local del inicio coincide con la del instante: es la frontera
+    // que compara la vista con `started_at`.
+    expect(todayKeyFor(startOfLocalDay(late))).toBe(todayKeyFor(late));
+  });
+
+  it('es idempotente y estable dentro del mismo día', () => {
+    const early = new Date(2026, 10, 1, 0, 0).getTime();
+    const night = new Date(2026, 10, 1, 23, 59, 59, 999).getTime();
+    expect(startOfLocalDay(early)).toBe(early);
+    expect(startOfLocalDay(night)).toBe(early);
+    expect(startOfLocalDay(startOfLocalDay(night))).toBe(early);
+  });
+
+  it('cruza el cambio de hora sin contar 86 400 000 ms', () => {
+    // 2026-10-25 en Madrid: el día dura 25 h. La frontera sigue siendo la medianoche local.
+    const afterChange = new Date(2026, 9, 25, 12, 0).getTime();
+    const start = new Date(startOfLocalDay(afterChange));
+    expect(start.getHours()).toBe(0);
+    expect(start.getDate()).toBe(25);
   });
 });
 
