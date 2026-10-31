@@ -80,6 +80,29 @@ export default function About() {
           Pexels. Each image keeps its own licence and author, shown with the image — public
           domain and CC0 ones are marked in green; nothing is copied into this app.
         </p>
+
+        <p class="mt-2 text-xs text-gray-500">
+          The practice player synthesises tunes from the{' '}
+          <a
+            class="text-amber-300 underline underline-offset-2 hover:text-amber-200"
+            href="https://github.com/gleitz/midi-js-soundfonts"
+            target="_blank"
+            rel="noreferrer"
+          >
+            midi-js-soundfonts
+          </a>{' '}
+          build of the <b>FluidR3_GM</b> soundfont (fiddle, whistle, accordion and banjo samples).
+          The samples are served from this app, not from a third-party CDN, and are used under the{' '}
+          <a
+            class="text-amber-300 underline underline-offset-2 hover:text-amber-200"
+            href="https://creativecommons.org/licenses/by/3.0/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Creative Commons Attribution 3.0
+          </a>{' '}
+          licence: FluidR3_GM, CC BY 3.0.
+        </p>
       </section>
     </div>
   );

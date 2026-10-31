@@ -76,6 +76,24 @@ describe('mapRepertoireRow', () => {
   it('fails loudly when the tune is missing instead of rendering a blank row', () => {
     expect(() => mapRepertoireRow({ ...baseRow, pr_tunes: null })).toThrow(/without its tune/);
   });
+
+  it('carries the row’s own ABC through as customAbc (#38)', () => {
+    const row = mapRepertoireRow({
+      ...baseRow,
+      custom_abc: 'X:1\nT:Mine\nM:4/4\nL:1/8\nK:G\nGABc|\n',
+      pr_tunes: tune,
+    });
+    expect(row.customAbc).toBe('X:1\nT:Mine\nM:4/4\nL:1/8\nK:G\nGABc|\n');
+  });
+
+  it('maps a null or missing custom_abc to null instead of undefined', () => {
+    expect(mapRepertoireRow({ ...baseRow, custom_abc: null, pr_tunes: tune }).customAbc).toBeNull();
+    expect(mapRepertoireRow({ ...baseRow, pr_tunes: tune }).customAbc).toBeNull();
+  });
+
+  it('does not take a non-string custom_abc as an ABC', () => {
+    expect(mapRepertoireRow({ ...baseRow, custom_abc: 42, pr_tunes: tune }).customAbc).toBeNull();
+  });
 });
 
 describe('display helpers', () => {

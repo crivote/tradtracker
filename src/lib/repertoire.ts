@@ -23,6 +23,9 @@ const REPERTOIRE_SELECT = [
   'custom_title',
   'custom_rhythm',
   'custom_key',
+  // ABC propio de la fila (#38): sin esta columna en el `select`, el
+  // reproductor no puede respetar la cadena `custom_abc > pr_tunes.abc`.
+  'custom_abc',
   'notes',
   'added_at',
   'last_practiced_at',

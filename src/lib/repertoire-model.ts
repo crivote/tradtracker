@@ -62,6 +62,12 @@ export interface RepertoireRow {
   custom_title: string | null;
   custom_rhythm: string | null;
   custom_key: string | null;
+  /**
+   * ABC propio de la fila (columna `custom_abc`, migración 001). Manda sobre el
+   * del catálogo compartido: es la corrección deliberada del usuario, y es lo
+   * que el reproductor de `/practice` (#38) toca antes de pedir nada a la red.
+   */
+  customAbc: string | null;
   notes: string | null;
   added_at: string;
   last_practiced_at: string | null;
@@ -177,6 +183,10 @@ export function mapRepertoireRow(
     custom_title: row.custom_title ?? null,
     custom_rhythm: row.custom_rhythm ?? null,
     custom_key: row.custom_key ?? null,
+    // Tolerante: la columna existe desde la migración 001, pero una fila de
+    // antes del corte que la pide (#38) o un doble de test pueden no traerla.
+    // Solo un texto es un ABC; `undefined` y `null` son «no hay».
+    customAbc: typeof row.custom_abc === 'string' ? row.custom_abc : null,
     notes: row.notes ?? null,
     added_at: row.added_at,
     last_practiced_at: row.last_practiced_at ?? null,
