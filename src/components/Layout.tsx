@@ -36,6 +36,9 @@ export const Layout: ParentComponent = (props) => {
               <A href="/" class="text-gray-300 hover:text-amber-300" end>
                 Repertoire
               </A>
+              <A href="/search" class="text-gray-300 hover:text-amber-300">
+                Search
+              </A>
               <A href="/about" class="text-gray-300 hover:text-amber-300">
                 About
               </A>
@@ -66,8 +69,17 @@ export const Layout: ParentComponent = (props) => {
         una carta de 282 px a 1280 px. Si el `main` añadiera sus 24 px de
         padding, la rejilla se quedaría 20 px corta; por eso esta ruta va a
         sangre y las demás conservan el contenedor de siempre.
+
+        La búsqueda (#9) se pinta sobre el mismo papel y con el mismo marco, así
+        que va a sangre igual que la home.
       */}
-      <main class={location.pathname === '/' ? '' : 'max-w-7xl mx-auto px-6 py-8'}>
+      <main
+        class={
+          location.pathname === '/' || location.pathname === '/search'
+            ? ''
+            : 'max-w-7xl mx-auto px-6 py-8'
+        }
+      >
         {props.children}
       </main>
     </div>

@@ -657,7 +657,11 @@ export function groupIntoBands(rows: readonly RepertoireRow[], now: number): Ban
   }));
 }
 
-/** Filtro de la home: por título mostrado, sin mayúsculas ni diacríticos. */
+/**
+ * Coincidencia parcial sobre el título mostrado (incluye el título personal),
+ * sin mayúsculas ni diacríticos. Con término vacío devuelve `true`: el
+ * «vacío» lo decide quien llama, no esta función.
+ */
 export function matchesQuery(row: RepertoireRow, term: string): boolean {
   const needle = collationKey(term.trim());
   if (needle.length === 0) return true;
@@ -665,16 +669,69 @@ export function matchesQuery(row: RepertoireRow, term: string): boolean {
 }
 
 /**
- * Filtra las bandas por el texto de la home. Con texto se ocultan las bandas sin
- * coincidencias (una banda vacía al buscar es ruido); sin texto se devuelven las
- * cuatro, vacías incluidas, porque la pantalla siempre enseña la escalera.
+ * Orden de los resultados de la búsqueda (#9): alfabético por título mostrado y,
+ * a igual título, por ritmo. Es una consulta, no una cola de trabajo: el orden
+ * por abandono de la home no pinta aquí. Cierra con el id para que dos filas
+ * idénticas queden siempre en el mismo orden relativo.
  */
-export function filterBands(groups: readonly BandGroup[], term: string): BandGroup[] {
-  const needle = term.trim();
-  if (needle.length === 0) return [...groups];
-  return groups
-    .map((group) => ({ band: group.band, rows: group.rows.filter((row) => matchesQuery(row, needle)) }))
-    .filter((group) => group.rows.length > 0);
+function compareSearchOrder(left: RepertoireRow, right: RepertoireRow): number {
+  const byTitle = compareStrings(
+    collationKey(displayTitle(left)),
+    collationKey(displayTitle(right))
+  );
+  if (byTitle !== 0) return byTitle;
+  const byRhythm = compareStrings(
+    collationKey(displayRhythm(left)),
+    collationKey(displayRhythm(right))
+  );
+  if (byRhythm !== 0) return byRhythm;
+  return compareStrings(left.id, right.id);
+}
+
+/**
+ * Búsqueda del repertorio (#9).
+ *
+ * Cruza **todas** las filas que recibe —todos los peldaños y también las
+ * aparcadas—: es una consulta sobre el repertorio entero, no un filtro de la
+ * home. Filtra por título cuando hay texto y por ritmo cuando hay ritmo; los dos
+ * criterios se suman. Con **los dos vacíos devuelve `[]`**: la vista arranca sin
+ * cartas y no enseña el repertorio entero (decisión 3 del brief).
+ *
+ * `rhythm` llega como `string | null` para que «todos los ritmos» no se confunda
+ * con la cadena vacía, que sí podría ser un valor de `displayRhythm`.
+ */
+export function searchRepertoire(
+  rows: readonly RepertoireRow[],
+  term: string,
+  rhythm: string | null
+): RepertoireRow[] {
+  const hasTerm = term.trim().length > 0;
+  if (!hasTerm && rhythm === null) return [];
+  return rows
+    .filter(
+      (row) =>
+        (!hasTerm || matchesQuery(row, term)) &&
+        (rhythm === null || displayRhythm(row) === rhythm)
+    )
+    .sort(compareSearchOrder);
+}
+
+/**
+ * Los ritmos que hay en el repertorio cargado, para el `<select>` de la búsqueda
+ * (#9): distintos, deduplicados por `collationKey` —«Reel» y «reel» son el mismo
+ * ritmo— y ordenados con el mismo criterio que los resultados. Se queda el
+ * primer texto visto de cada uno, que es el que el usuario reconoce.
+ */
+export function rhythmOptions(rows: readonly RepertoireRow[]): string[] {
+  const byKey = new Map<string, string>();
+  for (const row of rows) {
+    const label = displayRhythm(row);
+    const key = collationKey(label);
+    if (!byKey.has(key)) byKey.set(key, label);
+  }
+  return [...byKey.entries()]
+    .sort((left, right) => compareStrings(left[0], right[0]))
+    .map(([, label]) => label);
 }
 
 /**

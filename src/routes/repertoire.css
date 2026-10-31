@@ -134,6 +134,93 @@
   stroke-width: 1.7;
 }
 
+/*
+ * La puerta a la búsqueda (#9): ocupa el hueco que tenía el campo de la home.
+ * No es un campo —aquí no se teclea—, así que se pinta como texto con la lupa y
+ * el mismo subrayado de la herramienta que sustituye.
+ */
+.repertoire-home .search--door {
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  padding: 6px 0 5px;
+  text-align: left;
+}
+.repertoire-home .search--door:hover {
+  color: var(--accent);
+}
+.repertoire-home .search--door:hover svg {
+  stroke: var(--accent);
+}
+.repertoire-home .search--door:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* ── vista de búsqueda (#9) ──────────────────────────────────────
+   Mismo papel y misma carta que la home: la pantalla solo añade su barra de
+   consulta y la línea de recuento. La rejilla es la misma `.grid-4`. */
+.repertoire-home .search-bar {
+  max-width: 1260px;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: flex-end;
+  gap: 26px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.repertoire-home .search-bar .search input {
+  width: clamp(220px, 38vw, 420px);
+  font-size: 15px;
+  padding: 8px 0;
+}
+.repertoire-home .search-bar .search svg {
+  width: 16px;
+  height: 16px;
+}
+.repertoire-home .rhythm-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.repertoire-home .rhythm-pick .lbl {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.repertoire-home .rhythm-pick select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 4px 0;
+}
+.repertoire-home .search-results {
+  max-width: 1260px;
+  margin: 0 auto;
+}
+.repertoire-home .results-count {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+/* El peldaño que la carta enseña solo en la búsqueda (`showLevel`). */
+.repertoire-home .tune-meta .level {
+  font-family: var(--serif);
+  font-style: italic;
+}
+
 /* ── orden: el abandono es un continuo, manda la secuencia ────── */
 .repertoire-home .sortbar {
   max-width: 1260px;

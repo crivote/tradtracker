@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 import { A } from '@solidjs/router';
 import {
+  STATUS_LABELS,
   cardKey,
   displayRhythm,
   displayTitle,
@@ -36,6 +37,15 @@ export interface TuneCardProps {
   now: number;
   /** El «Practise» del menú: lo resuelve la pantalla, que es quien recarga. */
   onPractise: (row: RepertoireRow) => void | Promise<void>;
+  /**
+   * Añade el peldaño al final de `rhythm · key` (#9), por ejemplo
+   * `Reel · D · Learning`. Es opt-in y por defecto va apagado: en la home la
+   * banda ya dice el peldaño y repetirlo en cada carta sería ruido. La búsqueda
+   * sí lo enciende, porque cruza los cuatro peldaños y la carta tiene que decir
+   * de dónde sale cada resultado. Una fila aparcada dice `Shelved`, no su
+   * peldaño: el cajón manda sobre la escalera.
+   */
+  showLevel?: boolean;
 }
 
 /**
@@ -210,6 +220,15 @@ export default function TuneCard(props: TuneCardProps) {
           {displayRhythm(props.row)} <span class="gap">·</span>{' '}
           <Show when={key()} fallback={<span class="missing">key not set</span>}>
             {key()}
+          </Show>
+          {/* El peldaño, solo cuando la pantalla lo pide (#9): la búsqueda
+              cruza los cuatro y necesita decir de qué nivel es cada carta. */}
+          <Show when={props.showLevel}>
+            {' '}
+            <span class="gap">·</span>{' '}
+            <span class="level">
+              {props.row.shelved ? 'Shelved' : STATUS_LABELS[props.row.status]}
+            </span>
           </Show>
         </p>
         {/* El medidor de calidad va en todas las cartas: es el dato que más dice

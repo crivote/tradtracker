@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
-import { A, useSearchParams } from '@solidjs/router';
+import { A, useNavigate, useSearchParams } from '@solidjs/router';
 import {
   BANDS,
   SHELVED_SCOPE,
@@ -13,9 +13,7 @@ import {
   displayRhythm,
   displayTitle,
   fetchRepertoire,
-  filterBands,
   groupIntoBands,
-  matchesQuery,
   parseScope,
   parseViewMode,
   removeFromRepertoire,
@@ -105,8 +103,6 @@ function tuneCountLabel(count: number): string {
 function BandView(props: {
   group: BandGroup;
   now: number;
-  /** Con texto en el buscador se ignoran los topes (§2.5). */
-  searching: boolean;
   /** Esta banda es la única en pantalla (?band=…). */
   scoped: boolean;
   /** Aísla esta banda en la rejilla (solo queda ella en pantalla). */
@@ -147,11 +143,10 @@ function BandView(props: {
   });
 
   const cap = createMemo(() => capForColumns(columns()));
-  const limit = createMemo(() => (props.searching ? Number.POSITIVE_INFINITY : cap()));
-  const rows = createMemo(() => capRows(props.group.rows, limit()));
+  const rows = createMemo(() => capRows(props.group.rows, cap()));
   const total = createMemo(() => props.group.rows.length);
   /** Hay más de las que caben, o la banda está aislada y se quiere entera. */
-  const offersList = createMemo(() => props.searching === false && (props.scoped || total() > cap()));
+  const offersList = createMemo(() => props.scoped || total() > cap());
 
   return (
     <section class="band" data-band={props.group.band.status} aria-labelledby={`band-${props.group.band.status}`}>
@@ -201,8 +196,8 @@ function BandView(props: {
         </div>
 
         {/* El listado completo de un peldaño es una lista, no una rejilla: no
-            hay «desplegar» que valga. Con texto en el buscador no se ofrece,
-            porque el buscador ya trae lo que casa. */}
+            hay «desplegar» que valga. La búsqueda de la home ya no existe (#9);
+            lo que casa con un título se mira en /search, que cruza peldaños. */}
         <Show when={offersList()}>
           <button type="button" class="more" onClick={props.onSeeList}>
             See all {total()} as list
@@ -287,7 +282,8 @@ export default function Repertoire() {
   // El import de The Session (#32) se abre en el mismo sitio que el catálogo:
   // un panel en línea, no un modal. Los dos pueden estar abiertos a la vez.
   const [showImport, setShowImport] = createSignal(false);
-  const [search, setSearch] = createSignal('');
+
+  const navigate = useNavigate();
 
   const [query, setQuery] = createSignal('');
   const [results, setResults] = createSignal<CatalogueEntry[]>([]);
@@ -332,20 +328,18 @@ export default function Repertoire() {
   const groups = createMemo(() => groupIntoBands(rows(), now()));
 
   /**
-   * Lo que se pinta. Sin texto: las cuatro bandas, vacías incluidas, porque la
-   * pantalla es la escalera. Con texto: las bandas con aciertos, sin vacías. Y
-   * con una banda aislada, esa sola —el buscador sigue vivo dentro de ella—.
+   * Lo que se pinta: las cuatro bandas, vacías incluidas, porque la pantalla es
+   * la escalera. Con una banda aislada (`?band=`), esa sola.
+   *
+   * La home ya no filtra por título (#9): el texto se busca en /search, que
+   * cruza los peldaños y las aparcadas. `?band=` sigue filtrando por ámbito y
+   * eso no se toca.
    */
   const visibleGroups = createMemo(() => {
-    const term = search();
     const open = scopedBand();
-    if (open) {
-      const group = groups().find((candidate) => candidate.band.status === open);
-      if (!group) return [];
-      if (term.trim().length === 0) return [group];
-      return [{ band: group.band, rows: group.rows.filter((row) => matchesQuery(row, term)) }];
-    }
-    return filterBands(groups(), term);
+    if (!open) return groups();
+    const group = groups().find((candidate) => candidate.band.status === open);
+    return group ? [group] : [];
   });
 
   /**
@@ -355,12 +349,10 @@ export default function Repertoire() {
    * recuento; el cajón hace lo contrario y solo trae las aparcadas.
    */
   const tableRows = createMemo(() => {
-    const term = search().trim();
     const current = scope();
     let pool = rows();
     if (current === SHELVED_SCOPE) pool = pool.filter((row) => row.shelved);
     else if (current !== null) pool = pool.filter((row) => row.status === current && !row.shelved);
-    if (term.length > 0) pool = pool.filter((row) => matchesQuery(row, term));
     return sortRepertoire(pool, sortKey());
   });
 
@@ -523,8 +515,6 @@ export default function Repertoire() {
   const seeShelved = () => seeList(SHELVED_SCOPE);
   const backToAll = () => setParams({ band: undefined });
 
-  const searchTerm = () => search().trim().length > 0;
-
   return (
     <div class="repertoire-home">
       <header class="page-head">
@@ -550,20 +540,24 @@ export default function Repertoire() {
           </p>
         </div>
         <div class="head-tools">
-          <label class="search">
+          {/*
+            Puerta a la búsqueda (#9). La home ya no busca: dos buscadores con
+            comportamientos distintos en la misma pantalla es justo lo que hay
+            que evitar, y el filtro por bandas se saltaba el tope de ocho cartas
+            que la home acaba de fijar. La búsqueda vive en /search, cruza todos
+            los peldaños —aparcadas incluidas— y filtra además por ritmo.
+          */}
+          <button
+            type="button"
+            class="search search--door"
+            onClick={() => navigate('/search')}
+          >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="11" cy="11" r="7" />
               <path d="M20 20l-3.5-3.5" />
             </svg>
-            <input
-              type="search"
-              placeholder={`Search ${rows().length} tunes`}
-              aria-label="Search tunes"
-              autocomplete="off"
-              value={search()}
-              onInput={(event) => setSearch(event.currentTarget.value)}
-            />
-          </label>
+            Search tunes
+          </button>
           {/* El conmutador no se ofrece mirando el cajón: sus tunes no se pintan
               en rejilla, así que «Cards» no tendría efecto. */}
           <Show when={scope() !== SHELVED_SCOPE}>
@@ -707,8 +701,8 @@ export default function Repertoire() {
         </section>
       </Show>
 
-      {/* El buscador de la home sigue en pantalla con una banda aislada (§2.7);
-          el que se oculta es el resto de bandas, no la herramienta. */}
+      {/* Con una banda aislada (?band=…) se oculta el resto de bandas, no la
+          barra: sigue diciendo qué se está mirando. */}
       <Show when={effectiveMode() === 'grid'}>
         <div class="sortbar">
           <Show
@@ -777,28 +771,18 @@ export default function Repertoire() {
               <RepertoireTable rows={tableRows()} busyId={busyId()} onRemove={remove} />
             }
           >
-            <Show
-              when={visibleGroups().length > 0}
-              fallback={
-                <p class="notice">
-                  No tune in your repertoire matches “{search().trim()}”.
-                </p>
-              }
-            >
-              <For each={visibleGroups()}>
-                {(group) => (
-                  <BandView
-                    group={group}
-                    now={now()}
-                    searching={searchTerm()}
-                    scoped={scopedBand() === group.band.status}
-                    onShowOnly={() => showOnly(group.band.status)}
-                    onSeeList={() => seeList(group.band.status)}
-                    onPractise={practise}
-                  />
-                )}
-              </For>
-            </Show>
+            <For each={visibleGroups()}>
+              {(group) => (
+                <BandView
+                  group={group}
+                  now={now()}
+                  scoped={scopedBand() === group.band.status}
+                  onShowOnly={() => showOnly(group.band.status)}
+                  onSeeList={() => seeList(group.band.status)}
+                  onPractise={practise}
+                />
+              )}
+            </For>
           </Show>
         </Show>
       </Show>

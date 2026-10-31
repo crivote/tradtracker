@@ -182,4 +182,22 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
     expect(screen.getByText('Cooley’s Reel')).toBeTruthy();
     expect(screen.queryByText('Morning Dew')).toBeNull();
   });
+
+  it('la carta de la home no enseña el peldaño: eso es de la búsqueda (#9)', async () => {
+    renderHome();
+
+    await waitFor(() => expect(screen.getByText('Morning Dew')).toBeTruthy());
+
+    const metas = Array.from(
+      document.querySelectorAll<HTMLElement>('.repertoire-home .card .tune-meta')
+    );
+    expect(metas.length).toBeGreaterThan(0);
+    for (const meta of metas) {
+      expect(meta.textContent).not.toMatch(/To learn|Learning|Playing along|Solo-ready|Shelved/);
+    }
+
+    // Y la home ya no tiene campo de búsqueda: su hueco es la puerta a /search.
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    expect(screen.getByRole('button', { name: /Search tunes/ })).toBeTruthy();
+  });
 });

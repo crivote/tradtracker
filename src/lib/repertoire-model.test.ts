@@ -10,7 +10,6 @@ import {
   displayKey,
   displayRhythm,
   displayTitle,
-  filterBands,
   groupIntoBands,
   mapRepertoireRow,
   mapStatsRow,
@@ -22,6 +21,8 @@ import {
   practiceRecency,
   practiceSummary,
   qualityDots,
+  rhythmOptions,
+  searchRepertoire,
   sortRepertoire,
   shelvedCount,
   stalenessColor,
@@ -106,6 +107,8 @@ function makeRow(input: {
   id: string;
   name?: string;
   custom_title?: string | null;
+  custom_rhythm?: string | null;
+  rhythm?: string | null;
   rating?: number | null;
   added_at?: string;
   last_practiced_at?: string | null;
@@ -114,13 +117,18 @@ function makeRow(input: {
   key?: string | null;
   stats?: RepertoireStats;
 }): RepertoireRow {
-  const { name, key, stats, ...overrides } = input;
+  const { name, key, rhythm, stats, ...overrides } = input;
   return mapRepertoireRow(
     {
       ...baseRow,
       added_at: '2026-06-01T12:00:00Z',
       ...overrides,
-      pr_tunes: { ...tune, name: name ?? tune.name, key: key === undefined ? tune.key : key },
+      pr_tunes: {
+        ...tune,
+        name: name ?? tune.name,
+        rhythm: rhythm === undefined ? tune.rhythm : rhythm,
+        key: key === undefined ? tune.key : key,
+      },
     },
     stats ?? null
   );
@@ -632,42 +640,26 @@ describe('groupIntoBands y orden por staleness (#29)', () => {
   });
 });
 
-describe('búsqueda de la home y topes (#29)', () => {
+describe('coincidencia por título y topes (#29)', () => {
   const rows = [
     makeRow({ id: 'a', name: 'Banshee, The', status: 'to_learn' }),
     makeRow({ id: 'b', name: 'Ángel', status: 'learning' }),
     makeRow({ id: 'c', name: 'Cooley’s', status: 'playing_along' }),
   ];
-  const groups = groupIntoBands(rows, NOW);
-
-  it('sin texto devuelve las cuatro bandas, vacías incluidas', () => {
-    expect(filterBands(groups, '').length).toBe(4);
-    expect(filterBands(groups, '   ').length).toBe(4);
-  });
-
-  it('con texto oculta las bandas sin coincidencias', () => {
-    const filtered = filterBands(groups, 'banshee');
-    expect(filtered.map((group) => group.band.status)).toEqual(['to_learn']);
-    expect(filtered[0].rows.map((row) => row.id)).toEqual(['a']);
-  });
 
   it('busca por título mostrado, sin mayúsculas ni diacríticos', () => {
-    expect(filterBands(groups, 'ANGEL')[0].band.status).toBe('learning');
     // El título se muestra normalizado («Banshee, The» → «The Banshee»).
     expect(matchesQuery(rows[0], 'the banshee')).toBe(true);
     expect(matchesQuery(rows[0], 'banshee the')).toBe(false);
     expect(matchesQuery(rows[0], 'banshee')).toBe(true);
     expect(matchesQuery(rows[0], '')).toBe(true);
+    expect(matchesQuery(rows[1], 'ANGEL')).toBe(true);
   });
 
   it('el título personal manda en la búsqueda, igual que en la carta', () => {
     const custom = makeRow({ id: 'x', name: 'Zzz', custom_title: 'Silver Spear' });
     expect(matchesQuery(custom, 'silver')).toBe(true);
     expect(matchesQuery(custom, 'zzz')).toBe(false);
-  });
-
-  it('no deja bandas vacías cuando el texto no está en ninguna', () => {
-    expect(filterBands(groups, 'no existe')).toEqual([]);
   });
 
   it('el tope son dos filas sobre las columnas reales', () => {
@@ -686,6 +678,83 @@ describe('búsqueda de la home y topes (#29)', () => {
     expect(capRows(list, 0)).toEqual([]);
     expect(capRows(list, Number.POSITIVE_INFINITY)).toEqual(list);
     expect(list).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+// --- Búsqueda del repertorio (#9) ------------------------------------------
+
+describe('searchRepertoire (#9)', () => {
+  const rows = [
+    makeRow({ id: 'cooley', name: 'Cooley’s Reel', rhythm: 'reel', status: 'playing_along' }),
+    makeRow({ id: 'banshee', name: 'Banshee, The', rhythm: 'jig', status: 'to_learn' }),
+    makeRow({ id: 'angel', name: 'Ángel', rhythm: 'reel', status: 'learning' }),
+    makeRow({ id: 'sligo', name: 'Sligo Creek', rhythm: 'reel', status: 'solo_ready', shelved: true }),
+    makeRow({ id: 'morning', name: 'Morning Dew', rhythm: 'reel', status: 'solo_ready' }),
+  ];
+
+  it('sin texto y sin ritmo devuelve la lista vacía: la vista arranca sin cartas', () => {
+    expect(searchRepertoire(rows, '', null)).toEqual([]);
+    expect(searchRepertoire(rows, '   ', null)).toEqual([]);
+    expect(searchRepertoire([], '', null)).toEqual([]);
+  });
+
+  it('busca por coincidencia parcial del título mostrado', () => {
+    expect(searchRepertoire(rows, 'coo', null).map((row) => row.id)).toEqual(['cooley']);
+    // «Banshee, The» se muestra como «The Banshee».
+    expect(searchRepertoire(rows, 'the banshee', null).map((row) => row.id)).toEqual(['banshee']);
+    expect(searchRepertoire(rows, 'banshee the', null)).toEqual([]);
+  });
+
+  it('no distingue mayúsculas ni acentos', () => {
+    expect(searchRepertoire(rows, 'ANGEL', null).map((row) => row.id)).toEqual(['angel']);
+  });
+
+  it('ordena alfabéticamente por título mostrado, no por el orden de llegada', () => {
+    // `banshee` llega antes que `angel`; la consulta ordena, no respeta la entrada.
+    expect(searchRepertoire(rows, 'an', null).map((row) => row.id)).toEqual(['angel', 'banshee']);
+  });
+
+  it('solo con ritmo, sin texto, lista todas las de ese ritmo', () => {
+    expect(searchRepertoire(rows, '', 'reel').map((row) => row.id)).toEqual([
+      'angel', // Ángel
+      'cooley', // Cooley’s Reel
+      'morning', // Morning Dew
+      'sligo', // Sligo Creek
+    ]);
+  });
+
+  it('combina el texto y el ritmo: los dos criterios se suman', () => {
+    expect(searchRepertoire(rows, 'e', 'jig').map((row) => row.id)).toEqual(['banshee']);
+    expect(searchRepertoire(rows, 'sligo', 'jig')).toEqual([]);
+  });
+
+  it('cruza todos los peldaños y también las aparcadas', () => {
+    // Una fila por peldaño, la última en el cajón: todas responden a la consulta.
+    expect(searchRepertoire(rows, 'e', null).map((row) => row.id)).toContain('sligo');
+    expect(rows.find((row) => row.id === 'sligo')!.shelved).toBe(true);
+  });
+});
+
+describe('rhythmOptions (#9)', () => {
+  it('devuelve los ritmos distintos, sin duplicados por acentos y ordenados', () => {
+    const rows = [
+      makeRow({ id: 'a', name: 'A', rhythm: 'Reel' }),
+      makeRow({ id: 'b', name: 'B', rhythm: 'reel' }),
+      makeRow({ id: 'c', name: 'C', rhythm: 'jig' }),
+      makeRow({ id: 'd', name: 'D', rhythm: 'Áir' }),
+      makeRow({ id: 'e', name: 'E', rhythm: 'reel' }),
+    ];
+    // El primero visto manda en el texto; la clave sin diacríticos deduplica.
+    expect(rhythmOptions(rows)).toEqual(['Áir', 'jig', 'Reel']);
+  });
+
+  it('toma el ritmo personal cuando lo hay', () => {
+    const rows = [makeRow({ id: 'a', name: 'A', rhythm: 'jig', custom_rhythm: 'slide' })];
+    expect(rhythmOptions(rows)).toEqual(['slide']);
+  });
+
+  it('sin filas no hay opciones', () => {
+    expect(rhythmOptions([])).toEqual([]);
   });
 });
 
