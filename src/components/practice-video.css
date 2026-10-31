@@ -1,0 +1,126 @@
+/*
+ * Vídeo de TradTube en la lista de ensayo (#37).
+ *
+ * Papel, no paleta oscura: las filas de /practice viven dentro de `.practice`,
+ * que hereda de `.repertoire-home` las variables `--paper`, `--ink`, `--muted`,
+ * `--faint`, `--line` y `--accent`. Aquí no se redeclara ninguna y todas las
+ * reglas van bajo `.practice .practice-video`: este fichero no puede teñir la
+ * home, el detalle ni el catálogo.
+ *
+ * La miniatura es de 320 px de ancho (contrato de visualización del proyecto) y
+ * el reproductor mantiene el 16:9. El botón nunca se queda por debajo del
+ * mínimo táctil de 24 px: la miniatura entera es el blanco.
+ */
+
+.practice .practice-video {
+  display: block;
+  margin: 8px 0 0;
+}
+
+.practice .practice-video__toggle {
+  position: relative;
+  display: block;
+  width: 320px;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  cursor: pointer;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.practice .practice-video__toggle:hover .practice-video__thumb {
+  opacity: 0.88;
+}
+
+.practice .practice-video__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.practice .practice-video__thumb {
+  display: block;
+  width: 320px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: rgba(120, 104, 80, 0.12);
+}
+
+.practice .practice-video__bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  /* El velo es de tinta, no de papel: sobre la foto hace falta contraste. */
+  background: linear-gradient(to top, rgba(36, 31, 24, 0.72), rgba(36, 31, 24, 0));
+  line-height: 1.3;
+}
+
+.practice .practice-video__time,
+.practice .practice-video__hint {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--paper);
+}
+
+.practice .practice-video__time {
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(36, 31, 24, 0.66);
+}
+
+.practice .practice-video__hint {
+  margin-left: auto;
+  letter-spacing: 0.02em;
+}
+
+/* ── sin vídeo utilizable ──────────────────────────────────────────── */
+
+.practice .practice-video__toggle.is-unavailable {
+  width: auto;
+  padding: 4px 10px;
+  border-style: dashed;
+  border-color: var(--line);
+  background: none;
+  cursor: not-allowed;
+  line-height: 1.4;
+}
+
+.practice .practice-video__flag {
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+
+/* ── reproductor ───────────────────────────────────────────────────── */
+
+.practice .practice-video__frame {
+  position: relative;
+  width: 320px;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--ink);
+}
+
+.practice .practice-video__frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
