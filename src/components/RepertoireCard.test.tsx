@@ -27,6 +27,7 @@ function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
     id: 'row-a',
     status: 'to_learn',
     shelved: false,
+    favorite: false,
     rating: null,
     custom_title: null,
     custom_rhythm: null,

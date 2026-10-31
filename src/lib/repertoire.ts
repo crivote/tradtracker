@@ -17,6 +17,8 @@ const REPERTOIRE_SELECT = [
   'id',
   'status',
   'shelved',
+  // Palanca de priorización de F6 (migración 008).
+  'favorite',
   'rating',
   'custom_title',
   'custom_rhythm',

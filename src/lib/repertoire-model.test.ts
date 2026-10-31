@@ -387,6 +387,23 @@ describe('mapRepertoireRow con los agregados de la vista (#29)', () => {
     expect(mapRepertoireRow({ ...baseRow, pr_tunes: tune }).shelved).toBe(false);
   });
 
+  it('lee la bandera de favorita de F6 (no toca el rating)', () => {
+    const marked = mapRepertoireRow({ ...baseRow, favorite: true, rating: 4, pr_tunes: tune });
+    expect(marked.favorite).toBe(true);
+    expect(marked.rating).toBe(4);
+
+    const unmarked = mapRepertoireRow({ ...baseRow, favorite: false, rating: 4, pr_tunes: tune });
+    expect(unmarked.favorite).toBe(false);
+    expect(unmarked.rating).toBe(4);
+  });
+
+  it('cae a no favorita cuando la fila es anterior a la migración 008', () => {
+    const row = mapRepertoireRow({ ...baseRow, pr_tunes: tune });
+    expect(row.favorite).toBe(false);
+    expect(mapRepertoireRow({ ...baseRow, favorite: null, pr_tunes: tune }).favorite).toBe(false);
+    expect(mapRepertoireRow({ ...baseRow, favorite: undefined, pr_tunes: tune }).favorite).toBe(false);
+  });
+
   it('mapStatsRow tolera basura sin romper la pantalla', () => {
     expect(mapStatsRow(undefined)).toEqual({
       practice_count: null,
