@@ -29,8 +29,38 @@ import {
 } from '../lib/repertoire';
 import { focalPosition } from '../lib/image-sources';
 import { formatDate } from '../lib/format';
+import { facetTree, tagsForTune, type Tag, type TagFacetInfo } from '../lib/tags';
+import {
+  addTuneTags,
+  fetchTuneTags,
+  fetchVocabulary,
+  removeTuneTag,
+  type TagVocabulary,
+} from '../lib/tags-db';
 import PracticeLog from '../components/PracticeLog';
 import BackgroundPicker from '../components/BackgroundPicker';
+
+/**
+ * El vocabulario de etiquetas (F17, #48) es cerrado e inmutable: se pide **una
+ * vez por sesión de navegador** y se comparte entre tunes —pedirlo por visita al
+ * detalle sería una llamada por tune—. La promesa se guarda en vuelo, así que dos
+ * montajes a la vez no lanzan dos peticiones.
+ *
+ * Un fallo **no** se cachea: se limpia la promesa y la siguiente visita vuelve a
+ * intentarlo, en vez de dejar el bloque apagado para siempre por un corte de red
+ * de hace media hora.
+ */
+let vocabularyPromise: Promise<TagVocabulary | null> | null = null;
+
+function loadVocabulary(): Promise<TagVocabulary | null> {
+  if (vocabularyPromise) return vocabularyPromise;
+  const pending = fetchVocabulary().catch(() => {
+    vocabularyPromise = null;
+    return null;
+  });
+  vocabularyPromise = pending;
+  return pending;
+}
 
 /**
  * Estilo de los campos del formulario de overrides (F2, #8): paleta oscura del
@@ -319,6 +349,118 @@ export default function TuneDetail() {
                 setSavingOverrides(false);
               }
             };
+
+            /* ── Etiquetas por facetas (F17, #48) ────────────────────────────
+             * Vocabulario cerrado y común; asignación personal anclada a
+             * `(user_id, tune_id)`. La vista no calcula el árbol al escribir:
+             * marcar pasa por la RPC, que siembra los ancestros (`donegal` entra
+             * con `ireland`), y lo que se pinta es siempre lo releído de la base.
+             */
+            const [vocabulary, setVocabulary] = createSignal<TagVocabulary | null>(null);
+            const [assignedTags, setAssignedTags] = createSignal<Set<number>>(new Set<number>());
+            const [loadingTags, setLoadingTags] = createSignal(true);
+            const [savingTags, setSavingTags] = createSignal(false);
+            const [tagError, setTagError] = createSignal<string | null>(null);
+
+            /** Una sola petición por sesión de navegador; ver `loadVocabulary`. */
+            createEffect(() => {
+              void loadVocabulary().then((loaded) => setVocabulary(loaded));
+            });
+
+            /**
+             * El árbol listo para pintar, o `null` si no hay vocabulario: sin
+             * facetas el bloque **no** se pinta, porque un «Tags» vacío es un
+             * hueco que promete algo que no hay.
+             */
+            const tagGroups = createMemo(() => {
+              const loaded = vocabulary();
+              if (!loaded || loaded.facets.length === 0) return null;
+              return facetTree(loaded.facets, loaded.tags);
+            });
+
+            /** Etiquetas marcadas, tal y como están en la base. */
+            const readTags = async (id: string) =>
+              tagsForTune(await fetchTuneTags([id]), id);
+
+            createEffect(() => {
+              const id = item().id;
+              let cancelled = false;
+
+              setLoadingTags(true);
+              setTagError(null);
+              void readTags(id)
+                .then((ids) => {
+                  if (!cancelled) setAssignedTags(ids);
+                })
+                .catch((cause) => {
+                  if (!cancelled) {
+                    setTagError(cause instanceof Error ? cause.message : String(cause));
+                  }
+                })
+                .finally(() => {
+                  if (!cancelled) setLoadingTags(false);
+                });
+
+              onCleanup(() => {
+                cancelled = true;
+              });
+            });
+
+            /**
+             * Marcar → RPC con ancestros; desmarcar → una fila. En los dos casos
+             * se relee la tune entera: la base pudo sembrar ancestros, y la
+             * pantalla tiene que enseñarlos.
+             */
+            const toggleTag = async (id: string, tagId: number, checked: boolean) => {
+              setSavingTags(true);
+              setTagError(null);
+              try {
+                if (checked) await addTuneTags([id], [tagId]);
+                else await removeTuneTag(id, tagId);
+                setAssignedTags(await readTags(id));
+              } catch (cause) {
+                setTagError(cause instanceof Error ? cause.message : String(cause));
+              } finally {
+                setSavingTags(false);
+              }
+            };
+
+            /**
+             * Dos etiquetas con el mismo texto en facetas distintas necesitan la
+             * faceta en el nombre accesible; con texto único, el `aria-label` es
+             * solo la etiqueta.
+             */
+            const repeatedLabels = createMemo(() => {
+              const counts = new Map<string, number>();
+              for (const tag of vocabulary()?.tags ?? []) {
+                counts.set(tag.label, (counts.get(tag.label) ?? 0) + 1);
+              }
+              return new Set(
+                [...counts].filter(([, times]) => times > 1).map(([label]) => label)
+              );
+            });
+
+            const tagLabel = (tag: Tag, facet: TagFacetInfo) =>
+              repeatedLabels().has(tag.label) ? `${facet.label}: ${tag.label}` : tag.label;
+
+            /** Una casilla; los hijos van indentados bajo su raíz. */
+            const tagBox = (tag: Tag, facet: TagFacetInfo, child = false) => (
+              <label
+                class={`flex items-center gap-2 text-sm ${child ? 'pl-4 text-gray-300' : 'text-gray-200'}`}
+              >
+                <input
+                  type="checkbox"
+                  class="accent-amber-400"
+                  aria-label={tagLabel(tag, facet)}
+                  checked={assignedTags().has(tag.id)}
+                  disabled={savingTags()}
+                  onChange={(event) =>
+                    void toggleTag(item().id, tag.id, event.currentTarget.checked)
+                  }
+                />
+                {tag.label}
+              </label>
+            );
 
             return (
               <article class="space-y-6 rounded-lg border border-gray-700 bg-gray-900 p-6">
@@ -618,6 +760,52 @@ export default function TuneDetail() {
                     </form>
                   </Show>
                 </section>
+
+                {/*
+                  Etiquetas por facetas (#48). Van **después** de «Details»
+                  porque clasifican la pieza, no editan sus metadatos, y usan la
+                  misma paleta oscura del detalle. Todo son casillas —incluida
+                  `tradition`, que es jerarquía de un nivel, no un árbol de
+                  selección única—. Sin vocabulario no hay bloque: no se pinta un
+                  «Tags» vacío.
+                */}
+                <Show when={tagGroups()}>
+                  {(groups) => (
+                    <section class="space-y-3 rounded border border-gray-700 bg-gray-800/40 p-4">
+                      <h3 class="text-xs uppercase tracking-wide text-gray-500">Tags</h3>
+
+                      <Show when={loadingTags()}>
+                        <p class="text-sm text-gray-400">Loading…</p>
+                      </Show>
+
+                      <Show when={tagError()}>
+                        <p class="text-sm text-red-400" role="alert">
+                          {tagError()}
+                        </p>
+                      </Show>
+
+                      <div class="space-y-3">
+                        <For each={groups()}>
+                          {(group) => (
+                            <fieldset class="space-y-1">
+                              <legend class="text-xs text-gray-400">{group.facet.label}</legend>
+                              <For each={group.nodes}>
+                                {(node) => (
+                                  <>
+                                    {tagBox(node.tag, group.facet)}
+                                    <For each={node.children}>
+                                      {(child) => tagBox(child, group.facet, true)}
+                                    </For>
+                                  </>
+                                )}
+                              </For>
+                            </fieldset>
+                          )}
+                        </For>
+                      </div>
+                    </section>
+                  )}
+                </Show>
 
                 <p class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-400">
                   <span>
