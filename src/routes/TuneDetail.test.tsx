@@ -457,7 +457,7 @@ describe('TuneDetail', () => {
    */
   it('renders the three facets and ticks what the tune already has', async () => {
     mockedFetch.mockResolvedValue(makeRow() as any);
-    mockedFetchTuneTags.mockResolvedValue([{ tune_id: 'row-a', tag_id: 3 }] as any);
+    mockedFetchTuneTags.mockResolvedValue([{ tune_id: 'tune-a', tag_id: 3 }] as any);
 
     renderAt('/repertoire/row-a');
     await waitFor(() => expect(screen.getByText('Tags')).toBeTruthy());
@@ -471,7 +471,7 @@ describe('TuneDetail', () => {
     expect((screen.getByLabelText('Ireland') as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText('Rolls') as HTMLInputElement).checked).toBe(false);
 
-    expect(mockedFetchTuneTags).toHaveBeenCalledWith(['row-a']);
+    expect(mockedFetchTuneTags).toHaveBeenCalledWith(['tune-a']);
   });
 
   it('adds a tag through the RPC and repaints what the database sowed', async () => {
@@ -484,12 +484,12 @@ describe('TuneDetail', () => {
 
     // La base siembra `ireland` al marcar `donegal`: la relectura devuelve las dos.
     rows = [
-      { tune_id: 'row-a', tag_id: 1 },
-      { tune_id: 'row-a', tag_id: 3 },
+      { tune_id: 'tune-a', tag_id: 1 },
+      { tune_id: 'tune-a', tag_id: 3 },
     ];
     fireEvent.click(screen.getByLabelText('Donegal'));
 
-    await waitFor(() => expect(mockedAddTuneTags).toHaveBeenCalledWith(['row-a'], [3]));
+    await waitFor(() => expect(mockedAddTuneTags).toHaveBeenCalledWith(['tune-a'], [3]));
     await waitFor(() =>
       expect((screen.getByLabelText('Ireland') as HTMLInputElement).checked).toBe(true)
     );
@@ -501,8 +501,8 @@ describe('TuneDetail', () => {
   it('removes only the tag that was unticked', async () => {
     mockedFetch.mockResolvedValue(makeRow() as any);
     let rows: { tune_id: string; tag_id: number }[] = [
-      { tune_id: 'row-a', tag_id: 1 },
-      { tune_id: 'row-a', tag_id: 3 },
+      { tune_id: 'tune-a', tag_id: 1 },
+      { tune_id: 'tune-a', tag_id: 3 },
     ];
     mockedFetchTuneTags.mockImplementation(async () => rows);
 
@@ -512,10 +512,10 @@ describe('TuneDetail', () => {
     );
 
     // Quitar el hijo deja el padre: la asimetría es del diseño, no un olvido.
-    rows = [{ tune_id: 'row-a', tag_id: 1 }];
+    rows = [{ tune_id: 'tune-a', tag_id: 1 }];
     fireEvent.click(screen.getByLabelText('Donegal'));
 
-    await waitFor(() => expect(mockedRemoveTuneTag).toHaveBeenCalledWith('row-a', 3));
+    await waitFor(() => expect(mockedRemoveTuneTag).toHaveBeenCalledWith('tune-a', 3));
     await waitFor(() =>
       expect((screen.getByLabelText('Donegal') as HTMLInputElement).checked).toBe(false)
     );

@@ -379,16 +379,19 @@ export default function TuneDetail() {
             });
 
             /** Etiquetas marcadas, tal y como están en la base. */
-            const readTags = async (id: string) =>
-              tagsForTune(await fetchTuneTags([id]), id);
+            const readTags = async (tuneId: string) =>
+              tagsForTune(await fetchTuneTags([tuneId]), tuneId);
 
             createEffect(() => {
-              const id = item().id;
+              // OJO: el id de la ruta es el uuid de `pr_repertoire`; la etiqueta
+              // cuelga de `pr_tunes`. Pasar el de repertorio no da error al leer
+              // (devuelve vacío) y rompe la FK al escribir.
+              const tuneId = item().tune.id;
               let cancelled = false;
 
               setLoadingTags(true);
               setTagError(null);
-              void readTags(id)
+              void readTags(tuneId)
                 .then((ids) => {
                   if (!cancelled) setAssignedTags(ids);
                 })
@@ -409,15 +412,16 @@ export default function TuneDetail() {
             /**
              * Marcar → RPC con ancestros; desmarcar → una fila. En los dos casos
              * se relee la tune entera: la base pudo sembrar ancestros, y la
-             * pantalla tiene que enseñarlos.
+             * pantalla tiene que enseñarlos. `tuneId` es el uuid de `pr_tunes`,
+             * nunca el de la fila de repertorio.
              */
-            const toggleTag = async (id: string, tagId: number, checked: boolean) => {
+            const toggleTag = async (tuneId: string, tagId: number, checked: boolean) => {
               setSavingTags(true);
               setTagError(null);
               try {
-                if (checked) await addTuneTags([id], [tagId]);
-                else await removeTuneTag(id, tagId);
-                setAssignedTags(await readTags(id));
+                if (checked) await addTuneTags([tuneId], [tagId]);
+                else await removeTuneTag(tuneId, tagId);
+                setAssignedTags(await readTags(tuneId));
               } catch (cause) {
                 setTagError(cause instanceof Error ? cause.message : String(cause));
               } finally {
@@ -455,7 +459,7 @@ export default function TuneDetail() {
                   checked={assignedTags().has(tag.id)}
                   disabled={savingTags()}
                   onChange={(event) =>
-                    void toggleTag(item().id, tag.id, event.currentTarget.checked)
+                    void toggleTag(item().tune.id, tag.id, event.currentTarget.checked)
                   }
                 />
                 {tag.label}
