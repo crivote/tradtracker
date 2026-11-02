@@ -291,6 +291,63 @@
   cursor: pointer;
 }
 
+/* El árbol compartido (`TagPicker`) es un `fieldset` por faceta: sobre papel no
+   lleva marco —el `legend` hace de `.facet-name`— ni debe imponer ancho mínimo. */
+.repertoire-home .tag-panel .tag-facet fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+/* ── etiquetar en bloque desde la tabla (#48) ────────────────────
+   La barra solo aparece con algo marcado; el panel reutiliza el del filtro de
+   `/search` —mismo papel, mismas casillas— y añade su par de botones. */
+.repertoire-home .selection-bar {
+  max-width: 1260px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.repertoire-home .selection-bar .count {
+  color: var(--ink);
+  font-weight: 600;
+}
+.repertoire-home .tag-panel .tag-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  align-self: flex-end;
+}
+.repertoire-home .tag-panel .tag-actions .tag-clear {
+  margin-left: 0;
+}
+.repertoire-home .tag-apply {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--paper);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+.repertoire-home .tag-apply:hover { background: #6f2a1c; border-color: #6f2a1c; }
+.repertoire-home .tag-apply:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.repertoire-home .tag-apply:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .repertoire-home .search-results {
   max-width: 1260px;
   margin: 0 auto;
@@ -1180,6 +1237,15 @@
   font-variant-numeric: tabular-nums;
 }
 .repertoire-home .table-wrap td.fav { width: 30px; padding-right: 2px; }
+/* La casilla de selección abre la fila (#48): 24 px es el mínimo táctil que el
+   kebab de la card no cumplía; aquí el objetivo es la casilla más su etiqueta. */
+.repertoire-home .table-wrap th.pick,
+.repertoire-home .table-wrap td.pick { width: 24px; padding-right: 8px; }
+.repertoire-home .table-wrap .pick input {
+  accent-color: var(--accent);
+  margin: 0;
+  cursor: pointer;
+}
 .repertoire-home .table-wrap .nodata { color: var(--faint); }
 
 /* el corazón abre la fila: el gesto, no una acción de la esquina */

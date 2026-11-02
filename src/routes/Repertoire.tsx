@@ -51,7 +51,10 @@ import {
 } from '../lib/catalogue-db';
 import { normalizeTitle } from '../lib/format';
 import { logPractice } from '../lib/practice';
+import { facetTree } from '../lib/tags';
+import { addTuneTags, loadVocabulary, type TagVocabulary } from '../lib/tags-db';
 import TuneCard from '../components/TuneCard';
+import TagPicker from '../components/TagPicker';
 import ImportFromSession from '../components/ImportFromSession';
 import './repertoire.css';
 
@@ -242,6 +245,9 @@ let activeRowMenu: (() => void) | null = null;
 function RepertoireRowView(props: {
   row: RepertoireRow;
   now: number;
+  /** La fila está marcada para etiquetar en bloque (#48). */
+  selected: boolean;
+  onToggleSelect: (row: RepertoireRow, next: boolean) => void;
   onToggleFavorite: (row: RepertoireRow) => void | Promise<void>;
   onPractise: (row: RepertoireRow) => void | Promise<void>;
   onStatusChange: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
@@ -316,6 +322,17 @@ function RepertoireRowView(props: {
 
   return (
     <tr>
+      {/* Selección para etiquetar en bloque (#48): la casilla abre la fila y su
+          nombre accesible es el título mostrado, para no tener que adivinar cuál
+          es «la tercera». Marcar no ordena, no filtra y no recarga nada. */}
+      <td class="pick">
+        <input
+          type="checkbox"
+          aria-label={title()}
+          checked={props.selected}
+          onChange={(event) => props.onToggleSelect(props.row, event.currentTarget.checked)}
+        />
+      </td>
       <td class="fav">
         <button
           type="button"
@@ -532,17 +549,45 @@ function RepertoireTable(props: {
   now: number;
   sortKey: SortKey;
   sortDirection: SortDirection;
+  /** Ids de fila (`pr_repertoire`) marcados para etiquetar en bloque (#48). */
+  selected: readonly string[];
+  onToggleRow: (row: RepertoireRow, next: boolean) => void;
+  onToggleAll: (next: boolean) => void;
   onSort: (key: SortKey) => void;
   onPractise: (row: RepertoireRow) => void | Promise<void>;
   onToggleFavorite: (row: RepertoireRow) => void | Promise<void>;
   onStatusChange: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
 }) {
+  const allSelected = () =>
+    props.rows.length > 0 && props.rows.every((row) => props.selected.includes(row.id));
+  const someSelected = () => props.rows.some((row) => props.selected.includes(row.id));
+
+  /**
+   * «Parcialmente marcada» no es expresable en HTML: el estado intermedio del
+   * «select all» se pinta por propiedad (`indeterminate`), no por atributo. Sin
+   * esto, tres filas marcadas de siete se leen como «ninguna».
+   */
+  let selectAllBox: HTMLInputElement | undefined;
+  createEffect(() => {
+    if (selectAllBox) selectAllBox.indeterminate = someSelected() && !allSelected();
+  });
+
   return (
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th />
+            <th class="pick">
+              {/* Marca lo que se está pintando —el ámbito actual—, no el
+                  repertorio entero: marcar filas que no se ven es una trampa. */}
+              <input
+                ref={selectAllBox}
+                type="checkbox"
+                aria-label="Select all listed tunes"
+                checked={allSelected()}
+                onChange={(event) => props.onToggleAll(event.currentTarget.checked)}
+              />
+            </th>
             <SortHeader
               label="Tune"
               sortKey="alphabetical"
@@ -599,6 +644,8 @@ function RepertoireTable(props: {
               <RepertoireRowView
                 row={row}
                 now={props.now}
+                selected={props.selected.includes(row.id)}
+                onToggleSelect={props.onToggleRow}
                 onPractise={props.onPractise}
                 onToggleFavorite={props.onToggleFavorite}
                 onStatusChange={props.onStatusChange}
@@ -718,6 +765,108 @@ export default function Repertoire() {
     return sortRepertoire(pool, sortKey(), sortDirection());
   });
 
+  /**
+   * Etiquetado en bloque (#48). La selección guarda ids de **fila**
+   * (`pr_repertoire`), que es lo que la tabla pinta; a la RPC se le pasan los
+   * ids de **tune** (`row.tune.id`). Confundirlos no falla al leer y sí al
+   * escribir (23503), así que la traducción se hace en un solo sitio —`applyTags`,
+   * más abajo— y nunca se pasa una fila al adaptador.
+   */
+  const [selectedIds, setSelectedIds] = createSignal<string[]>([]);
+  const [tagPanelOpen, setTagPanelOpen] = createSignal(false);
+  /** Borrador de etiquetas del panel: no escribe nada hasta «Apply». */
+  const [draftTags, setDraftTags] = createSignal<number[]>([]);
+  const [savingTags, setSavingTags] = createSignal(false);
+  const [tagError, setTagError] = createSignal<string | null>(null);
+  const [notice, setNotice] = createSignal<string | null>(null);
+  const [vocabulary, setVocabulary] = createSignal<TagVocabulary | null>(null);
+
+  /**
+   * La selección que cuenta es la que **se está pintando**: si el ámbito cambia
+   * con filas marcadas, las que ya no se ven no viajan al «Apply» ni suman en
+   * «N selected». Sin esto, el recuento de la barra no cuadraría con las filas.
+   */
+  const listedSelection = createMemo(() => {
+    const listed = new Set(tableRows().map((row) => row.id));
+    return selectedIds().filter((id) => listed.has(id));
+  });
+
+  /** El árbol de casillas, o `null` sin vocabulario: no se pinta un panel vacío. */
+  const tagGroups = createMemo(() => {
+    const loaded = vocabulary();
+    if (!loaded || loaded.facets.length === 0 || loaded.tags.length === 0) return null;
+    const groups = facetTree(loaded.facets, loaded.tags);
+    return groups.some((group) => group.nodes.length > 0) ? groups : null;
+  });
+
+  const toggleRowSelection = (row: RepertoireRow, next: boolean) => {
+    setNotice(null);
+    setSelectedIds((previous) =>
+      next
+        ? previous.includes(row.id)
+          ? previous
+          : [...previous, row.id]
+        : previous.filter((id) => id !== row.id)
+    );
+  };
+
+  /** «Select all» del ámbito: marca lo listado y desmarca lo listado. */
+  const toggleAllListed = (next: boolean) => {
+    setNotice(null);
+    const listed = tableRows().map((row) => row.id);
+    setSelectedIds((previous) =>
+      next
+        ? [...new Set([...previous, ...listed])]
+        : previous.filter((id) => !listed.includes(id))
+    );
+  };
+
+  const clearSelection = () => {
+    setSelectedIds([]);
+    setDraftTags([]);
+    setTagPanelOpen(false);
+    setTagError(null);
+  };
+
+  const toggleDraftTag = (tagId: number, next: boolean) => {
+    setDraftTags((previous) =>
+      next
+        ? previous.includes(tagId)
+          ? previous
+          : [...previous, tagId]
+        : previous.filter((id) => id !== tagId)
+    );
+  };
+
+  /**
+   * Una sola llamada para N tunes × M etiquetas. Primero se traducen las filas
+   * marcadas a `tune.id`; el adaptador nunca ve un id de repertorio. Si falla, la
+   * selección **no** se limpia: el lector reintenta sin volver a marcar.
+   */
+  const applyTags = async () => {
+    if (draftTags().length === 0) return;
+    const marked = new Set(listedSelection());
+    const tuneIds = rows()
+      .filter((row) => marked.has(row.id))
+      .map((row) => row.tune.id);
+    if (tuneIds.length === 0) return;
+
+    setSavingTags(true);
+    setTagError(null);
+    setNotice(null);
+    try {
+      await addTuneTags(tuneIds, draftTags());
+      setNotice(`${tuneIds.length} ${tuneIds.length === 1 ? 'tune' : 'tunes'} tagged`);
+      setSelectedIds([]);
+      setDraftTags([]);
+      setTagPanelOpen(false);
+    } catch (cause) {
+      setTagError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSavingTags(false);
+    }
+  };
+
   /** Título del ámbito para la barra: el peldaño o «Shelved». */
   const scopeLabel = createMemo(() => {
     const current = scope();
@@ -753,6 +902,9 @@ export default function Repertoire() {
 
   onMount(() => {
     void load();
+    // El vocabulario es común y lo cachea el adaptador por sesión de navegador;
+    // pedirlo al montar deja el panel de etiquetas listo sin esperar a abrirlo.
+    void loadVocabulary().then((loaded) => setVocabulary(loaded));
     // Descarga del artefacto en segundo plano: al abrir el buscador ya está.
     void preloadCatalogue().then(
       async () => {
@@ -1180,6 +1332,78 @@ export default function Repertoire() {
         </div>
       </Show>
 
+      {/* Etiquetar en bloque (#48). La barra solo existe con algo marcado —un
+          «N selected» sin selección sería un control muerto— y el panel abre un
+          **borrador** de etiquetas que no escribe nada hasta «Apply». */}
+      <Show when={effectiveMode() === 'table' && listedSelection().length > 0}>
+        <div class="selection-bar">
+          <span class="count">{listedSelection().length} selected</span>
+          {/* Sin vocabulario no hay botón: un panel vacío promete algo que no hay. */}
+          <Show when={tagGroups()}>
+            <button
+              type="button"
+              class="tag-toggle"
+              aria-expanded={tagPanelOpen()}
+              aria-controls="bulk-tag-panel"
+              onClick={() => setTagPanelOpen((open) => !open)}
+            >
+              Tag selection
+            </button>
+          </Show>
+          <button type="button" class="tag-clear" onClick={clearSelection}>
+            Clear
+          </button>
+        </div>
+      </Show>
+
+      <Show when={tagPanelOpen() && listedSelection().length > 0 && tagGroups()}>
+        {(groups) => (
+          <div class="tag-panel" id="bulk-tag-panel">
+            {/* El mismo árbol que el detalle: una sola verdad del marcado. */}
+            <TagPicker
+              groups={groups()}
+              selected={draftTags()}
+              disabled={savingTags()}
+              idPrefix="bulk-tags"
+              onToggle={toggleDraftTag}
+            />
+            <div class="tag-actions">
+              {/* Sin etiquetas no hay nada que escribir: «Apply» se apaga. */}
+              <button
+                type="button"
+                class="tag-apply"
+                disabled={draftTags().length === 0 || savingTags()}
+                onClick={() => void applyTags()}
+              >
+                {savingTags() ? 'Applying…' : 'Apply'}
+              </button>
+              <button
+                type="button"
+                class="tag-clear"
+                onClick={() => {
+                  setDraftTags([]);
+                  setTagPanelOpen(false);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </Show>
+
+      {/* Un fallo al escribir no limpia la selección: se dice y se puede reintentar. */}
+      <Show when={tagError()}>
+        <p class="notice notice-error" role="alert">
+          {tagError()}
+        </p>
+      </Show>
+      <Show when={notice()}>
+        <p class="notice" role="status">
+          {notice()}
+        </p>
+      </Show>
+
       <Show
         when={!loading()}
         fallback={<p class="notice">Loading your repertoire…</p>}
@@ -1201,6 +1425,9 @@ export default function Repertoire() {
                 now={now()}
                 sortKey={sortKey()}
                 sortDirection={sortDirection()}
+                selected={listedSelection()}
+                onToggleRow={toggleRowSelection}
+                onToggleAll={toggleAllListed}
                 onSort={chooseSort}
                 onPractise={practise}
                 onToggleFavorite={toggleFavorite}
