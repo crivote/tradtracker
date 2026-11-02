@@ -445,11 +445,48 @@ export function placeholderInitials(row: RepertoireRow): string {
   return initials.length > 0 ? initials.join('').toUpperCase() : '?';
 }
 
+/** Campo de la fila que se puede sobreescribir y revertir al estándar (F2, #8). */
+export type OverrideField = 'title' | 'rhythm' | 'key' | 'abc';
+
 /** Campos cuyo valor viene de un override personal y no del tune compartido. */
 export interface OverrideFields {
   title: boolean;
   rhythm: boolean;
   key: boolean;
+  /** ABC propio de la fila (#8): decide si el formulario enseña «Use standard». */
+  abc: boolean;
+}
+
+/**
+ * Los cuatro campos con override, en el orden en que los enseña el formulario.
+ * El nombre es el del modelo (`title`), nunca el de la columna: el mapeo a
+ * `custom_*` vive en el adaptador (`repertoire.ts`).
+ */
+export const OVERRIDE_FIELDS: readonly OverrideField[] = ['title', 'rhythm', 'key', 'abc'];
+
+/**
+ * Texto con contenido, o `null`. Un override de espacios no es un override: se
+ * guarda `null`, que es exactamente «volver al estándar», y no una cadena vacía
+ * que pintaría el campo en blando sin enseñar el valor del catálogo.
+ */
+export function normalizeOverride(raw: string): string | null {
+  const trimmed = raw.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+/**
+ * Valores iniciales del formulario de overrides (#8): el override si lo hay,
+ * cadena vacía si no. **El estándar no se precarga**: se enseña como
+ * placeholder, de modo que un campo vacío significa «usar el del catálogo» y no
+ * hay que distinguir «igual que el estándar» de «sin override».
+ */
+export function customDrafts(row: RepertoireRow): Record<OverrideField, string> {
+  return {
+    title: row.custom_title ?? '',
+    rhythm: row.custom_rhythm ?? '',
+    key: row.custom_key ?? '',
+    abc: row.customAbc ?? '',
+  };
 }
 
 /** Un override cuenta solo si tiene texto: un `custom_key` vacío no lo es. */
@@ -466,6 +503,7 @@ export function overrideFields(row: RepertoireRow): OverrideFields {
     title: hasText(row.custom_title),
     rhythm: hasText(row.custom_rhythm),
     key: hasText(row.custom_key),
+    abc: hasText(row.customAbc),
   };
 }
 
