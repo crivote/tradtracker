@@ -825,4 +825,30 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
     expect((screen.getByLabelText('Drowsy Maggie') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Donegal') as HTMLInputElement).checked).toBe(true);
   });
+
+  /**
+   * La selección se acota a lo que está listado. Sin esa poda, marcar una fila y
+   * cambiar de ámbito dejaría «1 selected» sobre una tune que ya no se ve —y el
+   * Apply la etiquetaría igual—: un recuento que no cuadra con la pantalla.
+   */
+  it('una fila marcada que deja de estar listada no cuenta ni viaja al Apply', async () => {
+    renderTable();
+    await ready();
+
+    // Cooley's es `solo_ready`: se marca en la tabla sin ámbito.
+    fireEvent.click(screen.getByLabelText('Cooley’s Reel'));
+    expect(screen.getByText('1 selected')).toBeTruthy();
+
+    // Se pasa a rejilla para poder aislar un peldaño, y se aísla Learning, donde
+    // Cooley's no está. Al volver a la tabla, la fila marcada ya no se lista.
+    fireEvent.click(screen.getByRole('button', { name: 'Cards' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Show only Learning' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Table' }));
+
+    await waitFor(() => expect(screen.queryByText('Cooley’s Reel')).toBeNull());
+    expect(screen.queryByText('1 selected')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Tag selection' })).toBeNull();
+    // Y la fila del ámbito sí está, para no confundir «vacío» con «acotado».
+    expect(screen.getByText('The Cameron Highlanders')).toBeTruthy();
+  });
 });
