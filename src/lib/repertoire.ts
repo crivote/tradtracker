@@ -1,5 +1,10 @@
 import { supabase } from './supabase';
-import type { RepertoireRow, RepertoireStats, TuneStatus } from './repertoire-model';
+import type {
+  OverrideField,
+  RepertoireRow,
+  RepertoireStats,
+  TuneStatus,
+} from './repertoire-model';
 import { mapRepertoireRow, mapStatsRow } from './repertoire-model';
 import { lookupCatalogueMeta } from './catalogue-db';
 import {
@@ -338,6 +343,54 @@ export async function saveShelved(repertoireId: string, shelved: boolean): Promi
 
   if (error) throw new Error(`Could not save the shelved flag: ${error.message}`);
   if (!data?.id) throw new Error('Could not save the shelved flag: that tune is not yours.');
+}
+
+/**
+ * Columna de cada campo con override (F2, #8). El mapeo vive **aquí** y no en la
+ * vista: quien pinta el formulario habla de `title`/`rhythm`/`key`/`abc`, y el
+ * nombre de la columna (`custom_*`) es un detalle del adaptador.
+ */
+const OVERRIDE_COLUMNS: Record<OverrideField, string> = {
+  title: 'custom_title',
+  rhythm: 'custom_rhythm',
+  key: 'custom_key',
+  abc: 'custom_abc',
+};
+
+/**
+ * Escribe los overrides de una fila en **un solo** `update`: un viaje por campo
+ * sería tres o cuatro escrituras para un solo guardado del formulario.
+ *
+ * `null` es «volver al estándar» —`custom_x` nula hace que `displayTitle` y
+ * compañía caigan al valor del catálogo—; `''` no se escribe nunca, porque no
+ * significa lo mismo.
+ *
+ * `patch` vacío no llama a Supabase: un `update` sin columnas es un error de
+ * PostgREST y, además, no hay nada que escribir. Mismo patrón de error que
+ * `saveStatus`: el `select('id')` convierte en error visible el no-op silencioso
+ * de una fila ajena, que la RLS filtra sin dar error.
+ */
+export async function saveOverrides(
+  repertoireId: string,
+  patch: Partial<Record<OverrideField, string | null>>
+): Promise<void> {
+  const columns: Record<string, string | null> = {};
+  for (const field of Object.keys(patch) as OverrideField[]) {
+    const value = patch[field];
+    if (value === undefined) continue;
+    columns[OVERRIDE_COLUMNS[field]] = value;
+  }
+  if (Object.keys(columns).length === 0) return;
+
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .update(columns)
+    .eq('id', repertoireId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not save the details: ${error.message}`);
+  if (!data?.id) throw new Error('Could not save the details: that tune is not yours.');
 }
 
 /**

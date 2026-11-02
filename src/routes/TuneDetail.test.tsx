@@ -14,14 +14,21 @@ vi.mock('../lib/repertoire', () => ({
   removeFromRepertoire: vi.fn(),
   saveStatus: vi.fn(),
   saveShelved: vi.fn(),
+  saveOverrides: vi.fn(),
 }));
 
-import { fetchRepertoireRow, saveShelved, saveStatus } from '../lib/repertoire';
+import {
+  fetchRepertoireRow,
+  saveOverrides,
+  saveShelved,
+  saveStatus,
+} from '../lib/repertoire';
 import TuneDetail from './TuneDetail';
 
 const mockedFetch = vi.mocked(fetchRepertoireRow);
 const mockedSaveStatus = vi.mocked(saveStatus);
 const mockedSaveShelved = vi.mocked(saveShelved);
+const mockedSaveOverrides = vi.mocked(saveOverrides);
 
 function makeRow(overrides: Record<string, any> = {}) {
   return {
@@ -65,6 +72,7 @@ beforeEach(() => {
   mockedFetch.mockReset();
   mockedSaveStatus.mockReset();
   mockedSaveShelved.mockReset();
+  mockedSaveOverrides.mockReset();
 });
 
 // Sin `globals: true` en vitest, la librería no registra su limpieza sola: sin
@@ -232,5 +240,156 @@ describe('TuneDetail', () => {
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toContain('that tune is not yours')
     );
+  });
+
+  /* ── Formulario de overrides (F2, #8) ─────────────────────────────── */
+
+  /**
+   * El contrato con el adaptador es lo que se comprueba aquí; que la fila se
+   * escriba de verdad lo cruza la integración opt-in. El estándar se enseña como
+   * placeholder: un campo vacío significa «usar el del catálogo».
+   */
+  it('opens the details form with the standard value as a placeholder, never as a draft', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('The Kesh')).toBeTruthy());
+
+    const trigger = screen.getByRole('button', { name: 'Edit details' });
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByLabelText('Title')).toBeNull();
+
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+
+    const title = screen.getByLabelText('Title') as HTMLInputElement;
+    const rhythm = screen.getByLabelText('Rhythm') as HTMLInputElement;
+    const key = screen.getByLabelText('Key') as HTMLInputElement;
+    const abc = screen.getByLabelText('ABC') as HTMLTextAreaElement;
+
+    expect(title.placeholder).toBe('Kesh, The');
+    expect(rhythm.placeholder).toBe('jig');
+    // Sin tonalidad en el catálogo el hueco se enseña como hueco.
+    expect(key.placeholder).toBe('');
+    expect(abc.placeholder).toBe('');
+    expect([title.value, rhythm.value, key.value, abc.value]).toEqual(['', '', '', '']);
+
+    // Sin cambios no hay nada que guardar y nada que revertir.
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryAllByRole('button', { name: /^Use standard/ })).toHaveLength(0);
+  });
+
+  it('saves only the changed field, trimmed, and repaints the row without asking Supabase again', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    mockedSaveOverrides.mockResolvedValue(undefined);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('The Kesh')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+
+    fireEvent.input(screen.getByLabelText('Title'), {
+      target: { value: '  The Kesh (session)  ' },
+    });
+
+    const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    fireEvent.click(save);
+
+    await waitFor(() =>
+      expect(mockedSaveOverrides).toHaveBeenCalledWith('row-a', { title: 'The Kesh (session)' })
+    );
+    // Un solo envío: los otros tres campos no se reescriben.
+    expect(mockedSaveOverrides).toHaveBeenCalledTimes(1);
+
+    // La fila ya cargada se repinta con lo nuevo: el `*` aparece y no se pide nada.
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 2 }).textContent).toContain('The Kesh (session)')
+    );
+    expect(screen.queryAllByTitle('Custom value').length).toBeGreaterThan(0);
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+    // Guardado: el borrador ya coincide con lo guardado y el botón se apaga.
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+    );
+  });
+
+  it('reverts one field to the standard by writing null, and the marker goes with it', async () => {
+    mockedFetch.mockResolvedValue(makeRow({ custom_key: 'G' }) as any);
+    mockedSaveOverrides.mockResolvedValue(undefined);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('G')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+    // Un campo sobreescrito arranca con su valor, no con el estándar.
+    expect((screen.getByLabelText('Key') as HTMLInputElement).value).toBe('G');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use standard key' }));
+
+    await waitFor(() => expect(mockedSaveOverrides).toHaveBeenCalledWith('row-a', { key: null }));
+    await waitFor(() => expect(screen.queryAllByTitle('Custom value')).toHaveLength(0));
+    expect((screen.getByLabelText('Key') as HTMLInputElement).value).toBe('');
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Las dos costuras del formulario, que el corte no veía: resiembra y
+   * normalización. Sin estas pruebas, «Use standard» se lleva por delante lo que
+   * el usuario tenga a medio escribir en otro campo, y un valor con espacios deja
+   * el «Save» armado para siempre reescribiendo lo mismo.
+   */
+  it('keeps what was typed in one field when another is reverted', async () => {
+    mockedFetch.mockResolvedValue(makeRow({ custom_key: 'G' }) as any);
+    mockedSaveOverrides.mockResolvedValue(undefined);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('G')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+
+    fireEvent.input(screen.getByLabelText('Title'), { target: { value: 'The Kesh Reel' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use standard key' }));
+
+    await waitFor(() => expect(mockedSaveOverrides).toHaveBeenCalledWith('row-a', { key: null }));
+    // Lo tecleado en el título sigue ahí: revertir un campo no resiembra el resto.
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('The Kesh Reel');
+  });
+
+  it('normalizes the draft after saving, so Save does not stay armed', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    mockedSaveOverrides.mockResolvedValue(undefined);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('The Kesh')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+
+    fireEvent.input(screen.getByLabelText('Title'), { target: { value: '   Kesh   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mockedSaveOverrides).toHaveBeenCalledWith('row-a', { title: 'Kesh' }));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Kesh')
+    );
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('shows a failed override write in red and keeps the draft', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    mockedSaveOverrides.mockRejectedValue(
+      new Error('Could not save the details: that tune is not yours.')
+    );
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('The Kesh')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+    fireEvent.input(screen.getByLabelText('Rhythm'), { target: { value: 'slide' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toContain('that tune is not yours')
+    );
+    // El borrador no se pierde: lo escrito sigue en el campo para reintentar.
+    expect((screen.getByLabelText('Rhythm') as HTMLInputElement).value).toBe('slide');
+    // Y la fila no se toca: la marca de override no aparece de la nada.
+    expect(screen.queryAllByTitle('Custom value')).toHaveLength(0);
   });
 });

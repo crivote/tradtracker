@@ -7,6 +7,7 @@ import {
   cardKey,
   collationKey,
   compareStaleness,
+  customDrafts,
   displayKey,
   displayRhythm,
   displayTitle,
@@ -16,6 +17,7 @@ import {
   mapRepertoireRow,
   mapStatsRow,
   matchesQuery,
+  normalizeOverride,
   overrideFields,
   parseScope,
   parseViewMode,
@@ -475,6 +477,7 @@ describe('overrideFields', () => {
       title: false,
       rhythm: false,
       key: false,
+      abc: false,
     });
   });
 
@@ -484,8 +487,9 @@ describe('overrideFields', () => {
       custom_title: '   ',
       custom_rhythm: '',
       custom_key: null,
+      customAbc: '\n\t ',
     };
-    expect(overrideFields(row)).toEqual({ title: false, rhythm: false, key: false });
+    expect(overrideFields(row)).toEqual({ title: false, rhythm: false, key: false, abc: false });
   });
 
   it('marks each field that has its own text', () => {
@@ -494,13 +498,58 @@ describe('overrideFields', () => {
       custom_title: 'The Kesh (session version)',
       custom_rhythm: 'slide',
       custom_key: 'G',
+      customAbc: 'X: 1\nK: G',
     };
-    expect(overrideFields(row)).toEqual({ title: true, rhythm: true, key: true });
+    expect(overrideFields(row)).toEqual({ title: true, rhythm: true, key: true, abc: true });
   });
 
   it('marks only the fields that were overridden', () => {
     const row: RepertoireRow = { ...makeRow({ id: 'key-only' }), custom_key: 'D' };
-    expect(overrideFields(row)).toEqual({ title: false, rhythm: false, key: true });
+    expect(overrideFields(row)).toEqual({ title: false, rhythm: false, key: true, abc: false });
+  });
+
+  /** El de ABC decide si el formulario pinta su «Use standard» (#8). */
+  it('marks the ABC only when the row carries its own setting', () => {
+    const withAbc: RepertoireRow = { ...makeRow({ id: 'abc' }), customAbc: 'X: 1\nT: Kesh' };
+    expect(overrideFields(withAbc).abc).toBe(true);
+    expect(overrideFields(makeRow({ id: 'no-abc' })).abc).toBe(false);
+  });
+});
+
+describe('normalizeOverride (#8)', () => {
+  it('recorta el texto que se guarda', () => {
+    expect(normalizeOverride('  The Kesh  ')).toBe('The Kesh');
+    expect(normalizeOverride('X: 1\nK: G\n')).toBe('X: 1\nK: G');
+  });
+
+  it('un texto en blanco no es un override: null, no cadena vacía', () => {
+    expect(normalizeOverride('')).toBeNull();
+    expect(normalizeOverride('   ')).toBeNull();
+    expect(normalizeOverride('\n\t ')).toBeNull();
+  });
+});
+
+describe('customDrafts (#8)', () => {
+  it('parte del override cuando lo hay, sin tocar el estándar', () => {
+    const row: RepertoireRow = {
+      ...makeRow({ id: 'custom', name: 'Kesh, The' }),
+      custom_title: 'The Kesh (session version)',
+      custom_key: 'G',
+      customAbc: 'X: 1\nK: G',
+    };
+    expect(customDrafts(row)).toEqual({
+      title: 'The Kesh (session version)',
+      rhythm: '',
+      key: 'G',
+      abc: 'X: 1\nK: G',
+    });
+  });
+
+  it('deja vacíos los campos sin override: el estándar es placeholder, no borrador', () => {
+    const row = makeRow({ id: 'plain', name: 'Kesh, The', rhythm: 'jig', key: 'D' });
+    // El estándar existe (jig, D) y aun así el borrador va vacío: precargarlo
+    // convertiría el botón de guardar en una escritura de overrides fantasma.
+    expect(customDrafts(row)).toEqual({ title: '', rhythm: '', key: '', abc: '' });
   });
 });
 
