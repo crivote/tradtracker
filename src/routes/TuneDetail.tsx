@@ -2,22 +2,27 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'so
 import { A, useNavigate, useParams } from '@solidjs/router';
 import {
   BANDS,
+  OVERRIDE_FIELDS,
   STATUS_LABELS,
   STATUS_STYLES,
   bandFor,
+  customDrafts,
   displayKey,
   displayRhythm,
   displayTitle,
   imageCredit,
+  normalizeOverride,
   overrideFields,
   placeholderInitials,
   practiceRecency,
+  type OverrideField,
   type RepertoireRow,
   type TuneStatus,
 } from '../lib/repertoire-model';
 import {
   fetchRepertoireRow,
   removeFromRepertoire,
+  saveOverrides,
   saveShelved,
   saveStatus,
 } from '../lib/repertoire';
@@ -25,6 +30,16 @@ import { focalPosition } from '../lib/image-sources';
 import { formatDate } from '../lib/format';
 import PracticeLog from '../components/PracticeLog';
 import BackgroundPicker from '../components/BackgroundPicker';
+
+/**
+ * Estilo de los campos del formulario de overrides (F2, #8): paleta oscura del
+ * detalle, un solo sitio para las cuatro clases. El placeholder es gris apagado
+ * a propósito —es el valor estándar, no lo que hay guardado—.
+ */
+const OVERRIDE_INPUT_CLASS =
+  'w-full rounded border border-gray-700 bg-gray-900 px-2 py-1 text-sm text-gray-100 placeholder:text-gray-600 focus:border-amber-400 focus:outline-none disabled:opacity-60';
+const OVERRIDE_STANDARD_CLASS =
+  'shrink-0 rounded border border-gray-600 px-2 py-1 text-xs text-gray-300 hover:border-amber-400 hover:text-amber-300 disabled:opacity-60';
 
 /**
  * Detalle de un tune del repertorio (#7, corte 2), en ruta propia
@@ -194,6 +209,97 @@ export default function TuneDetail() {
             /** El peldaño actual con su definición canónica: la del modelo, no una nueva. */
             const level = createMemo(() => bandFor(item().status));
 
+            /* ── Formulario de overrides (F2, #8) ──────────────────────────
+             * Los borradores son estado de pantalla, no un dato del modelo: se
+             * resiembran cuando cambia la fila (carga, recarga o escritura
+             * propia) y nunca mientras se teclea, porque `item()` no cambia con
+             * las pulsaciones.
+             */
+            const [editing, setEditing] = createSignal(false);
+            const [drafts, setDrafts] = createSignal<Record<OverrideField, string>>(
+              customDrafts(item())
+            );
+            const [savingOverrides, setSavingOverrides] = createSignal(false);
+            const [overrideError, setOverrideError] = createSignal<string | null>(null);
+
+            createEffect(() => setDrafts(customDrafts(item())));
+
+            /** Lo guardado, para saber qué campos tocó el usuario. */
+            const storedDrafts = createMemo(() => customDrafts(item()));
+
+            /**
+             * Solo los campos cuyo borrador **difiere de lo guardado**, ya
+             * normalizados: un guardado no reescribe los otros tres. Comparar
+             * contra el valor guardado —y no contra el estándar— es lo que
+             * distingue «no lo he tocado» de «quiero volver al estándar», que se
+             * pide vaciando el campo.
+             */
+            const overridePatch = createMemo(() => {
+              const stored = storedDrafts();
+              const current = drafts();
+              const patch: Partial<Record<OverrideField, string | null>> = {};
+              for (const field of OVERRIDE_FIELDS) {
+                if (current[field] === stored[field]) continue;
+                patch[field] = normalizeOverride(current[field]);
+              }
+              return patch;
+            });
+
+            const hasOverrideChanges = createMemo(() => Object.keys(overridePatch()).length > 0);
+
+            const setDraft = (field: OverrideField, value: string) =>
+              setDrafts((previous) => ({ ...previous, [field]: value }));
+
+            /**
+             * Refleja lo escrito en la fila en pantalla: el `*`, el título y los
+             * placeholders cambian sin volver a pedir la fila a Supabase, que es
+             * lo único que el formulario no necesita.
+             */
+            const applyOverrides = (patch: Partial<Record<OverrideField, string | null>>) => {
+              const current = item();
+              const next: RepertoireRow = { ...current };
+              if ('title' in patch) next.custom_title = patch.title ?? null;
+              if ('rhythm' in patch) next.custom_rhythm = patch.rhythm ?? null;
+              if ('key' in patch) next.custom_key = patch.key ?? null;
+              if ('abc' in patch) next.customAbc = patch.abc ?? null;
+              setRow(next);
+            };
+
+            const saveEdits = async (id: string) => {
+              const patch = overridePatch();
+              if (Object.keys(patch).length === 0) return;
+              setSavingOverrides(true);
+              setOverrideError(null);
+              try {
+                await saveOverrides(id, patch);
+                applyOverrides(patch);
+              } catch (cause) {
+                setOverrideError(cause instanceof Error ? cause.message : String(cause));
+              } finally {
+                setSavingOverrides(false);
+              }
+            };
+
+            /**
+             * «Use standard»: un campo vuelve al valor del catálogo escribiendo
+             * `null`. Va en su propia escritura y no en el `Save` del formulario
+             * porque el gesto es inmediato y de un solo campo.
+             */
+            const useStandard = async (id: string, field: OverrideField) => {
+              const patch: Partial<Record<OverrideField, string | null>> = {};
+              patch[field] = null;
+              setSavingOverrides(true);
+              setOverrideError(null);
+              try {
+                await saveOverrides(id, patch);
+                applyOverrides(patch);
+              } catch (cause) {
+                setOverrideError(cause instanceof Error ? cause.message : String(cause));
+              } finally {
+                setSavingOverrides(false);
+              }
+            };
+
             return (
               <article class="space-y-6 rounded-lg border border-gray-700 bg-gray-900 p-6">
                 <header class="flex flex-wrap items-start gap-4">
@@ -335,6 +441,163 @@ export default function TuneDetail() {
                     <dd class="text-gray-200">{item().tune.meter ?? '—'}</dd>
                   </div>
                 </dl>
+
+                {/*
+                  Overrides de metadatos (F2, #8). El estándar **no** se precarga:
+                  se enseña como placeholder, así que un campo vacío significa
+                  «usar el del catálogo» y no hay que adivinar si el texto guardado
+                  coincide o no con él. El `*` de arriba sigue marcando lo que está
+                  sobreescrito; aquí manda el «Use standard», que solo se pinta en
+                  los campos que de verdad lo están.
+                */}
+                <section class="space-y-3 rounded border border-gray-700 bg-gray-800/40 p-4">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h3 class="text-xs uppercase tracking-wide text-gray-500">Details</h3>
+                    <button
+                      type="button"
+                      aria-expanded={editing()}
+                      aria-controls="edit-details"
+                      class="rounded border border-gray-600 px-3 py-1 text-sm text-gray-300 hover:border-amber-400 hover:text-amber-300"
+                      onClick={() => setEditing(!editing())}
+                    >
+                      Edit details
+                    </button>
+                  </div>
+
+                  <Show when={editing()}>
+                    <form
+                      id="edit-details"
+                      class="space-y-3 border-t border-gray-700 pt-3"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        void saveEdits(item().id);
+                      }}
+                    >
+                      <p class="text-xs text-gray-500">
+                        Leave a field empty to use the standard value.
+                      </p>
+
+                      <div class="space-y-1">
+                        <span class="text-xs text-gray-400">Title</span>
+                        <div class="flex items-start gap-2">
+                          <input
+                            type="text"
+                            aria-label="Title"
+                            placeholder={item().tune.name}
+                            value={drafts().title}
+                            disabled={savingOverrides()}
+                            class={OVERRIDE_INPUT_CLASS}
+                            onInput={(event) => setDraft('title', event.currentTarget.value)}
+                          />
+                          <Show when={flags().title}>
+                            <button
+                              type="button"
+                              aria-label="Use standard title"
+                              disabled={savingOverrides()}
+                              class={OVERRIDE_STANDARD_CLASS}
+                              onClick={() => void useStandard(item().id, 'title')}
+                            >
+                              Use standard
+                            </button>
+                          </Show>
+                        </div>
+                      </div>
+
+                      <div class="space-y-1">
+                        <span class="text-xs text-gray-400">Rhythm</span>
+                        <div class="flex items-start gap-2">
+                          <input
+                            type="text"
+                            aria-label="Rhythm"
+                            placeholder={item().tune.rhythm ?? ''}
+                            value={drafts().rhythm}
+                            disabled={savingOverrides()}
+                            class={OVERRIDE_INPUT_CLASS}
+                            onInput={(event) => setDraft('rhythm', event.currentTarget.value)}
+                          />
+                          <Show when={flags().rhythm}>
+                            <button
+                              type="button"
+                              aria-label="Use standard rhythm"
+                              disabled={savingOverrides()}
+                              class={OVERRIDE_STANDARD_CLASS}
+                              onClick={() => void useStandard(item().id, 'rhythm')}
+                            >
+                              Use standard
+                            </button>
+                          </Show>
+                        </div>
+                      </div>
+
+                      <div class="space-y-1">
+                        <span class="text-xs text-gray-400">Key</span>
+                        <div class="flex items-start gap-2">
+                          <input
+                            type="text"
+                            aria-label="Key"
+                            placeholder={item().tune.key ?? ''}
+                            value={drafts().key}
+                            disabled={savingOverrides()}
+                            class={OVERRIDE_INPUT_CLASS}
+                            onInput={(event) => setDraft('key', event.currentTarget.value)}
+                          />
+                          <Show when={flags().key}>
+                            <button
+                              type="button"
+                              aria-label="Use standard key"
+                              disabled={savingOverrides()}
+                              class={OVERRIDE_STANDARD_CLASS}
+                              onClick={() => void useStandard(item().id, 'key')}
+                            >
+                              Use standard
+                            </button>
+                          </Show>
+                        </div>
+                      </div>
+
+                      <div class="space-y-1">
+                        <span class="text-xs text-gray-400">ABC</span>
+                        <div class="flex items-start gap-2">
+                          <textarea
+                            aria-label="ABC"
+                            rows={5}
+                            placeholder={item().tune.abc ?? ''}
+                            value={drafts().abc}
+                            disabled={savingOverrides()}
+                            class={`${OVERRIDE_INPUT_CLASS} font-mono`}
+                            onInput={(event) => setDraft('abc', event.currentTarget.value)}
+                          />
+                          <Show when={flags().abc}>
+                            <button
+                              type="button"
+                              aria-label="Use standard ABC"
+                              disabled={savingOverrides()}
+                              class={OVERRIDE_STANDARD_CLASS}
+                              onClick={() => void useStandard(item().id, 'abc')}
+                            >
+                              Use standard
+                            </button>
+                          </Show>
+                        </div>
+                      </div>
+
+                      <div class="flex flex-wrap items-center gap-3">
+                        <button
+                          type="submit"
+                          disabled={savingOverrides() || !hasOverrideChanges()}
+                          class="rounded bg-amber-500 px-3 py-1.5 text-sm font-semibold text-gray-950 hover:bg-amber-400 disabled:opacity-50"
+                        >
+                          {savingOverrides() ? 'Saving…' : 'Save'}
+                        </button>
+                        <Show when={overrideError()}>
+                          <p class="text-sm text-red-400" role="alert">
+                            {overrideError()}
+                          </p>
+                        </Show>
+                      </div>
+                    </form>
+                  </Show>
+                </section>
 
                 <p class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-400">
                   <span>
