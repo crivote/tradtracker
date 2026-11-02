@@ -2,10 +2,13 @@
 /**
  * El gate del bloque de etiquetas, en su propio fichero (#48).
  *
- * La caché del vocabulario vive en el módulo de la vista y dura toda la sesión de
- * navegador; dentro de `TuneDetail.test.tsx` el primer montaje ya la deja llena,
- * así que el caso «vocabulario vacío ⇒ no se pinta el bloque» solo se puede
- * ejercitar con un registro de módulos limpio: de ahí este fichero aparte.
+ * La caché del vocabulario vive en el adaptador (`loadVocabulary`, en
+ * `tags-db`) y dura toda la sesión de navegador; dentro de
+ * `TuneDetail.test.tsx` el primer montaje ya la deja llena, así que el caso
+ * «vocabulario vacío ⇒ no se pinta el bloque» solo se puede ejercitar con un
+ * registro de módulos limpio: de ahí este fichero aparte. Aquí el vocabulario
+ * vacío lo sirve el doble, porque el `loadVocabulary` real cachea el primero que
+ * llegue y ese caso hay que forzarlo por prueba.
  *
  * Lo que se fija: sin facetas **no** hay un «Tags» vacío. Un bloque que promete
  * algo que no hay es peor que no tenerlo.
@@ -22,12 +25,20 @@ vi.mock('../lib/repertoire', () => ({
   saveOverrides: vi.fn(),
 }));
 
-vi.mock('../lib/tags-db', () => ({
-  fetchVocabulary: vi.fn(),
-  fetchTuneTags: vi.fn(),
-  addTuneTags: vi.fn(),
-  removeTuneTag: vi.fn(),
-}));
+vi.mock('../lib/tags-db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/tags-db')>();
+  const fetchVocabulary = vi.fn();
+  return {
+    ...actual,
+    fetchVocabulary,
+    // Mismo contrato que el real, sobre el vocabulario simulado: así cada prueba
+    // decide qué llega (aquí, facetas vacías).
+    loadVocabulary: () => fetchVocabulary().catch(() => null),
+    fetchTuneTags: vi.fn(),
+    addTuneTags: vi.fn(),
+    removeTuneTag: vi.fn(),
+  };
+});
 
 import { fetchRepertoireRow } from '../lib/repertoire';
 import { fetchTuneTags, fetchVocabulary } from '../lib/tags-db';

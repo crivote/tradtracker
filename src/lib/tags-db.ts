@@ -27,6 +27,29 @@ export interface TagVocabulary {
   tags: Tag[];
 }
 
+/**
+ * El vocabulario es cerrado e inmutable: se pide **una vez por sesión de
+ * navegador** y lo comparten todas las pantallas —detalle y búsqueda—. La
+ * promesa se guarda **en vuelo**, así que dos montajes a la vez no lanzan dos
+ * peticiones y el que llega segundo espera a la misma.
+ *
+ * Un fallo **no** se cachea: se limpia la promesa y la siguiente visita vuelve a
+ * intentarlo, en vez de dejar el bloque apagado para siempre por un corte de red
+ * de hace media hora. Devuelve `null` en vez de lanzar: quien llama pinta la
+ * pantalla sin etiquetas, que es un estado legítimo.
+ */
+let vocabularyPromise: Promise<TagVocabulary | null> | null = null;
+
+export function loadVocabulary(): Promise<TagVocabulary | null> {
+  if (vocabularyPromise) return vocabularyPromise;
+  const pending = fetchVocabulary().catch(() => {
+    vocabularyPromise = null;
+    return null;
+  });
+  vocabularyPromise = pending;
+  return pending;
+}
+
 function batches<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
   for (let start = 0; start < items.length; start += size) {
