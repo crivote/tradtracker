@@ -489,6 +489,27 @@ export function customDrafts(row: RepertoireRow): Record<OverrideField, string> 
   };
 }
 
+/**
+ * Borradores con un `patch` ya escrito aplicado encima (`null` → campo vacío).
+ *
+ * Existe porque tras una escritura hay que **normalizar el borrador**: si el
+ * usuario teclea ` Kesh ` y se guarda `Kesh`, dejar el borrador con espacios
+ * mantendría el botón «Save» armado para siempre, reescribiendo lo mismo en cada
+ * pulsación. Y al revés, no se puede resiembrar el formulario entero: eso borraría
+ * lo que el usuario tenga tecleado en **otro** campo.
+ */
+export function applyPatchToDrafts(
+  drafts: Record<OverrideField, string>,
+  patch: Partial<Record<OverrideField, string | null>>
+): Record<OverrideField, string> {
+  const next = { ...drafts };
+  for (const field of OVERRIDE_FIELDS) {
+    if (!(field in patch)) continue;
+    next[field] = patch[field] ?? '';
+  }
+  return next;
+}
+
 /** Un override cuenta solo si tiene texto: un `custom_key` vacío no lo es. */
 function hasText(value: string | null): boolean {
   return (value ?? '').trim().length > 0;

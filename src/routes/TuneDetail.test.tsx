@@ -332,6 +332,46 @@ describe('TuneDetail', () => {
     expect(mockedFetch).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Las dos costuras del formulario, que el corte no veía: resiembra y
+   * normalización. Sin estas pruebas, «Use standard» se lleva por delante lo que
+   * el usuario tenga a medio escribir en otro campo, y un valor con espacios deja
+   * el «Save» armado para siempre reescribiendo lo mismo.
+   */
+  it('keeps what was typed in one field when another is reverted', async () => {
+    mockedFetch.mockResolvedValue(makeRow({ custom_key: 'G' }) as any);
+    mockedSaveOverrides.mockResolvedValue(undefined);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('G')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+
+    fireEvent.input(screen.getByLabelText('Title'), { target: { value: 'The Kesh Reel' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use standard key' }));
+
+    await waitFor(() => expect(mockedSaveOverrides).toHaveBeenCalledWith('row-a', { key: null }));
+    // Lo tecleado en el título sigue ahí: revertir un campo no resiembra el resto.
+    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('The Kesh Reel');
+  });
+
+  it('normalizes the draft after saving, so Save does not stay armed', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    mockedSaveOverrides.mockResolvedValue(undefined);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('The Kesh')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Edit details' }));
+
+    fireEvent.input(screen.getByLabelText('Title'), { target: { value: '   Kesh   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mockedSaveOverrides).toHaveBeenCalledWith('row-a', { title: 'Kesh' }));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Kesh')
+    );
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('shows a failed override write in red and keeps the draft', async () => {
     mockedFetch.mockResolvedValue(makeRow() as any);
     mockedSaveOverrides.mockRejectedValue(

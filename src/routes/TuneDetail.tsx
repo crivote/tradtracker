@@ -5,6 +5,7 @@ import {
   OVERRIDE_FIELDS,
   STATUS_LABELS,
   STATUS_STYLES,
+  applyPatchToDrafts,
   bandFor,
   customDrafts,
   displayKey,
@@ -222,7 +223,20 @@ export default function TuneDetail() {
             const [savingOverrides, setSavingOverrides] = createSignal(false);
             const [overrideError, setOverrideError] = createSignal<string | null>(null);
 
-            createEffect(() => setDrafts(customDrafts(item())));
+            /**
+             * La resiembra va **por fila**, no por cambio de la fila: `setRow` tras
+             * una escritura también cambia `item()`, y resiembra entonces borraría lo
+             * que el usuario tenga tecleado en otro campo (teclear el título y luego
+             * pulsar «Use standard» en la tonalidad perdía el título). Cada escritura
+             * normaliza su propio campo con `applyPatchToDrafts`.
+             */
+            let seededFor: string | null = null;
+            createEffect(() => {
+              const current = item();
+              if (seededFor === current.id) return;
+              seededFor = current.id;
+              setDrafts(customDrafts(current));
+            });
 
             /** Lo guardado, para saber qué campos tocó el usuario. */
             const storedDrafts = createMemo(() => customDrafts(item()));
@@ -273,6 +287,9 @@ export default function TuneDetail() {
               try {
                 await saveOverrides(id, patch);
                 applyOverrides(patch);
+                // El borrador de lo escrito queda normalizado (`null` → vacío), o el
+                // «Save» seguiría armado reescribiendo lo mismo.
+                setDrafts((previous) => applyPatchToDrafts(previous, patch));
               } catch (cause) {
                 setOverrideError(cause instanceof Error ? cause.message : String(cause));
               } finally {
@@ -293,6 +310,9 @@ export default function TuneDetail() {
               try {
                 await saveOverrides(id, patch);
                 applyOverrides(patch);
+                // El borrador de lo escrito queda normalizado (`null` → vacío), o el
+                // «Save» seguiría armado reescribiendo lo mismo.
+                setDrafts((previous) => applyPatchToDrafts(previous, patch));
               } catch (cause) {
                 setOverrideError(cause instanceof Error ? cause.message : String(cause));
               } finally {
