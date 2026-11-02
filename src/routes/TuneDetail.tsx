@@ -29,7 +29,7 @@ import {
 } from '../lib/repertoire';
 import { focalPosition } from '../lib/image-sources';
 import { formatDate } from '../lib/format';
-import { facetTree, tagsForTune, type Tag, type TagFacetInfo } from '../lib/tags';
+import { facetTree, tagsForTune } from '../lib/tags';
 import {
   addTuneTags,
   fetchTuneTags,
@@ -38,6 +38,7 @@ import {
   type TagVocabulary,
 } from '../lib/tags-db';
 import PracticeLog from '../components/PracticeLog';
+import TagPicker from '../components/TagPicker';
 import BackgroundPicker from '../components/BackgroundPicker';
 
 /**
@@ -407,43 +408,6 @@ export default function TuneDetail() {
               }
             };
 
-            /**
-             * Dos etiquetas con el mismo texto en facetas distintas necesitan la
-             * faceta en el nombre accesible; con texto único, el `aria-label` es
-             * solo la etiqueta.
-             */
-            const repeatedLabels = createMemo(() => {
-              const counts = new Map<string, number>();
-              for (const tag of vocabulary()?.tags ?? []) {
-                counts.set(tag.label, (counts.get(tag.label) ?? 0) + 1);
-              }
-              return new Set(
-                [...counts].filter(([, times]) => times > 1).map(([label]) => label)
-              );
-            });
-
-            const tagLabel = (tag: Tag, facet: TagFacetInfo) =>
-              repeatedLabels().has(tag.label) ? `${facet.label}: ${tag.label}` : tag.label;
-
-            /** Una casilla; los hijos van indentados bajo su raíz. */
-            const tagBox = (tag: Tag, facet: TagFacetInfo, child = false) => (
-              <label
-                class={`flex items-center gap-2 text-sm ${child ? 'pl-4 text-gray-300' : 'text-gray-200'}`}
-              >
-                <input
-                  type="checkbox"
-                  class="accent-amber-400"
-                  aria-label={tagLabel(tag, facet)}
-                  checked={assignedTags().has(tag.id)}
-                  disabled={savingTags()}
-                  onChange={(event) =>
-                    void toggleTag(item().tune.id, tag.id, event.currentTarget.checked)
-                  }
-                />
-                {tag.label}
-              </label>
-            );
-
             return (
               <article class="space-y-6 rounded-lg border border-gray-700 bg-gray-900 p-6">
                 <header class="flex flex-wrap items-start gap-4">
@@ -766,24 +730,19 @@ export default function TuneDetail() {
                         </p>
                       </Show>
 
+                      {/* El árbol de casillas es el componente compartido con la
+                          tabla (#48): el mismo marcado y el mismo nombre
+                          accesible en las dos superficies. */}
                       <div class="space-y-3">
-                        <For each={groups()}>
-                          {(group) => (
-                            <fieldset class="space-y-1">
-                              <legend class="text-xs text-gray-400">{group.facet.label}</legend>
-                              <For each={group.nodes}>
-                                {(node) => (
-                                  <>
-                                    {tagBox(node.tag, group.facet)}
-                                    <For each={node.children}>
-                                      {(child) => tagBox(child, group.facet, true)}
-                                    </For>
-                                  </>
-                                )}
-                              </For>
-                            </fieldset>
-                          )}
-                        </For>
+                        <TagPicker
+                          groups={groups()}
+                          selected={[...assignedTags()]}
+                          disabled={savingTags()}
+                          idPrefix="tune-detail-tags"
+                          onToggle={(tagId, next) =>
+                            void toggleTag(item().tune.id, tagId, next)
+                          }
+                        />
                       </div>
                     </section>
                   )}

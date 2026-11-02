@@ -34,6 +34,18 @@ vi.mock('../lib/practice', () => ({
   logPractice: vi.fn(async () => undefined),
 }));
 
+vi.mock('../lib/tags-db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/tags-db')>();
+  return {
+    ...actual,
+    fetchVocabulary: vi.fn(),
+    loadVocabulary: vi.fn(),
+    fetchTuneTags: vi.fn(),
+    addTuneTags: vi.fn(),
+    removeTuneTag: vi.fn(),
+  };
+});
+
 import {
   VIEW_MODE_KEY,
   addCatalogueTune,
@@ -42,6 +54,13 @@ import {
   saveStatus,
 } from '../lib/repertoire';
 import { lookupCatalogueMeta, searchCatalogue } from '../lib/catalogue-db';
+import {
+  addTuneTags,
+  fetchTuneTags,
+  fetchVocabulary,
+  loadVocabulary,
+  removeTuneTag,
+} from '../lib/tags-db';
 import Repertoire from './Repertoire';
 
 const mockedFetch = vi.mocked(fetchRepertoire);
@@ -50,6 +69,31 @@ const mockedSaveStatus = vi.mocked(saveStatus);
 const mockedAddCatalogueTune = vi.mocked(addCatalogueTune);
 const mockedSearchCatalogue = vi.mocked(searchCatalogue);
 const mockedLookupMeta = vi.mocked(lookupCatalogueMeta);
+const mockedLoadVocabulary = vi.mocked(loadVocabulary);
+const mockedFetchVocabulary = vi.mocked(fetchVocabulary);
+const mockedFetchTuneTags = vi.mocked(fetchTuneTags);
+const mockedAddTuneTags = vi.mocked(addTuneTags);
+const mockedRemoveTuneTag = vi.mocked(removeTuneTag);
+
+/**
+ * Vocabulario mínimo para el panel de etiquetas (#48): las tres facetas y
+ * `Donegal` colgando de `Ireland`, que es lo que hace visible la jerarquía y
+ * permite comprobar que la casilla que se marca es la que viaja al adaptador.
+ */
+const VOCABULARY = {
+  facets: [
+    { id: 'tradition', label: 'Tradition', sort: 1 },
+    { id: 'technique', label: 'Technique', sort: 2 },
+    { id: 'mood', label: 'Mood', sort: 3 },
+  ],
+  tags: [
+    { id: 1, facet: 'tradition', value: 'ireland', label: 'Ireland', parent: null, sort: 1 },
+    { id: 2, facet: 'tradition', value: 'scotland', label: 'Scotland', parent: null, sort: 2 },
+    { id: 3, facet: 'tradition', value: 'donegal', label: 'Donegal', parent: 1, sort: 11 },
+    { id: 10, facet: 'technique', value: 'rolls', label: 'Rolls', parent: null, sort: 6 },
+    { id: 20, facet: 'mood', value: 'melancholy', label: 'Melancholy', parent: null, sort: 1 },
+  ],
+};
 
 function row(overrides: Record<string, any> = {}) {
   return {
@@ -179,6 +223,17 @@ beforeEach(() => {
   mockedSaveFavorite.mockResolvedValue(undefined);
   mockedSaveStatus.mockReset();
   mockedSaveStatus.mockResolvedValue(undefined);
+  // Etiquetas (#48): el vocabulario llega resuelto y las escrituras no cruzan.
+  mockedLoadVocabulary.mockReset();
+  mockedLoadVocabulary.mockResolvedValue(VOCABULARY as any);
+  mockedFetchVocabulary.mockReset();
+  mockedFetchVocabulary.mockResolvedValue(VOCABULARY as any);
+  mockedFetchTuneTags.mockReset();
+  mockedFetchTuneTags.mockResolvedValue([]);
+  mockedAddTuneTags.mockReset();
+  mockedAddTuneTags.mockResolvedValue(2);
+  mockedRemoveTuneTag.mockReset();
+  mockedRemoveTuneTag.mockResolvedValue(undefined);
   // La preferencia de vista vive en `sessionStorage`: sin limpiar, la prueba que
   // abre la lista dejaría «table» puesto para la siguiente.
   sessionStorage.clear();
@@ -619,5 +674,181 @@ describe('tabla del listado (#42)', () => {
       meter: null,
       composer: 'Tommy Coen',
     });
+  });
+});
+
+/**
+ * Etiquetado en bloque (#48). La selección de la tabla guarda ids de **fila**
+ * (`row-*`), pero a la RPC viajan los de **tune** (`t-*`): el fixture los
+ * mantiene distintos a propósito, porque un test que afirme `row-*` fija el
+ * defecto (23503) en vez de cazarlo.
+ */
+describe('etiquetado en bloque desde la tabla (#48)', () => {
+  beforeEach(() => {
+    mockedFetch.mockResolvedValue(TABLE_ROWS as any);
+  });
+
+  async function ready(count = TABLE_ROWS.length) {
+    await waitFor(() => expect(rowTitles().length).toBe(count));
+  }
+
+  it('marca dos filas y aplica una etiqueta en UNA llamada, con los ids de tune', async () => {
+    renderTable();
+    await ready();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+    fireEvent.click(screen.getByLabelText('Cooley’s Reel'));
+
+    expect(screen.getByText('2 selected')).toBeTruthy();
+    // Marcar no reordena ni recarga: la tabla sigue en el orden de urgencia y
+    // `fetchRepertoire` se pidió una sola vez al montar.
+    expect(rowTitles()).toEqual([
+      'Drowsy Maggie',
+      'Cooley’s Reel',
+      'The Cameron Highlanders',
+    ]);
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tag selection' }));
+    fireEvent.click(await screen.findByLabelText('Donegal'));
+
+    const apply = screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement;
+    expect(apply.disabled).toBe(false);
+    fireEvent.click(apply);
+
+    await waitFor(() => expect(mockedAddTuneTags).toHaveBeenCalledTimes(1));
+    // Los ids de TUNE, en el orden de las filas; no los de `pr_repertoire`.
+    expect(mockedAddTuneTags).toHaveBeenCalledWith(['t-drowsy', 't-cooley'], [3]);
+    const [sentIds] = mockedAddTuneTags.mock.calls[0];
+    expect(sentIds.every((id) => !id.startsWith('row-'))).toBe(true);
+
+    // Después: aviso con lo escrito, selección limpia y panel cerrado.
+    await waitFor(() => expect(screen.getByText('2 tunes tagged')).toBeTruthy());
+    expect(screen.queryByText(/selected/)).toBeNull();
+    expect((screen.getByLabelText('Drowsy Maggie') as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByLabelText('Donegal')).toBeNull();
+  });
+
+  it('«Apply» sin etiquetas está deshabilitado y no escribe; «Cancel» cierra sin escribir', async () => {
+    renderTable();
+    await ready();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+    fireEvent.click(screen.getByRole('button', { name: 'Tag selection' }));
+
+    // El panel está abierto y el árbol se pinta, pero sin marcar nada.
+    expect(await screen.findByLabelText('Donegal')).toBeTruthy();
+    const apply = screen.getByRole('button', { name: 'Apply' }) as HTMLButtonElement;
+    expect(apply.disabled).toBe(true);
+
+    fireEvent.click(apply);
+    expect(mockedAddTuneTags).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByLabelText('Donegal')).toBeNull();
+    // Cancelar no toca la selección de filas ni escribe nada.
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    expect(mockedAddTuneTags).not.toHaveBeenCalled();
+  });
+
+  it('«Clear» vacía la selección y la barra desaparece', async () => {
+    renderTable();
+    await ready();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+    fireEvent.click(screen.getByLabelText('Cooley’s Reel'));
+    expect(screen.getByText('2 selected')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+
+    expect(screen.queryByText(/selected/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Tag selection' })).toBeNull();
+    expect((screen.getByLabelText('Drowsy Maggie') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Cooley’s Reel') as HTMLInputElement).checked).toBe(false);
+    expect(mockedAddTuneTags).not.toHaveBeenCalled();
+  });
+
+  it('«select all» marca solo lo listado: el ámbito de un peldaño, no el repertorio entero', async () => {
+    sessionStorage.setItem(VIEW_MODE_KEY, 'table');
+    renderHome('/?band=learning');
+
+    // El peldaño deja una sola fila pintada de las tres del repertorio.
+    await waitFor(() => expect(rowTitles()).toEqual(['The Cameron Highlanders']));
+
+    fireEvent.click(screen.getByLabelText('Select all listed tunes'));
+
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    expect((screen.getByLabelText('The Cameron Highlanders') as HTMLInputElement).checked).toBe(
+      true
+    );
+    expect(document.querySelectorAll('.table-wrap tbody .pick input:checked').length).toBe(1);
+
+    // Y lo marcado es lo que viaja: solo esa tune, con su id de tune.
+    fireEvent.click(screen.getByRole('button', { name: 'Tag selection' }));
+    fireEvent.click(await screen.findByLabelText('Donegal'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() =>
+      expect(mockedAddTuneTags).toHaveBeenCalledWith(['t-cameron'], [3])
+    );
+    await waitFor(() => expect(screen.getByText('1 tune tagged')).toBeTruthy());
+
+    // Sin ámbito, el «select all» marca las tres listadas y el recuento cuadra.
+    fireEvent.click(screen.getByRole('button', { name: /Back to all/ }));
+    await waitFor(() => expect(rowTitles().length).toBe(TABLE_ROWS.length));
+
+    fireEvent.click(screen.getByLabelText('Select all listed tunes'));
+    expect(screen.getByText('3 selected')).toBeTruthy();
+    expect(document.querySelectorAll('.table-wrap tbody .pick input:checked').length).toBe(3);
+  });
+
+  it('si la escritura falla, el error va en role="alert" y la selección sigue en pie', async () => {
+    mockedAddTuneTags.mockRejectedValue(new Error('Could not add the tags: boom'));
+    renderTable();
+    await ready();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+    fireEvent.click(screen.getByRole('button', { name: 'Tag selection' }));
+    fireEvent.click(await screen.findByLabelText('Donegal'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    const alert = await waitFor(() => {
+      const node = screen.getByText('Could not add the tags: boom');
+      expect(node.getAttribute('role')).toBe('alert');
+      return node;
+    });
+    expect(alert).toBeTruthy();
+
+    // No se limpia nada: la fila sigue marcada, la barra sigue y la etiqueta
+    // sigue elegida, para reintentar sin volver a marcar.
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    expect((screen.getByLabelText('Drowsy Maggie') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Donegal') as HTMLInputElement).checked).toBe(true);
+  });
+
+  /**
+   * La selección se acota a lo que está listado. Sin esa poda, marcar una fila y
+   * cambiar de ámbito dejaría «1 selected» sobre una tune que ya no se ve —y el
+   * Apply la etiquetaría igual—: un recuento que no cuadra con la pantalla.
+   */
+  it('una fila marcada que deja de estar listada no cuenta ni viaja al Apply', async () => {
+    renderTable();
+    await ready();
+
+    // Cooley's es `solo_ready`: se marca en la tabla sin ámbito.
+    fireEvent.click(screen.getByLabelText('Cooley’s Reel'));
+    expect(screen.getByText('1 selected')).toBeTruthy();
+
+    // Se pasa a rejilla para poder aislar un peldaño, y se aísla Learning, donde
+    // Cooley's no está. Al volver a la tabla, la fila marcada ya no se lista.
+    fireEvent.click(screen.getByRole('button', { name: 'Cards' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Show only Learning' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Table' }));
+
+    await waitFor(() => expect(screen.queryByText('Cooley’s Reel')).toBeNull());
+    expect(screen.queryByText('1 selected')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Tag selection' })).toBeNull();
+    // Y la fila del ámbito sí está, para no confundir «vacío» con «acotado».
+    expect(screen.getByText('The Cameron Highlanders')).toBeTruthy();
   });
 });
