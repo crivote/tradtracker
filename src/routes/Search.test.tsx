@@ -25,10 +25,31 @@ vi.mock('../lib/practice', () => ({
   logPractice: vi.fn(async () => undefined),
 }));
 
+/**
+ * #48: el vocabulario y las asignaciones cruzan la red, y la vista pide las dos
+ * cosas al montar. Se simula `fetchVocabulary` y el doble de `loadVocabulary`
+ * reproduce su contrato sobre él —la caché real cerraría sobre el
+ * `fetchVocabulary` de verdad, porque `vi.mock` sustituye exportaciones, no las
+ * referencias internas del módulo—.
+ */
+vi.mock('../lib/tags-db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/tags-db')>();
+  const fetchVocabulary = vi.fn();
+  return {
+    ...actual,
+    fetchVocabulary,
+    loadVocabulary: () => fetchVocabulary().catch(() => null),
+    fetchTuneTags: vi.fn(),
+  };
+});
+
 import { fetchRepertoire } from '../lib/repertoire';
+import { fetchTuneTags, fetchVocabulary } from '../lib/tags-db';
 import Search from './Search';
 
 const mockedFetch = vi.mocked(fetchRepertoire);
+const mockedVocabulary = vi.mocked(fetchVocabulary);
+const mockedFetchTuneTags = vi.mocked(fetchTuneTags);
 
 function row(overrides: Record<string, any> = {}) {
   return {
@@ -88,6 +109,32 @@ const ROWS = [
   }),
 ];
 
+/**
+ * Vocabulario mínimo, con la forma real: tres facetas y `Donegal` colgando de
+ * `Ireland`. La asignación de `Sligo Creek` es **solo** el hijo: es la que prueba
+ * que elegir la raíz expande a descendientes.
+ */
+const VOCABULARY = {
+  facets: [
+    { id: 'tradition', label: 'Tradition', sort: 1 },
+    { id: 'technique', label: 'Technique', sort: 2 },
+    { id: 'mood', label: 'Mood', sort: 3 },
+  ],
+  tags: [
+    { id: 1, facet: 'tradition', value: 'ireland', label: 'Ireland', parent: null, sort: 1 },
+    { id: 2, facet: 'tradition', value: 'scotland', label: 'Scotland', parent: null, sort: 2 },
+    { id: 3, facet: 'tradition', value: 'donegal', label: 'Donegal', parent: 1, sort: 11 },
+    { id: 10, facet: 'technique', value: 'rolls', label: 'Rolls', parent: null, sort: 6 },
+    { id: 20, facet: 'mood', value: 'melancholy', label: 'Melancholy', parent: null, sort: 1 },
+  ],
+};
+
+const TAG_ASSIGNMENTS = [
+  { tune_id: 't1', tag_id: 1 }, // Cooley’s Reel — Ireland
+  { tune_id: 't3', tag_id: 3 }, // Sligo Creek — solo Donegal
+  { tune_id: 't4', tag_id: 20 }, // Morning Dew — Melancholy
+];
+
 function renderSearch() {
   const history = createMemoryHistory();
   history.set({ value: '/search' });
@@ -124,9 +171,21 @@ function pickRhythm(value: string) {
   fireEvent.change(select, { target: { value } });
 }
 
+/** El disparador del panel, una vez el vocabulario ya llegó. */
+async function openTagPanel() {
+  const toggle = await screen.findByRole('button', { name: 'Tags' });
+  fireEvent.click(toggle);
+  return toggle;
+}
+
 beforeEach(() => {
   mockedFetch.mockReset();
   mockedFetch.mockResolvedValue(ROWS as any);
+
+  mockedVocabulary.mockReset();
+  mockedVocabulary.mockResolvedValue(VOCABULARY as any);
+  mockedFetchTuneTags.mockReset();
+  mockedFetchTuneTags.mockResolvedValue(TAG_ASSIGNMENTS as any);
 });
 
 afterEach(() => cleanup());
@@ -199,5 +258,92 @@ describe('vista de búsqueda del repertorio (#9)', () => {
     const shelved = cardFor('Sligo Creek').querySelector('.tune-meta')!.textContent!;
     expect(shelved).toContain('Shelved');
     expect(shelved).not.toContain('Solo-ready');
+  });
+});
+
+describe('filtro por facetas (#48)', () => {
+  it('sin vocabulario no hay botón «Tags», y el resto de la vista sigue igual', async () => {
+    mockedVocabulary.mockRejectedValue(new Error('no network'));
+    renderSearch();
+
+    await waitFor(() => expect(mockedVocabulary).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText(/Type a title/)).toBeTruthy());
+
+    expect(screen.queryByRole('button', { name: 'Tags' })).toBeNull();
+    // El filtro de ritmo no depende de las etiquetas.
+    pickRhythm('reel');
+    await waitFor(() => expect(cardTitles()).toHaveLength(3));
+  });
+
+  it('abre las tres facetas en su orden, con los hijos indentados bajo su raíz', async () => {
+    renderSearch();
+
+    const toggle = await openTagPanel();
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.getAttribute('aria-controls')).toBe('tag-filter-panel');
+
+    const panel = document.querySelector('.tag-panel') as HTMLElement;
+    expect(panel).toBeTruthy();
+    expect(Array.from(panel.querySelectorAll('.facet-name')).map((el) => el.textContent)).toEqual([
+      'Tradition',
+      'Technique',
+      'Mood',
+    ]);
+
+    // Donegal cuelga de Ireland; Ireland es raíz.
+    expect(screen.getByLabelText('Donegal').closest('.tag-check--child')).toBeTruthy();
+    expect(screen.getByLabelText('Ireland').closest('.tag-check--child')).toBeNull();
+
+    // Sin selección no hay nada que limpiar.
+    expect(screen.queryByRole('button', { name: 'Clear tags' })).toBeNull();
+  });
+
+  it('marcar Ireland trae la tune marcada solo Donegal, y el recuento cuadra', async () => {
+    renderSearch();
+    await openTagPanel();
+
+    fireEvent.click(screen.getByLabelText('Ireland'));
+
+    // `t3` está marcada solo `donegal`: la expansión a descendientes la salva.
+    await waitFor(() => expect(cardTitles()).toEqual(['Cooley’s Reel', 'Sligo Creek']));
+    expect(screen.getByText('2 tunes match')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Tags · 1' })).toBeTruthy();
+    // Una etiqueta sola ya es una consulta: la vista sale del reposo.
+    expect(screen.queryByText(/Type a title/)).toBeNull();
+
+    // Las asignaciones se piden UNA vez, para todas las filas.
+    expect(mockedFetchTuneTags).toHaveBeenCalledTimes(1);
+    expect(mockedFetchTuneTags).toHaveBeenCalledWith(['t1', 't2', 't3', 't4']);
+  });
+
+  it('AND entre facetas: Ireland y Melancholy juntas no dejan nada', async () => {
+    renderSearch();
+    await openTagPanel();
+
+    fireEvent.click(screen.getByLabelText('Ireland'));
+    await waitFor(() => expect(cardTitles()).toHaveLength(2));
+
+    fireEvent.click(screen.getByLabelText('Melancholy'));
+    await waitFor(() =>
+      expect(screen.getByText('No tune matches that search.')).toBeTruthy()
+    );
+    expect(cards()).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Tags · 2' })).toBeTruthy();
+  });
+
+  it('«Clear tags» devuelve la vista al reposo', async () => {
+    renderSearch();
+    await openTagPanel();
+
+    fireEvent.click(screen.getByLabelText('Ireland'));
+    await waitFor(() => expect(cardTitles()).toHaveLength(2));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear tags' }));
+
+    await waitFor(() => expect(cards()).toHaveLength(0));
+    expect(screen.getByText(/Type a title — or pick a rhythm/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Tags' })).toBeTruthy();
+    // La casilla se apaga con la selección.
+    expect((screen.getByLabelText('Ireland') as HTMLInputElement).checked).toBe(false);
   });
 });

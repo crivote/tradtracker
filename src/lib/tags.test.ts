@@ -5,7 +5,7 @@
  * duplicados. Todo con datos a mano: la base ya está aplicada y no se toca.
  */
 import { describe, expect, it } from 'vitest';
-import { expandTagIds, facetTree, tagsForTune, type Tag, type TagFacetInfo } from './tags';
+import { filterBySelectedTags, expandTagIds, facetTree, tagsForTune, type Tag, type TagFacetInfo } from './tags';
 
 const FACETS: TagFacetInfo[] = [
   { id: 'mood', label: 'Mood', sort: 3 },
@@ -121,5 +121,90 @@ describe('tagsForTune', () => {
     expect(ids).toBeInstanceOf(Set);
     expect([...ids].sort((a, b) => a - b)).toEqual([1, 3]);
     expect(tagsForTune(assignments, 'tune-c').size).toBe(0);
+  });
+});
+
+describe('filterBySelectedTags', () => {
+  /**
+   * Cinco tunes con una historia distinta: `t-a` lleva `donegal` (hijo de
+   * `ireland`), `t-b` escocesa con dos moods/technique, `t-c` irlandesa técnica,
+   * `t-d` solo la raíz `ireland` y `t-e` sin ninguna etiqueta.
+   */
+  const ROWS = ['t-a', 't-b', 't-c', 't-d', 't-e'].map((id) => ({ tune: { id } }));
+
+  const ASSIGNMENTS = [
+    { tune_id: 't-a', tag_id: 3 }, // Donegal
+    { tune_id: 't-a', tag_id: 20 }, // Melancholy
+    { tune_id: 't-b', tag_id: 2 }, // Scotland
+    { tune_id: 't-b', tag_id: 11 }, // Cuts
+    { tune_id: 't-b', tag_id: 20 }, // Melancholy
+    { tune_id: 't-c', tag_id: 3 }, // Donegal
+    { tune_id: 't-c', tag_id: 10 }, // Rolls
+    { tune_id: 't-d', tag_id: 1 }, // Ireland
+  ];
+
+  const ids = (rows: { tune: { id: string } }[]) => rows.map((row) => row.tune.id);
+
+  it('without a selection every row passes', () => {
+    expect(ids(filterBySelectedTags(ROWS, ASSIGNMENTS, [], TAGS))).toEqual([
+      't-a',
+      't-b',
+      't-c',
+      't-d',
+      't-e',
+    ]);
+  });
+
+  it('expands the selection to descendants: Ireland brings the Donegal-only tunes', () => {
+    // `t-d` lleva la raíz; `t-a` y `t-c` solo el hijo. Las tres son irlandesas.
+    expect(ids(filterBySelectedTags(ROWS, ASSIGNMENTS, [1], TAGS))).toEqual([
+      't-a',
+      't-c',
+      't-d',
+    ]);
+  });
+
+  it('picking a child does not resurrect the parent', () => {
+    // Donegal dentro; `t-d`, marcada solo `ireland`, se queda fuera.
+    expect(ids(filterBySelectedTags(ROWS, ASSIGNMENTS, [3], TAGS))).toEqual(['t-a', 't-c']);
+  });
+
+  it('ANDs across facets: Ireland + Melancholy leaves only the tune with both', () => {
+    expect(ids(filterBySelectedTags(ROWS, ASSIGNMENTS, [1, 20], TAGS))).toEqual(['t-a']);
+  });
+
+  it('ORs inside a facet: two techniques accept either one', () => {
+    expect(ids(filterBySelectedTags(ROWS, ASSIGNMENTS, [10, 11], TAGS))).toEqual(['t-b', 't-c']);
+  });
+
+  it('ignores ids that are not in the vocabulary instead of emptying the list', () => {
+    expect(ids(filterBySelectedTags(ROWS, ASSIGNMENTS, [999], TAGS))).toEqual([
+      't-a',
+      't-b',
+      't-c',
+      't-d',
+      't-e',
+    ]);
+    // Un id desconocido junto a uno bueno no cambia el resultado del bueno.
+    expect(ids(filterBySelectedTags(ROWS, ASSIGNMENTS, [999, 1], TAGS))).toEqual([
+      't-a',
+      't-c',
+      't-d',
+    ]);
+  });
+
+  it('drops a tune whose tag is not in the vocabulary: no facet to point at', () => {
+    const assignments = [...ASSIGNMENTS, { tune_id: 't-e', tag_id: 999 }];
+    expect(ids(filterBySelectedTags(ROWS, assignments, [1], TAGS))).toEqual([
+      't-a',
+      't-c',
+      't-d',
+    ]);
+  });
+
+  it('does not mutate or reorder the rows it keeps', () => {
+    const filtered = filterBySelectedTags(ROWS, ASSIGNMENTS, [1], TAGS);
+    expect(filtered.map((row) => row.tune.id)).toEqual(['t-a', 't-c', 't-d']);
+    expect(ROWS).toHaveLength(5);
   });
 });

@@ -206,6 +206,91 @@
   border-radius: 0;
   padding: 4px 0;
 }
+
+/* ── filtro por facetas de la búsqueda (#48) ─────────────────────
+   Se abre desde la barra y se pinta sobre el mismo papel que el resto de la
+   vista: variables de `.repertoire-home`, ni la paleta oscura ni la clase
+   `.catalogue` —esa es el panel de alta de la home—. El disparador es una
+   variante discreta, al lado del selector de ritmo, para no robar peso a la
+   consulta. */
+.repertoire-home .tag-toggle {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.repertoire-home .tag-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.repertoire-home .tag-toggle[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.repertoire-home .tag-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.repertoire-home .tag-panel {
+  max-width: 1260px;
+  margin: 0 auto 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 26px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.45);
+  padding: 14px 16px;
+}
+.repertoire-home .tag-facet {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 132px;
+}
+.repertoire-home .tag-facet .facet-name {
+  margin: 0 0 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.repertoire-home .tag-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+/* Los hijos van indentados bajo su raíz: la jerarquía es la granularidad. */
+.repertoire-home .tag-check--child {
+  padding-left: 18px;
+  color: var(--muted);
+}
+.repertoire-home .tag-check input {
+  accent-color: var(--accent);
+}
+.repertoire-home .tag-clear {
+  margin-left: auto;
+  align-self: flex-end;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  padding: 0 0 1px;
+  cursor: pointer;
+}
+
 .repertoire-home .search-results {
   max-width: 1260px;
   margin: 0 auto;

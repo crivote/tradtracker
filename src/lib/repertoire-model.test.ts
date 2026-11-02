@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BANDS,
+  alphabeticalRows,
   bandFor,
   capForColumns,
   capRows,
@@ -956,6 +957,25 @@ describe('searchRepertoire (#9)', () => {
     expect(searchRepertoire(rows, '', null)).toEqual([]);
     expect(searchRepertoire(rows, '   ', null)).toEqual([]);
     expect(searchRepertoire([], '', null)).toEqual([]);
+  });
+
+  it('alphabeticalRows es la base de las etiquetas: todo, en el orden de la búsqueda', () => {
+    const ordered = alphabeticalRows(rows);
+    expect(ordered.map((row) => row.id)).toEqual([
+      'angel',
+      'cooley',
+      'morning',
+      'sligo',
+      'banshee',
+    ]);
+    // Ordena una copia: el array que llega no se toca.
+    expect(rows.map((row) => row.id)).toEqual([
+      'cooley',
+      'banshee',
+      'angel',
+      'sligo',
+      'morning',
+    ]);
   });
 
   it('busca por coincidencia parcial del título mostrado', () => {

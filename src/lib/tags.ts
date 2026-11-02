@@ -140,3 +140,63 @@ export function tagsForTune(
   }
   return ids;
 }
+
+/**
+ * Filtra las filas por las etiquetas elegidas (F17, corte 3).
+ *
+ * - **AND entre facetas**: elegir `tradition:ireland` y `mood:melancholy` exige
+ *   las dos.
+ * - **OR dentro de una faceta**: dos moods distintos = cualquiera de los dos.
+ * - La selección se **expande a descendientes** (`expandTagIds`): elegir
+ *   `ireland` incluye lo marcado `donegal`, sin depender de que la escritura
+ *   haya sembrado el ancestro. Quitar un hijo no resucita al padre.
+ * - Sin selección, pasan todas.
+ * - Un id elegido que no existe en `tags` se ignora: no puede abrir ni cerrar el
+ *   filtro por sí solo, y si la selección entera es desconocida el resultado es
+ *   «pasan todas», no «no pasa ninguna».
+ *
+ * Una etiqueta asignada que no esté en el vocabulario tampoco cuenta: no hay
+ * faceta a la que apuntarla.
+ */
+export function filterBySelectedTags<T extends { tune: { id: string } }>(
+  rows: readonly T[],
+  assignments: readonly { tune_id: string; tag_id: number }[],
+  selectedTagIds: readonly number[],
+  tags: Tag[]
+): T[] {
+  const expanded = expandTagIds(tags, selectedTagIds);
+  if (expanded.length === 0) return [...rows];
+
+  const facetById = new Map<number, string>(tags.map((tag) => [tag.id, tag.facet]));
+
+  /** Faceta → ids que valen (la selección ya expandida, agrupada por faceta). */
+  const allowedByFacet = new Map<string, Set<number>>();
+  for (const id of expanded) {
+    const facet = facetById.get(id);
+    if (!facet) continue;
+    const bucket = allowedByFacet.get(facet);
+    if (bucket) bucket.add(id);
+    else allowedByFacet.set(facet, new Set([id]));
+  }
+  // Toda la selección era de ids desconocidos: no filtra, pero tampoco vacía.
+  if (allowedByFacet.size === 0) return [...rows];
+
+  /** tune_id → facetas que la tune ya cumple con alguna de sus etiquetas. */
+  const satisfiedByTune = new Map<string, Set<string>>();
+  for (const row of assignments) {
+    const facet = facetById.get(row.tag_id);
+    if (!facet || !allowedByFacet.get(facet)?.has(row.tag_id)) continue;
+    const bucket = satisfiedByTune.get(row.tune_id);
+    if (bucket) bucket.add(facet);
+    else satisfiedByTune.set(row.tune_id, new Set([facet]));
+  }
+
+  return rows.filter((row) => {
+    const satisfied = satisfiedByTune.get(row.tune.id);
+    if (!satisfied) return false;
+    for (const facet of allowedByFacet.keys()) {
+      if (!satisfied.has(facet)) return false;
+    }
+    return true;
+  });
+}

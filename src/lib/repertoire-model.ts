@@ -948,6 +948,20 @@ function compareSearchOrder(left: RepertoireRow, right: RepertoireRow): number {
 }
 
 /**
+ * Todo el repertorio en el orden de los resultados de la búsqueda (#48).
+ *
+ * Las etiquetas filtran **después** de la consulta, y una etiqueta sola ya es
+ * una consulta; pero `searchRepertoire` devuelve `[]` sin texto ni ritmo (esa es
+ * su decisión: la vista en reposo no enseña el repertorio entero). Esta es la
+ * base sobre la que filtra `filterBySelectedTags` en ese caso, con el mismo orden
+ * alfabético —título, ritmo, id— para que la lista no cambie de criterio según
+ * cómo se llegue a ella.
+ */
+export function alphabeticalRows(rows: readonly RepertoireRow[]): RepertoireRow[] {
+  return [...rows].sort(compareSearchOrder);
+}
+
+/**
  * Búsqueda del repertorio (#9).
  *
  * Cruza **todas** las filas que recibe —todos los peldaños y también las

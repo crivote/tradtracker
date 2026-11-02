@@ -33,34 +33,12 @@ import { facetTree, tagsForTune, type Tag, type TagFacetInfo } from '../lib/tags
 import {
   addTuneTags,
   fetchTuneTags,
-  fetchVocabulary,
+  loadVocabulary,
   removeTuneTag,
   type TagVocabulary,
 } from '../lib/tags-db';
 import PracticeLog from '../components/PracticeLog';
 import BackgroundPicker from '../components/BackgroundPicker';
-
-/**
- * El vocabulario de etiquetas (F17, #48) es cerrado e inmutable: se pide **una
- * vez por sesión de navegador** y se comparte entre tunes —pedirlo por visita al
- * detalle sería una llamada por tune—. La promesa se guarda en vuelo, así que dos
- * montajes a la vez no lanzan dos peticiones.
- *
- * Un fallo **no** se cachea: se limpia la promesa y la siguiente visita vuelve a
- * intentarlo, en vez de dejar el bloque apagado para siempre por un corte de red
- * de hace media hora.
- */
-let vocabularyPromise: Promise<TagVocabulary | null> | null = null;
-
-function loadVocabulary(): Promise<TagVocabulary | null> {
-  if (vocabularyPromise) return vocabularyPromise;
-  const pending = fetchVocabulary().catch(() => {
-    vocabularyPromise = null;
-    return null;
-  });
-  vocabularyPromise = pending;
-  return pending;
-}
 
 /**
  * Estilo de los campos del formulario de overrides (F2, #8): paleta oscura del

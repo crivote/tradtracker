@@ -19,15 +19,26 @@ vi.mock('../lib/repertoire', () => ({
 
 /**
  * #48: el vocabulario y las asignaciones también cruzan la red. El componente
- * importa las cuatro funciones, así que el doble tiene que exportarlas todas o
- * el módulo revienta al montar.
+ * importa las cuatro funciones **y** `loadVocabulary`, así que el doble tiene que
+ * exportarlas todas o el módulo revienta al montar.
+ *
+ * `loadVocabulary` se sustituye también: la caché real cierra sobre el
+ * `fetchVocabulary` de verdad —`vi.mock` cambia las exportaciones, no las
+ * referencias internas del módulo—, así que el doble reproduce su contrato (una
+ * promesa en vuelo, un fallo devuelve `null`) sobre el `fetchVocabulary` simulado.
  */
-vi.mock('../lib/tags-db', () => ({
-  fetchVocabulary: vi.fn(),
-  fetchTuneTags: vi.fn(),
-  addTuneTags: vi.fn(),
-  removeTuneTag: vi.fn(),
-}));
+vi.mock('../lib/tags-db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/tags-db')>();
+  const fetchVocabulary = vi.fn();
+  return {
+    ...actual,
+    fetchVocabulary,
+    loadVocabulary: () => fetchVocabulary().catch(() => null),
+    fetchTuneTags: vi.fn(),
+    addTuneTags: vi.fn(),
+    removeTuneTag: vi.fn(),
+  };
+});
 
 import {
   fetchRepertoireRow,
