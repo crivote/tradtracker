@@ -17,18 +17,62 @@ vi.mock('../lib/repertoire', () => ({
   saveOverrides: vi.fn(),
 }));
 
+/**
+ * #48: el vocabulario y las asignaciones también cruzan la red. El componente
+ * importa las cuatro funciones, así que el doble tiene que exportarlas todas o
+ * el módulo revienta al montar.
+ */
+vi.mock('../lib/tags-db', () => ({
+  fetchVocabulary: vi.fn(),
+  fetchTuneTags: vi.fn(),
+  addTuneTags: vi.fn(),
+  removeTuneTag: vi.fn(),
+}));
+
 import {
   fetchRepertoireRow,
   saveOverrides,
   saveShelved,
   saveStatus,
 } from '../lib/repertoire';
+import {
+  addTuneTags,
+  fetchTuneTags,
+  fetchVocabulary,
+  removeTuneTag,
+} from '../lib/tags-db';
 import TuneDetail from './TuneDetail';
 
 const mockedFetch = vi.mocked(fetchRepertoireRow);
 const mockedSaveStatus = vi.mocked(saveStatus);
 const mockedSaveShelved = vi.mocked(saveShelved);
 const mockedSaveOverrides = vi.mocked(saveOverrides);
+const mockedVocabulary = vi.mocked(fetchVocabulary);
+const mockedFetchTuneTags = vi.mocked(fetchTuneTags);
+const mockedAddTuneTags = vi.mocked(addTuneTags);
+const mockedRemoveTuneTag = vi.mocked(removeTuneTag);
+
+/**
+ * Vocabulario mínimo con lo que la especificación pide ver: las tres facetas y
+ * `donegal`/`sliabh_luchra` colgando de `ireland`. Los ids son los que la base
+ * acabó teniendo para esos valores no importan: el componente nunca los inventa.
+ */
+const VOCABULARY = {
+  facets: [
+    { id: 'tradition', label: 'Tradition', sort: 1 },
+    { id: 'technique', label: 'Technique', sort: 2 },
+    { id: 'mood', label: 'Mood', sort: 3 },
+  ],
+  tags: [
+    { id: 1, facet: 'tradition', value: 'ireland', label: 'Ireland', parent: null, sort: 1 },
+    { id: 2, facet: 'tradition', value: 'scotland', label: 'Scotland', parent: null, sort: 2 },
+    { id: 3, facet: 'tradition', value: 'donegal', label: 'Donegal', parent: 1, sort: 11 },
+    { id: 4, facet: 'tradition', value: 'sliabh_luchra', label: 'Sliabh Luachra', parent: 1, sort: 12 },
+    { id: 10, facet: 'technique', value: 'rolls', label: 'Rolls', parent: null, sort: 6 },
+    { id: 11, facet: 'technique', value: 'cuts', label: 'Cuts', parent: null, sort: 8 },
+    { id: 20, facet: 'mood', value: 'melancholy', label: 'Melancholy', parent: null, sort: 1 },
+  ],
+};
 
 function makeRow(overrides: Record<string, any> = {}) {
   return {
@@ -73,6 +117,17 @@ beforeEach(() => {
   mockedSaveStatus.mockReset();
   mockedSaveShelved.mockReset();
   mockedSaveOverrides.mockReset();
+
+  mockedVocabulary.mockReset();
+  mockedVocabulary.mockResolvedValue(VOCABULARY as any);
+  // Sin asignaciones por defecto: el bloque de etiquetas pinta las casillas
+  // vacías y el resto de pruebas sigue viendo un solo `role="alert"` posible.
+  mockedFetchTuneTags.mockReset();
+  mockedFetchTuneTags.mockResolvedValue([]);
+  mockedAddTuneTags.mockReset();
+  mockedAddTuneTags.mockResolvedValue(1);
+  mockedRemoveTuneTag.mockReset();
+  mockedRemoveTuneTag.mockResolvedValue(undefined);
 });
 
 // Sin `globals: true` en vitest, la librería no registra su limpieza sola: sin
@@ -391,5 +446,94 @@ describe('TuneDetail', () => {
     expect((screen.getByLabelText('Rhythm') as HTMLInputElement).value).toBe('slide');
     // Y la fila no se toca: la marca de override no aparece de la nada.
     expect(screen.queryAllByTitle('Custom value')).toHaveLength(0);
+  });
+
+  /* ── Etiquetas por facetas (F17, #48) ──────────────────────────────── */
+
+  /**
+   * El bloque se pinta con las tres facetas y marca lo que ya está asignado. Lo
+   * que se comprueba es el contrato con el adaptador; que la RPC siembre
+   * ancestros de verdad lo cruza la base, no jsdom.
+   */
+  it('renders the three facets and ticks what the tune already has', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    mockedFetchTuneTags.mockResolvedValue([{ tune_id: 'tune-a', tag_id: 3 }] as any);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('Tags')).toBeTruthy());
+
+    expect(screen.getByText('Tradition')).toBeTruthy();
+    expect(screen.getByText('Technique')).toBeTruthy();
+    expect(screen.getByText('Mood')).toBeTruthy();
+
+    // El hijo cuelga del padre, pero se pinta como una casilla más.
+    expect((screen.getByLabelText('Donegal') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Ireland') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Rolls') as HTMLInputElement).checked).toBe(false);
+
+    expect(mockedFetchTuneTags).toHaveBeenCalledWith(['tune-a']);
+  });
+
+  it('adds a tag through the RPC and repaints what the database sowed', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    let rows: { tune_id: string; tag_id: number }[] = [];
+    mockedFetchTuneTags.mockImplementation(async () => rows);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('Tags')).toBeTruthy());
+
+    // La base siembra `ireland` al marcar `donegal`: la relectura devuelve las dos.
+    rows = [
+      { tune_id: 'tune-a', tag_id: 1 },
+      { tune_id: 'tune-a', tag_id: 3 },
+    ];
+    fireEvent.click(screen.getByLabelText('Donegal'));
+
+    await waitFor(() => expect(mockedAddTuneTags).toHaveBeenCalledWith(['tune-a'], [3]));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Ireland') as HTMLInputElement).checked).toBe(true)
+    );
+    expect((screen.getByLabelText('Donegal') as HTMLInputElement).checked).toBe(true);
+    // Marcar no desmarca nada ni toca el adaptador del borrado.
+    expect(mockedRemoveTuneTag).not.toHaveBeenCalled();
+  });
+
+  it('removes only the tag that was unticked', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    let rows: { tune_id: string; tag_id: number }[] = [
+      { tune_id: 'tune-a', tag_id: 1 },
+      { tune_id: 'tune-a', tag_id: 3 },
+    ];
+    mockedFetchTuneTags.mockImplementation(async () => rows);
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() =>
+      expect((screen.getByLabelText('Donegal') as HTMLInputElement).checked).toBe(true)
+    );
+
+    // Quitar el hijo deja el padre: la asimetría es del diseño, no un olvido.
+    rows = [{ tune_id: 'tune-a', tag_id: 1 }];
+    fireEvent.click(screen.getByLabelText('Donegal'));
+
+    await waitFor(() => expect(mockedRemoveTuneTag).toHaveBeenCalledWith('tune-a', 3));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Donegal') as HTMLInputElement).checked).toBe(false)
+    );
+    expect((screen.getByLabelText('Ireland') as HTMLInputElement).checked).toBe(true);
+    expect(mockedAddTuneTags).not.toHaveBeenCalled();
+  });
+
+  it('shows a failed tag write in its own alert without touching the level', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+    mockedAddTuneTags.mockRejectedValue(new Error('Could not add the tags: boom'));
+
+    renderAt('/repertoire/row-a');
+    await waitFor(() => expect(screen.getByText('Tags')).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText('Rolls'));
+
+    await waitFor(() => expect(screen.getByText('Could not add the tags: boom')).toBeTruthy());
+    expect(screen.getByText('Could not add the tags: boom').getAttribute('role')).toBe('alert');
+    expect(mockedSaveStatus).not.toHaveBeenCalled();
   });
 });
