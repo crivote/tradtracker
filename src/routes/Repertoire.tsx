@@ -54,6 +54,7 @@ import { logPractice } from '../lib/practice';
 import { facetTree } from '../lib/tags';
 import { addTuneTags, loadVocabulary, type TagVocabulary } from '../lib/tags-db';
 import TuneCard from '../components/TuneCard';
+import PlayTrigger from '../components/PlayTrigger';
 import TagPicker from '../components/TagPicker';
 import ImportFromSession from '../components/ImportFromSession';
 import './repertoire.css';
@@ -346,6 +347,9 @@ function RepertoireRowView(props: {
       </td>
       <td>
         <div class="row-title">
+          {/* El disparador va aquí, **fuera** del enlace: un botón dentro de un
+              `<a>` es marcado inválido y el clic acabaría navegando (#29). */}
+          <PlayTrigger row={props.row} />
           <A href={`/repertoire/${props.row.id}`}>{title()}</A>
         </div>
         {/* Los invariantes de la pieza. Lo que falte se omite: ni «trad.» ni un

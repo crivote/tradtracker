@@ -2,6 +2,7 @@ import { Show, type ParentComponent } from 'solid-js';
 import { A, Navigate, useLocation } from '@solidjs/router';
 import { useSession } from '../lib/session';
 import { supabaseConfigError } from '../lib/supabase';
+import { PlayerDock } from './PlayerDock';
 
 /**
  * Armazón de la app y guard de rutas (issue #6): sin sesión no se ve dato alguno,
@@ -21,7 +22,17 @@ export const Layout: ParentComponent = (props) => {
   };
 
   return (
-    <div class="min-h-screen bg-gray-900 text-gray-100">
+    <div
+      class="app-shell min-h-screen bg-gray-900 text-gray-100"
+      classList={{
+        // Las tres pantallas de papel miden su propio marco y ya reservan su
+        // fondo: la reserva del dock se ajusta a eso (ver player-dock.css).
+        'is-paper':
+          location.pathname === '/' ||
+          location.pathname === '/practice' ||
+          location.pathname === '/search',
+      }}
+    >
       <Show when={redirectTo()}>{(target) => <Navigate href={target()} />}</Show>
 
       <header class="bg-gray-800 border-b border-gray-700 px-6 py-4">
@@ -88,6 +99,13 @@ export const Layout: ParentComponent = (props) => {
       >
         {props.children}
       </main>
+
+      {/*
+        Un solo reproductor para toda la app (#49). Vive aquí, en el armazón, y
+        no en las vistas: es lo que hace que la música sobreviva a la navegación
+        y que ninguna pantalla instancie su propio transporte.
+      */}
+      <PlayerDock />
     </div>
   );
 };

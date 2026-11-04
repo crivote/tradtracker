@@ -13,6 +13,7 @@ import {
   type RepertoireRow,
 } from '../lib/repertoire-model';
 import { focalPosition } from '../lib/image-sources';
+import PlayTrigger from './PlayTrigger';
 
 /**
  * La carta del repertorio (#29): la foto ocupa toda la carta y todos los datos
@@ -145,6 +146,8 @@ export default function TuneCard(props: TuneCardProps) {
           <b>{tag().value}</b> {tag().unit}
         </Show>
       </span>
+
+      <PlayTrigger row={props.row} />
 
       <button
         type="button"

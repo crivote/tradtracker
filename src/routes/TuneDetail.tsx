@@ -38,6 +38,7 @@ import {
   type TagVocabulary,
 } from '../lib/tags-db';
 import PracticeLog from '../components/PracticeLog';
+import PlayTrigger from '../components/PlayTrigger';
 import TagPicker from '../components/TagPicker';
 import BackgroundPicker from '../components/BackgroundPicker';
 
@@ -441,6 +442,9 @@ export default function TuneDetail() {
                     las cuatro definiciones son canónicas y no se reescriben.
                   */}
                   <div class="flex shrink-0 flex-wrap items-center gap-3">
+                    {/* El disparador del dock (#49): mismo botón que en la
+                        carta, la tabla y la lista de ensayo. */}
+                    <PlayTrigger row={item()} class="tune-play" />
                     <select
                       aria-label="Level"
                       disabled={savingLevel()}

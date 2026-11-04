@@ -1,0 +1,402 @@
+/**
+ * El reproductor flotante (#49) y su disparador.
+ *
+ * Identidad tomada del boceto 017: es **la única pieza oscura flotante** de la
+ * app, y por eso el verde profundo es una superficie y no un acento. El ocre se
+ * gasta solo en el ▶ (y en el instrumento activo de la bandeja); el ✕ y el
+ * chevron van en gris verdoso para no competir con él.
+ *
+ * Las variables viven en `.player-dock`, no en `:root`: declararlas globales
+ * teñirían la home, la tabla y la ficha. Contraste medido sobre lo renderizado:
+ * título 15,6:1 · meta 8,2:1 · ocre legible 8,8:1 · tinta sobre ocre 5,0:1.
+ */
+
+.player-dock {
+  --dock-bg: #0e1f13;
+  --dock-ink: #f2f5ec;
+  --dock-meta: #a9b8a3;
+  --dock-ochre: #b5811f;
+  --dock-ochre-light: #dfb35c;
+  --dock-line: rgba(242, 245, 236, 0.12);
+  --dock-hover: #f2f5ec;
+  --dock-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 60;
+  width: min(700px, calc(100vw - 24px));
+  background: var(--dock-bg);
+  color: var(--dock-ink);
+  border-radius: 10px;
+  box-shadow:
+    0 18px 40px -18px rgba(6, 16, 10, 0.75),
+    0 2px 0 0 rgba(242, 245, 236, 0.06) inset;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* La barra con el ✕ nunca puede quedar fuera de la ventana: si la partitura o
+     el vídeo crecen, el dock se acota y scrollea por dentro. */
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+}
+
+/* La barra: 56 px exactos, el título nunca se recorta, el ✕ nunca se oculta. */
+.player-dock__bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 10px 0 10px;
+}
+
+.player-dock__play {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--dock-ochre);
+  color: var(--dock-bg);
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.player-dock__play:hover:not(:disabled) {
+  background: var(--dock-ochre-light);
+}
+
+.player-dock__play:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.player-dock__play:focus-visible,
+.player-dock__chevron:focus-visible,
+.player-dock__close:focus-visible,
+.player-dock__step:focus-visible,
+.player-dock__toggle:focus-visible,
+.player-dock__video-close:focus-visible {
+  outline: 2px solid var(--dock-ochre-light);
+  outline-offset: 2px;
+}
+
+.player-dock__id {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.player-dock__title {
+  margin: 0;
+  font-family: var(--dock-serif);
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 1.2;
+  color: var(--dock-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-dock__meta {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--dock-meta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-dock__status {
+  color: var(--dock-ochre-light);
+}
+
+.player-dock__chevron,
+.player-dock__close {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dock-meta);
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.player-dock__chevron:hover,
+.player-dock__close:hover {
+  color: var(--dock-hover);
+  background: rgba(242, 245, 236, 0.08);
+}
+
+/* ── bandeja: +87 px ───────────────────────────────────────────── */
+.player-dock__tray {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  min-height: 87px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--dock-line);
+}
+
+.player-dock__tempo {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--dock-line);
+  border-radius: 999px;
+  padding: 2px;
+}
+
+.player-dock__step {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dock-ink);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.player-dock__step:hover {
+  background: rgba(242, 245, 236, 0.1);
+}
+
+.player-dock__bpm {
+  min-width: 34px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--dock-ink);
+}
+
+.player-dock__toggle {
+  border: 1px solid var(--dock-line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dock-meta);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.player-dock__toggle:hover:not(:disabled) {
+  color: var(--dock-hover);
+  background: rgba(242, 245, 236, 0.08);
+}
+
+.player-dock__toggle[aria-pressed='true'],
+.player-dock__toggle[aria-expanded='true'] {
+  background: var(--dock-ochre);
+  border-color: var(--dock-ochre);
+  color: var(--dock-bg);
+}
+
+.player-dock__toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ── vídeo: sustituye a la bandeja, 16:9 ───────────────────────── */
+.player-dock__video {
+  position: relative;
+  border-top: 1px solid var(--dock-line);
+  background: #000;
+}
+
+.player-dock__video {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+}
+
+.player-dock__video iframe {
+  display: block;
+  /* 16:9 de verdad y, en ventanas bajas, acotado por alto sin deformar. */
+  width: min(100%, calc((100dvh - 150px) * 16 / 9));
+  aspect-ratio: 16 / 9;
+  border: 0;
+}
+
+.player-dock__video-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(242, 245, 236, 0.3);
+  border-radius: 50%;
+  background: rgba(14, 31, 19, 0.72);
+  color: var(--dock-ink);
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.player-dock__video-close:hover {
+  background: rgba(14, 31, 19, 0.92);
+}
+
+/* ── partitura: se dibuja al desplegar ─────────────────────────── */
+.player-dock__score {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 40dvh;
+  overflow: auto;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--dock-line);
+  background: #fffdf8;
+  color: #241f18;
+}
+
+/* Este nodo es de `abcjs`: le escribe `display` y `padding-bottom`. Por eso no
+   lleva ni scroll ni altura propia. */
+.player-dock__score-inner {
+  position: relative;
+}
+
+/* El blanco de `renderAbc` para el audio: fuera de la vista, nunca `display:none`. */
+.player-sink {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ── el disparador, igual en las cuatro superficies ───────────── */
+/*
+ * El relleno que el armazón reserva para que el dock no tape el final del
+ * contenido. La cifra la pone el store (`dockReserve`: 0 / 90 / 190 px) en una
+ * variable del documento; las pantallas de papel ya traen sus propios 90 px,
+ * así que esto es la red debajo, no la única.
+ */
+.app-shell {
+  padding-bottom: var(--dock-space, 0px);
+}
+
+/* Las pantallas de papel (home, ensayo, búsqueda) ya reservan 90 px: encima de
+   eso solo hace falta el extra de la bandeja. */
+.app-shell.is-paper {
+  padding-bottom: var(--dock-space-paper, 0px);
+}
+
+.play-trigger {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(14, 31, 19, 0.78);
+  color: #f2f5ec;
+  font-size: 10px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.play-trigger:hover {
+  background: #0e1f13;
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.play-trigger:focus-visible {
+  outline: 2px solid #dfb35c;
+  outline-offset: 2px;
+}
+
+.play-trigger.is-active {
+  background: #b5811f;
+  border-color: #b5811f;
+  color: #0e1f13;
+}
+
+/* En la carta va en la esquina de acciones, a la izquierda del kebab. */
+.repertoire-home .card .play-trigger {
+  position: absolute;
+  top: 10px;
+  right: 46px;
+  z-index: 3;
+  width: 28px;
+  height: 28px;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+/* En la tabla y en el ensayo, el disparador va en línea con el título. */
+.row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-title .play-trigger {
+  width: 26px;
+  height: 26px;
+}
+
+.practice-row__actions .play-trigger {
+  width: 26px;
+  height: 26px;
+}
+
+/* En la ficha (paleta oscura) mantiene su propio color: no hereda el ámbar. */
+.tune-play {
+  width: 34px;
+  height: 34px;
+  font-size: 11px;
+}
+
+/* ── móvil: el transporte se pliega; título y ✕ se quedan ─────── */
+@media (max-width: 640px) {
+  .player-dock {
+    bottom: 8px;
+    width: calc(100vw - 16px);
+  }
+
+  .player-dock__meta {
+    display: none;
+  }
+
+  .player-dock__tray {
+    min-height: 0;
+    padding: 10px 12px 12px;
+  }
+}

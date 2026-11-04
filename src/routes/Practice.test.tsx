@@ -39,11 +39,6 @@ vi.mock('../lib/practice', async (importOriginal) => {
   };
 });
 
-vi.mock('../lib/tradtube', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../lib/tradtube')>();
-  return { ...actual, fetchSegments: vi.fn() };
-});
-
 vi.mock('../lib/catalogue-db', () => ({
   preloadCatalogue: vi.fn(async () => undefined),
   searchCatalogue: vi.fn(async () => []),
@@ -75,13 +70,11 @@ import {
   writePrefs,
   writeTodayList,
 } from '../lib/practice-storage';
-import { fetchSegments } from '../lib/tradtube';
 import Practice from './Practice';
 
 const mockedFetch = vi.mocked(fetchRepertoire);
 const mockedFavorite = vi.mocked(saveFavorite);
 const mockedFind = vi.mocked(findTodaySession);
-const mockedSegments = vi.mocked(fetchSegments);
 const mockedCreate = vi.mocked(createSessionWithMarks);
 const mockedAdd = vi.mocked(addSessionMarks);
 const mockedUnmark = vi.mocked(unmarkSessionTune);
@@ -176,7 +169,6 @@ beforeEach(() => {
   mockedAdd.mockResolvedValue(1);
   mockedUnmark.mockResolvedValue(undefined);
   mockedFavorite.mockResolvedValue(undefined);
-  mockedSegments.mockResolvedValue(new Map());
 });
 
 afterEach(() => cleanup());
@@ -220,53 +212,20 @@ describe('lista del día (#36)', () => {
     expect(stored[0].ids).toHaveLength(9);
   });
 
-  it('pide los vídeos de la lista en UNA sola llamada, con el origin_ref de cada fila', async () => {
+  it('cada fila trae el disparador del dock y ninguna monta transporte propio', async () => {
     renderPractice();
     await waitForRows(8);
 
-    await waitFor(() => expect(mockedSegments).toHaveBeenCalledTimes(1));
-    const refs = mockedSegments.mock.calls[0][0];
-    expect(refs).toHaveLength(8);
-    expect(new Set(refs).size).toBe(8);
-    expect(refs.every((ref) => typeof ref === 'string')).toBe(true);
-  });
+    // El disparador es el mismo en las cuatro superficies (#49) y lleva el
+    // título de su tune en el nombre accesible.
+    const triggers = document.querySelectorAll('.practice-row .play-trigger');
+    expect(triggers).toHaveLength(8);
+    expect(triggers[0].getAttribute('aria-label')).toMatch(/^Play /);
 
-  it('si TradTube no responde, avisa una vez y la lista sigue sirviendo', async () => {
-    mockedSegments.mockRejectedValueOnce(new Error('tradtube caído'));
-    renderPractice();
-    await waitForRows(8);
-
-    await waitFor(() => expect(document.querySelector('.practice-media-hint')).not.toBeNull());
-    expect(document.querySelectorAll('.practice-row')).toHaveLength(8);
-  });
-
-  it('la fila cablea vídeo y reproductor, y el vídeo solo aparece donde hay segmento', async () => {
-    mockedSegments.mockImplementation(async (refs) =>
-      new Map(
-        refs.map((ref) => [
-          ref,
-          [
-            {
-              originRef: ref,
-              mediaId: `m-${ref}`,
-              title: null,
-              youtubeId: 'abcdefghijk',
-              startSec: 0,
-              endSec: 60,
-              position: 0,
-              unavailable: false,
-            },
-          ],
-        ]),
-      ),
-    );
-
-    renderPractice();
-    await waitForRows(8);
-
-    expect(document.querySelectorAll('.practice-row__media')).toHaveLength(8);
-    expect(document.querySelectorAll('.practice-player')).toHaveLength(8);
-    await waitFor(() => expect(document.querySelectorAll('.practice-video')).toHaveLength(8));
+    // La barra por fila y el iframe por fila se retiraron: un dock, no ocho.
+    expect(document.querySelectorAll('.practice-player')).toHaveLength(0);
+    expect(document.querySelectorAll('.practice-video')).toHaveLength(0);
+    expect(document.querySelectorAll('.practice-row__media')).toHaveLength(0);
   });
 
   it('con ids congelados manda su orden, no el del generador', async () => {

@@ -43,9 +43,7 @@ import {
   findTodaySession,
   unmarkSessionTune,
 } from '../lib/practice';
-import { fetchSegments, type TuneSegment } from '../lib/tradtube';
-import { PracticeVideo } from '../components/PracticeVideo';
-import { PracticePlayer } from '../components/PracticePlayer';
+import PlayTrigger from '../components/PlayTrigger';
 import './repertoire.css';
 import './practice.css';
 
@@ -126,14 +124,6 @@ export default function Practice() {
   const [notice, setNotice] = createSignal<string | null>(null);
   /** Una escritura en vuelo: evita que un doble toque abra dos sesiones. */
   const [busy, setBusy] = createSignal(false);
-  /**
-   * Vídeos de la lista (#37): **una sola petición** para todas las tunes, con
-   * caché en memoria por sesión. Un fallo de TradTube no es un fallo de la
-   * lista: se avisa en una línea y se ensaya igual.
-   */
-  const [segments, setSegments] = createSignal<ReadonlyMap<string, TuneSegment[]>>(new Map());
-  const [videosDown, setVideosDown] = createSignal(false);
-
   /** Las filas de la lista, en el orden congelado (no el del generador). */
   const listRows = createMemo(() => rowsByIds(rows(), listIds()));
 
@@ -175,22 +165,6 @@ export default function Practice() {
     ).map((row) => row.id);
     return { ids, overflow: built.overflow };
   };
-
-  const loadSegments = async (ids: readonly string[], source: readonly RepertoireRow[]) => {
-    const refs = rowsByIds(source, ids)
-      .map((row) => row.tune?.origin_ref)
-      .filter((ref): ref is string => typeof ref === 'string' && ref.length > 0);
-    if (refs.length === 0) return;
-    try {
-      setSegments(await fetchSegments(refs));
-      setVideosDown(false);
-    } catch {
-      setVideosDown(true);
-    }
-  };
-
-  const segmentsFor = (row: RepertoireRow): readonly TuneSegment[] =>
-    segments().get(row.tune?.origin_ref ?? '') ?? [];
 
   /**
    * Congela la lista del día **y la deja en el histórico**. Sin el histórico la
@@ -235,7 +209,6 @@ export default function Practice() {
 
       setListIds(ids);
       setOverflow(overflowNow);
-      void loadSegments(ids, loaded);
 
       // 3. La sesión no se crea: solo se busca la de hoy, si la hay.
       const today = await findTodaySession(startOfLocalDay(nowMs));
@@ -268,7 +241,6 @@ export default function Practice() {
     setListIds(built.ids);
     setOverflow(built.overflow);
     freezeToday(built.ids, built.overflow);
-    void loadSegments(built.ids, rows());
   };
 
   // ── marcas ────────────────────────────────────────────────────────
@@ -445,10 +417,6 @@ export default function Practice() {
           </p>
         </Show>
 
-        <Show when={videosDown()}>
-          <p class="practice-media-hint">Videos are unavailable right now — you can still practise.</p>
-        </Show>
-
         <ol class="practice-list">
           <For each={listRows()}>
             {(row, index) => {
@@ -485,6 +453,8 @@ export default function Practice() {
                   </span>
 
                   <div class="practice-row__actions">
+                    {/* Un solo disparador (#49): la barra por fila se retiró. */}
+                    <PlayTrigger row={row} />
                     <button
                       type="button"
                       class="practice-row__fav"
@@ -516,11 +486,6 @@ export default function Practice() {
                     </button>
                   </div>
 
-                  {/* Piezas opt-in de la fila: nada suena ni carga solo. */}
-                  <div class="practice-row__media">
-                    <PracticeVideo segments={segmentsFor(row)} />
-                    <PracticePlayer row={row} />
-                  </div>
                 </li>
               );
             }}
