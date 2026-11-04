@@ -28,7 +28,7 @@ export interface EngineRequest {
   abc: string;
   sink: HTMLElement;
   qpm: number;
-  /** Programa General MIDI (`fiddle` 110, `whistle` 78, `accordion` 21, `banjo` 105). */
+  /** Programa General MIDI (`violin` 40, `recorder` 74, `accordion` 21, `banjo` 105). */
   program: number;
   onEnded: () => void;
 }

@@ -82,7 +82,7 @@ export default function About() {
         </p>
 
         <p class="mt-2 text-xs text-gray-500">
-          The practice player synthesises tunes from the{' '}
+          The practice player synthesises tunes from two General MIDI soundfonts, both built for the{' '}
           <a
             class="text-amber-300 underline underline-offset-2 hover:text-amber-200"
             href="https://github.com/gleitz/midi-js-soundfonts"
@@ -91,17 +91,27 @@ export default function About() {
           >
             midi-js-soundfonts
           </a>{' '}
-          build of the <b>FluidR3_GM</b> soundfont (fiddle, whistle, accordion and banjo samples).
-          The samples are served from this app, not from a third-party CDN, and are used under the{' '}
+          project: <b>MusyngKite</b> for the violin and recorder samples (the fiddle and whistle
+          instruments) and <b>FluidR3_GM</b> for accordion and banjo. The samples are served from
+          this app, not from a third-party CDN, and keep their original licences:{' '}
+          <a
+            class="text-amber-300 underline underline-offset-2 hover:text-amber-200"
+            href="https://creativecommons.org/licenses/by-sa/3.0/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            CC BY-SA 3.0
+          </a>{' '}
+          for MusyngKite and{' '}
           <a
             class="text-amber-300 underline underline-offset-2 hover:text-amber-200"
             href="https://creativecommons.org/licenses/by/3.0/"
             target="_blank"
             rel="noreferrer"
           >
-            Creative Commons Attribution 3.0
+            CC BY 3.0
           </a>{' '}
-          licence: FluidR3_GM, CC BY 3.0.
+          for FluidR3_GM.
         </p>
       </section>
     </div>

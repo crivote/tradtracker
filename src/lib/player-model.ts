@@ -65,14 +65,21 @@ export type DockSource = 'ABC' | 'TradTube';
 
 /**
  * Programa General MIDI de cada instrumento, **tal y como los nombra `abcjs`**:
- * su tabla `instrumentIndexToName` del paquete instalado llama `fiddle` al 110,
- * `whistle` al 78, `accordion` al 21 y `banjo` al 105. De ahí sale el nombre que
+ * su tabla `instrumentIndexToName` del paquete instalado llama `violin` al 40,
+ * `recorder` al 74, `accordion` al 21 y `banjo` al 105. De ahí sale el nombre que
  * `abcjs` pega en la URL (`<instrumento>-mp3/<nota>.mp3`), así que este número
  * decide **qué carpeta de samples suena**.
+ *
+ * **`fiddle` (110) y `whistle` (78) no se usan a propósito.** Los dos parches de
+ * FluidR3 son de orquesta —swell de cuerda y aire sin ataque— y con figuras de
+ * 280 ms la nota se apaga antes de que la muestra hable. Se sirven `violin` y
+ * `recorder` de MusyngKite, medidos: a 50 ms el violín está al 72 % de su
+ * energía y el recorder al 92-100 % en todo el registro. El detalle y las
+ * licencias, en `public/soundfonts/LICENSE.md`.
  */
 export const INSTRUMENT_PROGRAM: Readonly<Record<PracticeInstrument, number>> = {
-  fiddle: 110,
-  whistle: 78,
+  fiddle: 40,
+  whistle: 74,
   accordion: 21,
   banjo: 105,
 };

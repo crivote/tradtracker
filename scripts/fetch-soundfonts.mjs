@@ -9,8 +9,18 @@
  *
  * De dónde salen y por qué así:
  *   · Origen: `gleitz/midi-js-soundfonts`, rama `gh-pages`, ruta
- *     `FluidR3_GM/<instrumento>-mp3/`. Son 88 ficheros por instrumento (~2,1 MB):
+ *     `<soundfont>/<instrumento>-mp3/`. Son 88 ficheros por instrumento (~2,1 MB):
  *     de `A0` a `C8` con **bemoles** (`Ab1`, `Bb3`, `Gb2`), nunca sostenidos.
+ *   · **El soundfont es por instrumento, no global**, y no es un capricho. Los
+ *     parches `fiddle` y `whistle` de FluidR3 son de orquesta: el violín tarda
+ *     más de un segundo en llegar al pico (un swell de cuerda) y la flauta es
+ *     aire sin ataque. A 108 ppm una corchea dura 280 ms, así que la nota se
+ *     apaga antes de que la muestra suene. Medido: a 50 ms el `fiddle` de
+ *     FluidR3 está al 28 % de su energía y el `violin` de MusyngKite al 72 %; el
+ *     `recorder` de MusyngKite pica en 20-60 ms en todas las octavas y el
+ *     `whistle` de FluidR3 tarda 90-590 ms según la nota. MusyngKite es
+ *     **CC BY-SA 3.0** (no CC BY 3.0), así que cada muestra lleva su licencia en
+ *     `LICENSE.md` y en `/about`.
  *   · La lista se **lee del repositorio**, no se compone: componer los nombres
  *     es justo cómo se acaba con un `A#1.mp3` que no existe.
  *   · Los nombres coinciden con la tabla `pitchToNoteName` de `abcjs` (que
@@ -36,10 +46,21 @@ import { Readable } from 'node:stream';
 
 const REPO = 'gleitz/midi-js-soundfonts';
 const BRANCH = 'gh-pages';
-const SOUNDFONT = 'FluidR3_GM';
 
-/** Los cuatro instrumentos de las preferencias de ensayo (#36). */
-const INSTRUMENTS = ['fiddle', 'whistle', 'accordion', 'banjo'];
+/**
+ * Soundfont por carpeta de samples. La carpeta es la que pide `abcjs` a partir
+ * del programa General MIDI (`instrumentIndexToName`): 40 → `violin`, 74 →
+ * `recorder`, 21 → `accordion`, 105 → `banjo`.
+ */
+const SOURCES = {
+  violin: 'MusyngKite',
+  recorder: 'MusyngKite',
+  accordion: 'FluidR3_GM',
+  banjo: 'FluidR3_GM',
+};
+
+/** Las carpetas que el reproductor sirve (una por instrumento de ensayo, #36). */
+const INSTRUMENTS = Object.keys(SOURCES);
 
 /** Cuántas descargas a la vez: suficiente para ir rápido sin castigar a GitHub. */
 const CONCURRENCY = 6;
@@ -62,7 +83,7 @@ async function listNotes(instrument) {
   const names = [];
   for (let page = 1; page <= 10; page += 1) {
     const url =
-      `https://api.github.com/repos/${REPO}/contents/${SOUNDFONT}/${instrument}-mp3` +
+      `https://api.github.com/repos/${REPO}/contents/${SOURCES[instrument]}/${instrument}-mp3` +
       `?ref=${BRANCH}&per_page=100&page=${page}`;
     const response = await fetch(url, { headers: apiHeaders });
     if (!response.ok) {
@@ -99,7 +120,7 @@ async function download(instrument, name) {
   const dir = join(OUT_ROOT, `${instrument}-mp3`);
   const target = join(dir, name);
   const partial = `${target}.part`;
-  const url = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${SOUNDFONT}/${instrument}-mp3/${name}`;
+  const url = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${SOURCES[instrument]}/${instrument}-mp3/${name}`;
 
   const response = await fetch(url, { headers: { 'User-Agent': 'tradtracker-fetch-soundfonts' } });
   if (!response.ok || !response.body) {
@@ -136,19 +157,33 @@ This directory holds exactly those files, served by this app instead of a
 third-party CDN, so the player works offline and the licence obligation stays
 visible in the repository.
 
-- **Soundfont:** FluidR3_GM
-- **Licence:** [Creative Commons Attribution 3.0 (CC BY 3.0)](https://creativecommons.org/licenses/by/3.0/)
+| Folder | Practice instrument | Soundfont | Licence |
+|---|---|---|---|
+| \`violin-mp3\` | fiddle | MusyngKite | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) |
+| \`recorder-mp3\` | whistle | MusyngKite | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) |
+| \`accordion-mp3\` | accordion | FluidR3_GM | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
+| \`banjo-mp3\` | banjo | FluidR3_GM | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
+
 - **Source:** [gleitz/midi-js-soundfonts](https://github.com/gleitz/midi-js-soundfonts),
-  branch \`gh-pages\`, path \`FluidR3_GM/<instrument>-mp3/*.mp3\`
-- **Instruments:** fiddle, whistle, accordion, banjo — 88 notes each (\`A0\` … \`C8\`)
+  branch \`gh-pages\`, path \`<soundfont>/<instrument>-mp3/*.mp3\`
+- **Notes:** 88 per instrument (\`A0\` … \`C8\`), named the way the soundfont names
+  them — flats (\`Ab1\`, \`Bb3\`, \`Gb2\`), never sharps (\`A#\`, \`F#\`). That is also
+  the convention of abcjs's \`pitchToNoteName\` table, so no enharmonic mapping is
+  needed.
 - **Re-fetch:** \`node scripts/fetch-soundfonts.mjs\` (idempotent)
 
-The notes are named the way the soundfont names them, with flats (\`Ab1\`,
-\`Bb3\`, \`Gb2\`) and never with sharps (\`A#\`, \`F#\`): that is also the convention of
-abcjs's \`pitchToNoteName\` table, so no enharmonic mapping is needed.
+**Why two soundfonts.** The \`fiddle\` and \`whistle\` patches of FluidR3 are
+orchestral: the fiddle takes more than a second to reach its peak (a string
+swell) and the whistle is breath without an attack. At 108 bpm an eighth note
+lasts 280 ms, so the note ends before the sample speaks. Measured at 50 ms, the
+FluidR3 fiddle is at 28 % of its energy and the MusyngKite violin at 72 %; the
+MusyngKite recorder peaks in 20-60 ms across the whole range, against 90-590 ms
+for the FluidR3 whistle. The accordion and banjo were already articulated and
+stay on FluidR3.
 
-These files are unmodified copies of the published samples. The licence is
-CC BY 3.0: attribution is required, and it is shown to the user in \`/about\`.
+These files are unmodified copies of the published samples. Attribution is
+required by both licences and is shown to the user in \`/about\`. The
+Share-Alike term applies to these sample files, not to the application code.
 `;
 
 async function main() {
