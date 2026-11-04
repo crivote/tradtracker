@@ -13,6 +13,9 @@ interface Env {
   ASSETS: { fetch(request: Request): Promise<Response> };
 }
 
+/** Rutas que son ficheros, no rutas de la app: si faltan, 404 y nunca `index.html`. */
+const ASSET_PREFIXES = ['/assets/', '/soundfonts/'];
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -20,7 +23,9 @@ export default {
     if (asset.status !== 404) return asset;
 
     // Un asset ausente es un 404, nunca una página: servir HTML aquí envenena la caché del cliente.
-    if (url.pathname.startsWith('/assets/')) {
+    // `/soundfonts/` entra en la misma regla desde que las carpetas de samples cambian de nombre: un
+    // `fiddle-mp3/D4.mp3` que ya no existe llegaba al fallback y devolvía `index.html` con 200.
+    if (ASSET_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))) {
       return new Response('Not Found', {
         status: 404,
         headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' },
