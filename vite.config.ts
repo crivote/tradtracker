@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import solidPlugin from 'vite-plugin-solid';
 
 export default defineConfig({
@@ -12,5 +12,10 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['@sqlite.org/sqlite-wasm'],
+  },
+  test: {
+    // Node 26 declara `localStorage` en `globalThis` y tapa el de jsdom; el
+    // setup repone uno en memoria solo cuando falta (ver vitest.setup.ts).
+    setupFiles: ['./vitest.setup.ts'],
   },
 });
