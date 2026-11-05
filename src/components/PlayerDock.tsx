@@ -1,8 +1,11 @@
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
-import { embedUrl } from '../lib/tradtube';
 import { hasVideoControl, pickSegment } from '../lib/player-model';
 import { TEMPO_STEP } from '../lib/abc-player';
+import { fallbackEmbedUrl, mountVideoPlayer, type VideoPlayerHandle } from '../lib/video-player';
+import type { TuneSegment } from '../lib/tradtube';
 import {
+  attachVideo,
+  canShiftVideoRate,
   close,
   closeVideo,
   currentInstrumentLabel,
@@ -11,12 +14,15 @@ import {
   currentStatus,
   currentTempo,
   currentTitle,
+  currentVideoRateLabel,
   cycleInstrument,
+  detachVideo,
   dockState,
   isLooping,
   isPanelOpen,
   isScoreOpen,
   isVideoOpen,
+  isVideoUncontrolled,
   metaLine,
   openVideo,
   paintScore,
@@ -25,11 +31,124 @@ import {
   reserve,
   setSink,
   shiftTempo,
+  shiftVideoRate,
   toggleLoop,
   togglePanel,
   toggleScore,
+  videoFailed,
+  videoRateChanged,
+  videoStateChanged,
+  videoUncontrolled,
 } from '../lib/player-store';
 import './player-dock.css';
+
+/**
+ * El vídeo del dock (#53): el reproductor de YouTube **y su barra de velocidad**.
+ *
+ * El `<div>` de `ref` es el nodo que YouTube sustituye por su iframe. El player
+ * se destruye al desmontar —sale del DOM con su sonido— y el store deja de
+ * gobernarlo. Si la IFrame API no carga, se pinta el iframe plano de siempre y
+ * el dock lo dice con el ▶ deshabilitado: se degrada a lo que había, pero no se
+ * finge un control que no existe.
+ *
+ * La velocidad vive **aquí dentro** y no en la bandeja porque con el vídeo
+ * abierto la bandeja no se pinta: un control escondido no es un control.
+ */
+function VideoPanel(props: { segment: TuneSegment }) {
+  let host!: HTMLDivElement;
+  let handle: VideoPlayerHandle | null = null;
+
+  onMount(() => {
+    let alive = true;
+
+    void mountVideoPlayer({
+      host,
+      segment: props.segment,
+      onState: (event) => {
+        if (alive) videoStateChanged(event);
+      },
+      onRate: (rate) => {
+        if (alive) videoRateChanged(rate);
+      },
+      onError: () => {
+        if (alive) videoFailed();
+      },
+    })
+      .then((mounted) => {
+        // Se cerró el vídeo mientras la API cargaba: el player no debe quedar vivo.
+        if (!alive) {
+          mounted.handle.destroy();
+          return;
+        }
+        handle = mounted.handle;
+        attachVideo(mounted.handle, mounted.rates);
+      })
+      .catch(() => {
+        if (alive) videoUncontrolled();
+      });
+
+    onCleanup(() => {
+      alive = false;
+      handle?.destroy();
+      handle = null;
+      detachVideo();
+    });
+  });
+
+  return (
+    <div class="player-dock__video">
+      <button
+        type="button"
+        class="player-dock__video-close"
+        aria-label="Close video"
+        onClick={closeVideo}
+      >
+        <span aria-hidden="true">✕</span>
+      </button>
+
+      <div class="player-dock__frame">
+        <div class="player-dock__frame-host" ref={host} />
+        <Show when={isVideoUncontrolled()}>
+          <iframe
+            src={fallbackEmbedUrl(props.segment)}
+            title={props.segment.title ?? 'TradTube video'}
+            allow="autoplay; encrypted-media"
+            referrerpolicy="strict-origin-when-cross-origin"
+            allowfullscreen
+          />
+        </Show>
+      </div>
+
+      {/* Sin player no hay velocidad que cambiar: la barra no se pinta. */}
+      <Show when={!isVideoUncontrolled()}>
+        <div class="player-dock__speed" role="group" aria-label="Video speed">
+          <span class="player-dock__speed-caption">Speed</span>
+          <button
+            type="button"
+            class="player-dock__step"
+            aria-label="Slower video"
+            disabled={!canShiftVideoRate(-1)}
+            onClick={() => shiftVideoRate(-1)}
+          >
+            <span aria-hidden="true">−</span>
+          </button>
+          <output class="player-dock__speed-value" aria-live="polite">
+            {currentVideoRateLabel()}
+          </output>
+          <button
+            type="button"
+            class="player-dock__step"
+            aria-label="Faster video"
+            disabled={!canShiftVideoRate(1)}
+            onClick={() => shiftVideoRate(1)}
+          >
+            <span aria-hidden="true">+</span>
+          </button>
+        </div>
+      </Show>
+    </div>
+  );
+}
 
 /**
  * El reproductor flotante (#49): **uno solo, para toda la app**.
@@ -250,26 +369,8 @@ export function PlayerDock() {
             El vídeo sustituye a la bandeja y vive mientras se pide. Su ✕ cierra
             el vídeo, no el dock — y desmonta el iframe de verdad.
           */}
-          <Show when={isVideoOpen() ? segment() : null}>
-            {(current) => (
-              <div class="player-dock__video">
-                <button
-                  type="button"
-                  class="player-dock__video-close"
-                  aria-label="Close video"
-                  onClick={closeVideo}
-                >
-                  <span aria-hidden="true">✕</span>
-                </button>
-                <iframe
-                  src={`${embedUrl(current())}&autoplay=1`}
-                  title={current().title ?? 'TradTube video'}
-                  allow="autoplay; encrypted-media"
-                  referrerpolicy="strict-origin-when-cross-origin"
-                  allowfullscreen
-                />
-              </div>
-            )}
+          <Show when={isVideoOpen() ? segment() : null} keyed>
+            {(current) => <VideoPanel segment={current} />}
           </Show>
 
           <Show when={isScoreOpen()}>

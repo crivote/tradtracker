@@ -27,6 +27,17 @@ import {
 } from './practice-storage';
 import { cardKey, displayRhythm, displayTitle, type RepertoireRow } from './repertoire-model';
 import { fetchSegments, type TuneSegment } from './tradtube';
+import {
+  DEFAULT_VIDEO_RATE,
+  VIDEO_RATES,
+  canStepRate,
+  nearestRate,
+  rateLabel,
+  stepRate,
+  usableRates,
+  type VideoEvent,
+  type VideoPlayerHandle,
+} from './video-player';
 
 /**
  * El estado del reproductor flotante (#49), **uno solo para toda la app**.
@@ -55,6 +66,25 @@ const [tempo, setTempo] = createSignal(tempoFor(null));
 const [instrument, setInstrument] = createSignal<PracticeInstrument>(storedInstrument());
 const [looping, setLooping] = createSignal(false);
 const [durationSec, setDurationSec] = createSignal<number | null>(null);
+/**
+ * La velocidad del vídeo (#53), en tanto por uno. Es **estado de sesión**, no
+ * preferencia: vive mientras la tune está en el dock y vuelve a 100 % al
+ * cambiar de tune o cerrar. No va a `localStorage` ni a Supabase.
+ */
+const [videoRate, setVideoRate] = createSignal(DEFAULT_VIDEO_RATE);
+/** Los escalones que el reproductor declara; la red es `VIDEO_RATES`. */
+const [videoRates, setVideoRates] = createSignal<readonly number[]>(VIDEO_RATES);
+/** El reproductor montado, o `null` mientras carga (o si no hay control). */
+const [video, setVideo] = createSignal<VideoPlayerHandle | null>(null);
+/** La API no cargó: el vídeo se ve como iframe plano y el dock no lo gobierna. */
+const [videoFallback, setVideoFallback] = createSignal(false);
+
+/**
+ * El último estado que dijo el reproductor. Hace falta porque el autoplay puede
+ * emitir `playing` **antes** de que la promesa de montaje resuelva: si se
+ * ignorara, el dock se quedaría en `loading` y el ▶ deshabilitado.
+ */
+let lastVideoEvent: VideoEvent | null = null;
 
 /** El ABC ya resuelto de la tune cargada; la red solo se toca si la fila no lo traía. */
 let abcText: string | null = null;
@@ -124,6 +154,20 @@ async function ensureAbc(): Promise<string | null> {
 
 /** Arranca o para según el estado. Es el ▶ del dock y el de los disparadores. */
 export async function play(): Promise<void> {
+  /*
+   * Con el vídeo abierto, el ▶ del dock **es** el del vídeo (#53): manda sobre
+   * el iframe y no toca el sintetizador. Si el player aún no está (cargando, o
+   * sin control porque la API no cargó), el botón está deshabilitado y aquí no
+   * hay nada que hacer.
+   */
+  if (videoOpen()) {
+    const player = video();
+    if (!player) return;
+    if (state() === 'playing') player.pause();
+    else player.play();
+    return;
+  }
+
   if (state() === 'playing') {
     pause();
     return;
@@ -164,6 +208,11 @@ export async function play(): Promise<void> {
 
 /** Para sin cerrar: la tune sigue cargada y el ▶ vuelve a arrancar donde toca. */
 export function pause(): void {
+  if (videoOpen()) {
+    video()?.pause();
+    setState('idle');
+    return;
+  }
   stopEngine();
   clearLoop();
   setState('idle');
@@ -195,6 +244,7 @@ export function openFrom(row: RepertoireRow): void {
   setLooping(false);
   setDurationSec(null);
   setTempo(tempoFor(displayRhythm(row)));
+  resetVideoRate();
   setState('idle');
 
   void loadSegments(row);
@@ -215,6 +265,7 @@ export function close(): void {
   setPanelOpen(false);
   setLooping(false);
   setDurationSec(null);
+  resetVideoRate();
 }
 
 /**
@@ -237,19 +288,95 @@ async function loadSegments(row: RepertoireRow): Promise<void> {
 
 /**
  * El vídeo y el sintetizador **nunca suenan a la vez**. Abrir el vídeo para el
- * motor (y deja el dock en `idle`, no en `playing`: lo que suena es el iframe).
+ * motor y monta el reproductor de YouTube, que arranca solo (el clic es la
+ * petición del usuario). El dock queda en `loading` hasta que el player dice
+ * quién es: con `ready`, `idle` y el ▶ disponible.
  */
 export function openVideo(): void {
   if (segments().length === 0) return;
   stopEngine();
   clearLoop();
-  setState('idle');
+  lastVideoEvent = null;
+  setVideoFallback(false);
+  setState('loading');
   setVideoOpen(true);
 }
 
 /** Cerrar el vídeo **no** cierra el dock: deja la bandeja y la tune. */
 export function closeVideo(): void {
+  if (state() === 'playing' || state() === 'loading') setState('idle');
+  lastVideoEvent = null;
+  // El componente destruye el player al desmontarse; aquí se suelta la referencia.
+  setVideo(null);
   setVideoOpen(false);
+}
+
+/* ── vídeo: control desde el dock (#53) ────────────────────────────────── */
+
+/** Vuelve al 100 % y a la escalera de referencia. Cambio de tune o cierre. */
+function resetVideoRate(): void {
+  setVideoRate(DEFAULT_VIDEO_RATE);
+  setVideoRates(VIDEO_RATES);
+  setVideo(null);
+  setVideoFallback(false);
+  lastVideoEvent = null;
+}
+
+/** Aplica al dock lo que dice YouTube. `paused`, `ended` y `unstarted` son «parado». */
+function applyVideoEvent(event: VideoEvent): void {
+  if (!videoOpen()) return;
+  if (event === 'playing') setState('playing');
+  else if (event === 'buffering') setState('loading');
+  else setState('idle');
+}
+
+/** El reproductor está montado: se registra y se le aplica la velocidad vigente. */
+export function attachVideo(handle: VideoPlayerHandle, rates: readonly number[]): void {
+  const ladder = usableRates(rates);
+  setVideoRates(ladder);
+  setVideo(handle);
+  setVideoFallback(false);
+  handle.setRate(nearestRate(videoRate(), ladder));
+  if (lastVideoEvent) applyVideoEvent(lastVideoEvent);
+  else if (state() === 'loading') setState('idle');
+}
+
+/** El componente se desmonta (o el player murió): el dock deja de gobernarlo. */
+export function detachVideo(): void {
+  setVideo(null);
+}
+
+/** La IFrame API no cargó: el vídeo se ve, pero el dock no lo manda. */
+export function videoUncontrolled(): void {
+  setVideo(null);
+  setVideoFallback(true);
+  if (state() === 'loading') setState('idle');
+}
+
+/** `onStateChange` del reproductor. */
+export function videoStateChanged(event: VideoEvent): void {
+  lastVideoEvent = event;
+  applyVideoEvent(event);
+}
+
+/** `onPlaybackRateChange`: el usuario tocó la velocidad en el menú nativo de YouTube. */
+export function videoRateChanged(rate: number): void {
+  if (!Number.isFinite(rate) || rate <= 0) return;
+  setVideoRate(nearestRate(rate, videoRates()));
+}
+
+/** `onError` del reproductor: vídeo borrado, privado o sin permiso de inserción. */
+export function videoFailed(): void {
+  if (!videoOpen()) return;
+  setState('failed');
+}
+
+/** `−` / `+` de la velocidad: recorre los escalones del player y los aplica en caliente. */
+export function shiftVideoRate(delta: number): void {
+  const next = stepRate(videoRate(), delta, videoRates());
+  if (next === videoRate()) return;
+  setVideoRate(next);
+  video()?.setRate(next);
 }
 
 export function togglePanel(): void {
@@ -354,11 +481,31 @@ export const currentInstrument = instrument;
 export const isLooping = looping;
 export const currentDuration = durationSec;
 export const currentStatus = () => statusText(state());
-export const currentPlayable = () => canPlay(state());
+/**
+ * El ▶ está disponible. En ABC, según el estado del motor. En vídeo, cuando el
+ * reproductor existe y no está cargando; **sin control** (la IFrame API no
+ * cargó) no hay ▶ que valga: el iframe suena por su cuenta y el botón se
+ * deshabilita en vez de fingir que lo gobierna.
+ */
+export const currentPlayable = () => {
+  if (videoOpen()) return video() !== null && state() !== 'loading';
+  return canPlay(state());
+};
+export const currentVideoRate = videoRate;
+export const currentVideoRateLabel = () => rateLabel(videoRate());
+export const canShiftVideoRate = (delta: number) => canStepRate(videoRate(), delta, videoRates());
+/** Hay reproductor y por tanto el dock lo gobierna. */
+export const isVideoControllable = () => video() !== null;
+/** La API no cargó: el vídeo se ve como iframe plano, sin control del dock. */
+export const isVideoUncontrolled = videoFallback;
 export const reserve = () => dockReserve(state(), panelOpen());
 
-/** «Play <tune>» / «Pause <tune>» / «Loading <tune>». */
+/** «Play <tune>» / «Pause <tune>» / «Loading <tune>». En vídeo, el vídeo es el sujeto. */
 export function playLabel(): string {
+  if (videoOpen()) {
+    if (videoFallback()) return 'Video controls unavailable';
+    return state() === 'playing' ? 'Pause video' : 'Play video';
+  }
   const row = track();
   const title = row ? displayTitle(row) : '';
   if (state() === 'playing') return `Pause ${title}`;

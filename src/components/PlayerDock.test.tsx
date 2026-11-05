@@ -27,9 +27,21 @@ vi.mock('../lib/tradtube', async (importOriginal) => {
   return { ...actual, fetchSegments: vi.fn() };
 });
 
+/*
+ * El reproductor de YouTube no existe en `jsdom`. El doble no simula el vídeo:
+ * crea el `<iframe>` que crearía YouTube (para que el desmontaje se pruebe de
+ * verdad) y devuelve un mando con espías, de modo que los eventos del player se
+ * disparan desde la prueba con las mismas funciones que usa el reproductor.
+ */
+vi.mock('../lib/video-player', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/video-player')>();
+  return { ...actual, mountVideoPlayer: vi.fn() };
+});
+
 import { startEngine, stopEngine } from '../lib/player-engine';
 import { fetchSegments, type TuneSegment } from '../lib/tradtube';
-import { resetPlayerForTests } from '../lib/player-store';
+import { VIDEO_RATES, mountVideoPlayer, type VideoPlayerHandle } from '../lib/video-player';
+import { resetPlayerForTests, videoRateChanged, videoStateChanged } from '../lib/player-store';
 import type { RepertoireRow } from '../lib/repertoire-model';
 import PlayTrigger from './PlayTrigger';
 import { PlayerDock } from './PlayerDock';
@@ -37,6 +49,28 @@ import { PlayerDock } from './PlayerDock';
 const mockedStart = vi.mocked(startEngine);
 const mockedStop = vi.mocked(stopEngine);
 const mockedSegments = vi.mocked(fetchSegments);
+const mockedMount = vi.mocked(mountVideoPlayer);
+
+type FakePlayer = VideoPlayerHandle & {
+  play: ReturnType<typeof vi.fn>;
+  pause: ReturnType<typeof vi.fn>;
+  setRate: ReturnType<typeof vi.fn>;
+  destroy: ReturnType<typeof vi.fn>;
+};
+
+/** El mando que devuelve el montaje simulado, con el iframe que pondría YouTube. */
+let player: FakePlayer;
+
+function fakePlayer(host: HTMLElement): FakePlayer {
+  const iframe = document.createElement('iframe');
+  host.replaceChildren(iframe);
+  return {
+    play: vi.fn(),
+    pause: vi.fn(),
+    setRate: vi.fn(),
+    destroy: vi.fn(() => iframe.remove()),
+  };
+}
 
 function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
   return {
@@ -105,6 +139,10 @@ beforeEach(() => {
   resetPlayerForTests();
   mockedStart.mockResolvedValue({ result: 'ok', durationSec: 52 });
   mockedSegments.mockResolvedValue(new Map());
+  mockedMount.mockImplementation(async ({ host }) => {
+    player = fakePlayer(host);
+    return { handle: player, rates: VIDEO_RATES };
+  });
 });
 
 afterEach(cleanup);
@@ -193,6 +231,105 @@ describe('vídeo', () => {
 
     expect(screen.getByRole('button', { name: 'Loop' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Play video' })).toBeNull();
+  });
+});
+
+describe('vídeo: velocidad propia y control desde el dock', () => {
+  /** Abre el vídeo y espera a que el player esté montado (▶ habilitado). */
+  const openVideoPanel = async () => {
+    mockedSegments.mockResolvedValue(new Map([['55', [segment()]]]));
+    render(() => <Harness />);
+    await openDock();
+    fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Play video' }));
+    await waitFor(() => {
+      const button = screen.getByRole('button', { name: 'Play video' }) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+    });
+  };
+
+  it('el ▶ del dock pausa y reanuda el vídeo, y no arranca el sintetizador', async () => {
+    await openVideoPanel();
+    mockedStart.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play video' }));
+    expect(player.play).toHaveBeenCalledTimes(1);
+
+    // YouTube confirma que suena: el dock lo refleja.
+    videoStateChanged('playing');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Pause video' })).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause video' }));
+    expect(player.pause).toHaveBeenCalledTimes(1);
+
+    videoStateChanged('paused');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Play video' })).toBeTruthy());
+    expect(mockedStart).not.toHaveBeenCalled();
+  });
+
+  it('la velocidad recorre los escalones en % y los aplica en caliente', async () => {
+    await openVideoPanel();
+    expect(screen.getByText('100%')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Faster video' }));
+    expect(screen.getByText('125%')).toBeTruthy();
+    expect(player.setRate).toHaveBeenLastCalledWith(1.25);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Slower video' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Slower video' }));
+    expect(screen.getByText('75%')).toBeTruthy();
+    expect(player.setRate).toHaveBeenLastCalledWith(0.75);
+  });
+
+  it('en los extremos, el botón sin escalón queda deshabilitado', async () => {
+    await openVideoPanel();
+    const slower = screen.getByRole('button', { name: 'Slower video' }) as HTMLButtonElement;
+    const faster = screen.getByRole('button', { name: 'Faster video' }) as HTMLButtonElement;
+
+    for (let step = 0; step < 3; step += 1) fireEvent.click(slower);
+    expect(screen.getByText('25%')).toBeTruthy();
+    expect(slower.disabled).toBe(true);
+
+    for (let step = 0; step < 7; step += 1) fireEvent.click(faster);
+    expect(screen.getByText('200%')).toBeTruthy();
+    expect(faster.disabled).toBe(true);
+  });
+
+  it('el menú nativo de YouTube mueve el rótulo sin reenviar la orden', async () => {
+    await openVideoPanel();
+    const sent = player.setRate.mock.calls.length;
+
+    videoRateChanged(1.5);
+
+    await waitFor(() => expect(screen.getByText('150%')).toBeTruthy());
+    expect(player.setRate).toHaveBeenCalledTimes(sent);
+  });
+
+  it('cerrar el vídeo destruye el player y su iframe sale del DOM', async () => {
+    await openVideoPanel();
+    expect(document.querySelector('.player-dock__video iframe')).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close video' }));
+
+    expect(player.destroy).toHaveBeenCalled();
+    expect(document.querySelector('.player-dock__video iframe')).toBeNull();
+    expect(dock()).not.toBeNull();
+  });
+
+  it('si la IFrame API no carga, el vídeo se ve pero el dock no lo gobierna', async () => {
+    mockedMount.mockRejectedValue(new Error('YouTube IFrame API failed to load'));
+    mockedSegments.mockResolvedValue(new Map([['55', [segment()]]]));
+    render(() => <Harness />);
+    await openDock();
+    fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Play video' }));
+
+    // El iframe plano de siempre sigue ahí: el vídeo no desaparece.
+    await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+    const button = screen.getByRole('button', { name: 'Video controls unavailable' }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    // Y no hay barra de velocidad que mienta: sin player no hay nada que mover.
+    expect(screen.queryByRole('button', { name: 'Faster video' })).toBeNull();
   });
 });
 

@@ -181,6 +181,15 @@
   background: rgba(242, 245, 236, 0.1);
 }
 
+.player-dock__step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.player-dock__step:disabled:hover {
+  background: transparent;
+}
+
 .player-dock__bpm {
   min-width: 34px;
   text-align: center;
@@ -220,25 +229,66 @@
   cursor: default;
 }
 
-/* ── vídeo: sustituye a la bandeja, 16:9 ───────────────────────── */
+/* ── vídeo: sustituye a la bandeja, 16:9, con su barra de velocidad ─ */
 .player-dock__video {
   position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
   border-top: 1px solid var(--dock-line);
   background: #000;
 }
 
-.player-dock__video {
-  flex: 0 0 auto;
+/* El marco: el iframe de YouTube —o el de reserva— centrado y en 16:9.
+   La altura se deja en `auto` a propósito: YouTube pone `height="100%"` como
+   atributo, y sin esto el iframe se quedaría a 0 dentro de un contenedor sin
+   alto propio. */
+.player-dock__frame {
   display: flex;
   justify-content: center;
+  background: #000;
 }
 
-.player-dock__video iframe {
+.player-dock__frame iframe,
+.player-dock__frame-host {
   display: block;
   /* 16:9 de verdad y, en ventanas bajas, acotado por alto sin deformar. */
   width: min(100%, calc((100dvh - 150px) * 16 / 9));
+  height: auto;
   aspect-ratio: 16 / 9;
   border: 0;
+}
+
+/* El hueco que YouTube sustituye por su iframe: mismo tamaño, sin salto. */
+.player-dock__frame-host {
+  background: #000;
+}
+
+/* La velocidad propia (#53): vive aquí porque la bandeja no se pinta con el
+   vídeo abierto. Los escalones son los del player, rotulados en %. */
+.player-dock__speed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dock-line);
+  background: var(--dock-bg);
+}
+
+.player-dock__speed-caption {
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--dock-meta);
+}
+
+.player-dock__speed-value {
+  min-width: 52px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--dock-ink);
 }
 
 .player-dock__video-close {
