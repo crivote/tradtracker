@@ -513,6 +513,15 @@ export function playLabel(): string {
   return `Play ${title}`;
 }
 
+/**
+ * El chevron: con el vídeo abierto pliega **el vídeo** (#54), así que lo dice
+ * con su nombre. En modo ABC sigue siendo el transporte el que se pliega.
+ */
+export function panelLabel(): string {
+  if (videoOpen()) return isPanelOpen() ? 'Hide video' : 'Show video';
+  return isPanelOpen() ? 'Hide player controls' : 'Show player controls';
+}
+
 /** La línea de metadatos del dock: ritmo, tonalidad, procedencia, instrumento, duración. */
 export function metaLine(): string[] {
   const row = track();

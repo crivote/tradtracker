@@ -316,6 +316,44 @@ describe('vídeo: velocidad propia y control desde el dock', () => {
     expect(dock()).not.toBeNull();
   });
 
+  it('el chevron se llama por el vídeo cuando el vídeo está abierto', async () => {
+    await openVideoPanel();
+    expect(screen.getByRole('button', { name: 'Hide video' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Hide player controls' })).toBeNull();
+  });
+
+  it('plegar el dock oculta el vídeo sin destruir el reproductor', async () => {
+    await openVideoPanel();
+    const iframe = document.querySelector('.player-dock__video iframe');
+    expect(iframe).not.toBeNull();
+
+    // Clic real (JS basta aquí: no hay autoplay que autorizar) en el chevron.
+    fireEvent.click(screen.getByRole('button', { name: 'Hide video' }));
+
+    const panel = document.querySelector('.player-dock__video');
+    expect(panel!.classList.contains('is-collapsed')).toBe(true);
+    // El reproductor NO se destruye: sigue montado y sonando (medido: display:none no pausa).
+    expect(document.contains(iframe)).toBe(true);
+    expect(player.destroy).not.toHaveBeenCalled();
+    // La barra sigue mandando: el ▶ está disponible y su sujeto es el vídeo.
+    const bar = screen.getByRole('button', { name: 'Play video' }) as HTMLButtonElement;
+    expect(bar.disabled).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show video' }));
+    expect(document.querySelector('.player-dock__video')!.classList.contains('is-collapsed')).toBe(false);
+  });
+
+  it('con el dock plegado, el ▶ de la barra sigue gobernando el vídeo', async () => {
+    await openVideoPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide video' }));
+    mockedStart.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play video' }));
+
+    expect(player.play).toHaveBeenCalledTimes(1);
+    expect(mockedStart).not.toHaveBeenCalled();
+  });
+
   it('si la IFrame API no carga, el vídeo se ve pero el dock no lo gobierna', async () => {
     mockedMount.mockRejectedValue(new Error('YouTube IFrame API failed to load'));
     mockedSegments.mockResolvedValue(new Map([['55', [segment()]]]));

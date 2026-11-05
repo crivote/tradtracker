@@ -26,6 +26,7 @@ import {
   metaLine,
   openVideo,
   paintScore,
+  panelLabel,
   play,
   playLabel,
   reserve,
@@ -96,16 +97,7 @@ function VideoPanel(props: { segment: TuneSegment }) {
   });
 
   return (
-    <div class="player-dock__video">
-      <button
-        type="button"
-        class="player-dock__video-close"
-        aria-label="Close video"
-        onClick={closeVideo}
-      >
-        <span aria-hidden="true">✕</span>
-      </button>
-
+    <div class="player-dock__video" classList={{ 'is-collapsed': !isPanelOpen() }}>
       <div class="player-dock__frame">
         <div class="player-dock__frame-host" ref={host} />
         <Show when={isVideoUncontrolled()}>
@@ -117,6 +109,16 @@ function VideoPanel(props: { segment: TuneSegment }) {
             allowfullscreen
           />
         </Show>
+        {/* El ✕ va dentro del marco: con el vídeo más estrecho que el dock, en el
+            borde del dock flotaría lejos de la esquina del reproductor. */}
+        <button
+          type="button"
+          class="player-dock__video-close"
+          aria-label="Close video"
+          onClick={closeVideo}
+        >
+          <span aria-hidden="true">✕</span>
+        </button>
       </div>
 
       {/* Sin player no hay velocidad que cambiar: la barra no se pinta. */}
@@ -275,7 +277,7 @@ export function PlayerDock() {
             <button
               type="button"
               class="player-dock__chevron"
-              aria-label={isPanelOpen() ? 'Hide player controls' : 'Show player controls'}
+              aria-label={panelLabel()}
               aria-expanded={isPanelOpen() ? 'true' : 'false'}
               onClick={togglePanel}
             >

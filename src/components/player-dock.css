@@ -240,23 +240,38 @@
 }
 
 /* El marco: el iframe de YouTube —o el de reserva— centrado y en 16:9.
-   La altura se deja en `auto` a propósito: YouTube pone `height="100%"` como
-   atributo, y sin esto el iframe se quedaría a 0 dentro de un contenedor sin
-   alto propio. */
+   (#54) Compacto a propósito: tope de 420 px de ancho —el marco ocupaba los 700
+   del dock— y, en ventanas bajas, acotado por alto sin deformar. */
 .player-dock__frame {
-  display: flex;
-  justify-content: center;
+  position: relative;
+  /* El tamaño lo manda el marco, no el iframe: con `align-self: center` el
+     ancho del marco es definido (min(...) sobre el ancho del dock) y el
+     reproductor lo llena al 100 %. Al revés —porcentaje sobre un contenedor
+     ajustado al contenido— el `100%` se resuelve como `auto` y el iframe cae a
+     su tamaño por defecto de 300 px. */
+  width: min(420px, 100%, calc(32dvh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  align-self: center;
   background: #000;
 }
 
 .player-dock__frame iframe,
 .player-dock__frame-host {
   display: block;
-  /* 16:9 de verdad y, en ventanas bajas, acotado por alto sin deformar. */
-  width: min(100%, calc((100dvh - 150px) * 16 / 9));
-  height: auto;
-  aspect-ratio: 16 / 9;
+  /* Absolutos dentro del marco: si el iframe participa del flujo, su altura
+     intrínseca (150 px) manda sobre el 16:9 y el marco crece de más. */
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   border: 0;
+}
+
+/* Plegado (#54): el marco no se pinta, pero el reproductor sigue montado y
+   sonando —medido: `display:none` no pausa YouTube—. El ❚❚ de la barra sigue a
+   la vista, y el ✕ o el cierre del dock sí sacan el iframe del DOM. */
+.player-dock__video.is-collapsed {
+  display: none;
 }
 
 /* El hueco que YouTube sustituye por su iframe: mismo tamaño, sin salto. */
