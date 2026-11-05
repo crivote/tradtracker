@@ -10,9 +10,9 @@ import {
   readRecentLists,
   recordRecentList,
   previousIds,
-  readTodayList,
-  writeTodayList,
-  clearTodayList,
+  readPlan,
+  writePlan,
+  clearPlan,
   todayKeyFor,
   startOfLocalDay,
   type KeyValueStore,
@@ -21,7 +21,9 @@ import {
 
 const PREFS_KEY = 'tt-practice-prefs';
 const RECENT_KEY = 'tt-practice-recent';
-const TODAY_KEY = 'tt-practice-today';
+const PLAN_KEY = 'tt-practice-plan';
+/** Clave de la lista congelada por fecha: solo existe para migrarla. */
+const LEGACY_KEY = 'tt-practice-today';
 
 /** Doble en memoria: no hace falta jsdom. */
 function makeStore(): KeyValueStore & { readonly data: Map<string, string> } {
@@ -116,7 +118,7 @@ describe('readPrefs / writePrefs', () => {
     };
     expect(readPrefs(throwing)).toEqual(DEFAULT_PREFS);
     expect(readRecentLists(throwing)).toEqual([]);
-    expect(readTodayList(throwing, '2026-10-31')).toBeNull();
+    expect(readPlan(throwing, new Date(2026, 9, 31, 12, 0).getTime())).toBeNull();
   });
 });
 
@@ -240,77 +242,139 @@ describe('previousIds', () => {
   });
 });
 
-describe('readTodayList / writeTodayList / clearTodayList', () => {
-  it('sin lista congelada devuelve null', () => {
-    expect(readTodayList(store, '2026-10-31')).toBeNull();
+describe('readPlan / writePlan / clearPlan', () => {
+  const AT_NOON = new Date(2026, 9, 31, 12, 0).getTime();
+
+  it('sin lista guardada devuelve null', () => {
+    expect(readPlan(store, AT_NOON)).toBeNull();
   });
 
-  it('congela y devuelve ids y overflow', () => {
-    writeTodayList(store, '2026-10-31', ['a', 'b'], 3);
-    expect(readTodayList(store, '2026-10-31')).toEqual({
-      date: '2026-10-31',
+  it('guarda y devuelve la lista con su overflow y su sesión', () => {
+    writePlan(store, { createdAt: AT_NOON, ids: ['a', 'b'], overflow: 3, sessionId: 'session-1' });
+    expect(readPlan(store, AT_NOON)).toEqual({
+      createdAt: AT_NOON,
       ids: ['a', 'b'],
       overflow: 3,
+      sessionId: 'session-1',
     });
   });
 
-  it('overflow es opcional y por defecto 0', () => {
-    writeTodayList(store, '2026-10-31', ['a']);
-    expect(readTodayList(store, '2026-10-31')?.overflow).toBe(0);
+  it('la lista no caduca con la fecha: la de hace días sigue siendo la lista', () => {
+    const longAgo = new Date(2026, 8, 1, 9, 0).getTime();
+    writePlan(store, { createdAt: longAgo, ids: ['a'], overflow: 0, sessionId: null });
+
+    expect(readPlan(store, AT_NOON)?.ids).toEqual(['a']);
+    expect(readPlan(store, AT_NOON)?.createdAt).toBe(longAgo);
   });
 
-  it('devuelve null si la lista congelada es de otra fecha', () => {
-    writeTodayList(store, '2026-10-30', ['a'], 1);
-    expect(readTodayList(store, '2026-10-31')).toBeNull();
+  it('la primera marca deja la sesión escrita y se relee al recargar', () => {
+    writePlan(store, { createdAt: AT_NOON, ids: ['a'], overflow: 0, sessionId: null });
+    const plan = readPlan(store, AT_NOON);
+    expect(plan?.sessionId).toBeNull();
+
+    writePlan(store, { ...(plan as NonNullable<typeof plan>), sessionId: 'session-9' });
+    expect(readPlan(store, AT_NOON)?.sessionId).toBe('session-9');
   });
 
-  it('congelar otra fecha reemplaza: nunca conviven dos', () => {
-    writeTodayList(store, '2026-10-30', ['vieja'], 2);
-    writeTodayList(store, '2026-10-31', ['nueva'], 0);
-    expect(readTodayList(store, '2026-10-30')).toBeNull();
-    expect(readTodayList(store, '2026-10-31')?.ids).toEqual(['nueva']);
-    const keys = [...store.data.keys()].filter(key => key === TODAY_KEY);
-    expect(keys).toHaveLength(1);
+  it('clearPlan revoca la lista: la próxima lectura no la encuentra', () => {
+    writePlan(store, { createdAt: AT_NOON, ids: ['a'], overflow: 0, sessionId: 'session-1' });
+    clearPlan(store);
+
+    expect(readPlan(store, AT_NOON)).toBeNull();
+    expect(store.getItem(PLAN_KEY)).toBeNull();
   });
 
-  it('clearTodayList borra la lista congelada', () => {
-    writeTodayList(store, '2026-10-31', ['a']);
-    clearTodayList(store);
-    expect(readTodayList(store, '2026-10-31')).toBeNull();
-    expect(store.getItem(TODAY_KEY)).toBeNull();
+  it('una sesión vacía o de otro tipo se lee como null, no como cadena', () => {
+    store.setItem(
+      PLAN_KEY,
+      JSON.stringify({ createdAt: AT_NOON, ids: ['a'], overflow: 0, sessionId: '' }),
+    );
+    expect(readPlan(store, AT_NOON)?.sessionId).toBeNull();
   });
 
   it('un overflow corrupto queda en 0 sin lanzar', () => {
     const corruptos: unknown[] = [undefined, null, -5, '4', Number.NaN, Infinity, {}, [3]];
     for (const overflow of corruptos) {
-      store.setItem(TODAY_KEY, JSON.stringify({ date: '2026-10-31', ids: ['a'], overflow }));
-      expect(readTodayList(store, '2026-10-31')).toEqual({
-        date: '2026-10-31',
-        ids: ['a'],
-        overflow: 0,
-      });
+      store.setItem(PLAN_KEY, JSON.stringify({ createdAt: AT_NOON, ids: ['a'], overflow }));
+      expect(readPlan(store, AT_NOON)?.overflow).toBe(0);
     }
   });
 
   it('un overflow decimal se redondea y nunca queda negativo', () => {
-    store.setItem(TODAY_KEY, JSON.stringify({ date: '2026-10-31', ids: [], overflow: 2.4 }));
-    expect(readTodayList(store, '2026-10-31')?.overflow).toBe(2);
-    store.setItem(TODAY_KEY, JSON.stringify({ date: '2026-10-31', ids: [], overflow: -0.6 }));
-    expect(readTodayList(store, '2026-10-31')?.overflow).toBe(0);
+    store.setItem(PLAN_KEY, JSON.stringify({ createdAt: AT_NOON, ids: [], overflow: 2.4 }));
+    expect(readPlan(store, AT_NOON)?.overflow).toBe(2);
+    store.setItem(PLAN_KEY, JSON.stringify({ createdAt: AT_NOON, ids: [], overflow: -0.6 }));
+    expect(readPlan(store, AT_NOON)?.overflow).toBe(0);
+  });
+
+  it('sin createdAt válido no hay plan: no se puede fechar ni sembrar', () => {
+    const invalidos: unknown[] = [undefined, null, 0, -5, '123', Number.NaN, Infinity, {}];
+    for (const createdAt of invalidos) {
+      store.setItem(PLAN_KEY, JSON.stringify({ createdAt, ids: ['a'] }));
+      expect(readPlan(store, AT_NOON)).toBeNull();
+    }
+  });
+
+  it('writePlan se niega a guardar un plan sin instante de generación', () => {
+    expect(() =>
+      writePlan(store, { createdAt: 0, ids: ['a'], overflow: 0, sessionId: null }),
+    ).toThrow(/createdAt/);
+    expect(store.getItem(PLAN_KEY)).toBeNull();
   });
 
   it('JSON corrupto, forma inválida o ids que no son array devuelven null', () => {
-    for (const raw of ['{roto', 'null', '[]', '3', JSON.stringify({ date: '2026-10-31' })]) {
-      store.setItem(TODAY_KEY, raw);
-      expect(readTodayList(store, '2026-10-31')).toBeNull();
+    for (const raw of ['{roto', 'null', '[]', '3', JSON.stringify({ createdAt: AT_NOON })]) {
+      store.setItem(PLAN_KEY, raw);
+      expect(readPlan(store, AT_NOON)).toBeNull();
     }
   });
 
   it('no comparte la referencia de los ids con el llamante', () => {
     const ids = ['a'];
-    writeTodayList(store, '2026-10-31', ids, 0);
+    writePlan(store, { createdAt: AT_NOON, ids, overflow: 0, sessionId: null });
     ids.push('b');
-    expect(readTodayList(store, '2026-10-31')?.ids).toEqual(['a']);
+    expect(readPlan(store, AT_NOON)?.ids).toEqual(['a']);
+  });
+});
+
+describe('migración de la lista congelada por fecha', () => {
+  const NOON = new Date(2026, 9, 31, 12, 0).getTime();
+
+  it('adopta la lista vieja de hoy, sin sesión, y borra la clave vieja', () => {
+    store.setItem(
+      LEGACY_KEY,
+      JSON.stringify({ date: '2026-10-31', ids: ['a', 'b'], overflow: 2 }),
+    );
+
+    expect(readPlan(store, NOON)).toEqual({
+      createdAt: startOfLocalDay(NOON),
+      ids: ['a', 'b'],
+      overflow: 2,
+      sessionId: null,
+    });
+    // Borrada al adoptarla: si no, «New list» la resucitaría en la lectura siguiente.
+    expect(store.getItem(LEGACY_KEY)).toBeNull();
+  });
+
+  it('una lista vieja de ayer se descarta, como antes', () => {
+    store.setItem(LEGACY_KEY, JSON.stringify({ date: '2026-10-30', ids: ['a'] }));
+    expect(readPlan(store, NOON)).toBeNull();
+  });
+
+  it('con un plan ya guardado, la clave vieja ni se mira', () => {
+    writePlan(store, { createdAt: NOON, ids: ['nueva'], overflow: 0, sessionId: null });
+    store.setItem(LEGACY_KEY, JSON.stringify({ date: '2026-10-31', ids: ['vieja'] }));
+
+    expect(readPlan(store, NOON)?.ids).toEqual(['nueva']);
+  });
+
+  it('tras revocar la lista, la vieja no vuelve', () => {
+    store.setItem(LEGACY_KEY, JSON.stringify({ date: '2026-10-31', ids: ['vieja'] }));
+    expect(readPlan(store, NOON)?.ids).toEqual(['vieja']); // se migra
+
+    clearPlan(store); // el usuario pide otra
+
+    expect(readPlan(store, NOON)).toBeNull();
   });
 });
 
@@ -374,34 +438,43 @@ describe('startOfLocalDay (#36)', () => {
   });
 });
 
-describe('integración del ciclo diario', () => {
-  it('congela la lista del día y alimenta la penalización con la de ayer', () => {
-    const today = todayKeyFor(new Date(2026, 9, 31, 23, 30).getTime());
+describe('integración del ciclo de la lista', () => {
+  it('guarda la lista con su sesión y alimenta la penalización con la anterior', () => {
+    const createdAt = new Date(2026, 9, 31, 23, 30).getTime();
+    const today = todayKeyFor(createdAt);
     const yesterday: RecentList = { date: '2026-10-30', ids: ['jig-1', 'reel-2'] };
 
     recordRecentList(store, yesterday);
-    expect(readTodayList(store, today)).toBeNull();
+    expect(readPlan(store, createdAt)).toBeNull();
     expect(previousIds(store, today)).toEqual(new Set(['jig-1', 'reel-2']));
 
-    writeTodayList(store, today, ['reel-2', 'hornpipe-3'], 4);
+    writePlan(store, {
+      createdAt,
+      ids: ['reel-2', 'hornpipe-3'],
+      overflow: 4,
+      sessionId: 'session-1',
+    });
     recordRecentList(store, { date: today, ids: ['reel-2', 'hornpipe-3'] });
 
-    expect(readTodayList(store, today)?.ids).toEqual(['reel-2', 'hornpipe-3']);
-    expect(readTodayList(store, today)?.overflow).toBe(4);
+    const plan = readPlan(store, createdAt);
+    expect(plan?.ids).toEqual(['reel-2', 'hornpipe-3']);
+    expect(plan?.overflow).toBe(4);
+    expect(plan?.sessionId).toBe('session-1');
     expect(previousIds(store, today)).toEqual(new Set(['jig-1', 'reel-2']));
     expect(readRecentLists(store).map(list => list.date)).toEqual([today, '2026-10-30']);
   });
 });
 
 describe('aislamiento entre claves', () => {
-  it('las tres claves son literales distintas y no se pisan', () => {
+  it('las claves son literales distintas y no se pisan', () => {
+    const at = new Date(2026, 9, 31, 12, 0).getTime();
     writePrefs(store, { instrument: 'whistle', dailyTarget: 10 });
     recordRecentList(store, { date: '2026-10-31', ids: ['a'] });
-    writeTodayList(store, '2026-10-31', ['a'], 0);
+    writePlan(store, { createdAt: at, ids: ['a'], overflow: 0, sessionId: null });
 
-    expect([...store.data.keys()].sort()).toEqual([PREFS_KEY, RECENT_KEY, TODAY_KEY].sort());
+    expect([...store.data.keys()].sort()).toEqual([PREFS_KEY, RECENT_KEY, PLAN_KEY].sort());
     expect(readPrefs(store).dailyTarget).toBe(10);
     expect(readRecentLists(store)).toHaveLength(1);
-    expect(readTodayList(store, '2026-10-31')?.ids).toEqual(['a']);
+    expect(readPlan(store, at)?.ids).toEqual(['a']);
   });
 });

@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { A } from '@solidjs/router';
 import { useSession } from '../lib/session';
 import {
@@ -27,20 +27,20 @@ import {
   DAILY_TARGET_MIN,
   DEFAULT_PREFS,
   previousIds,
+  readPlan,
   readPrefs,
-  readTodayList,
   recordRecentList,
-  startOfLocalDay,
   todayKeyFor,
+  writePlan,
   writePrefs,
-  writeTodayList,
   type KeyValueStore,
+  type PracticePlan,
   type PracticePrefs,
 } from '../lib/practice-storage';
 import {
   addSessionMarks,
   createSessionWithMarks,
-  findTodaySession,
+  fetchSessionMarks,
   unmarkSessionTune,
 } from '../lib/practice';
 import PlayTrigger from '../components/PlayTrigger';
@@ -48,25 +48,27 @@ import './repertoire.css';
 import './practice.css';
 
 /**
- * Lista de ensayo del día (#36).
+ * Lista de ensayo (#36).
  *
  * Es una **cola de trabajo**, no una rejilla de cartas: filas a lo ancho, una
  * debajo de otra, con la posición a la izquierda. La pantalla se pinta sobre el
  * mismo papel que la home (`repertoire-home` trae las variables) y no sobre la
  * paleta oscura del resto de la app.
  *
- * Cuatro reglas mandan sobre el resto:
- *   · La lista se **congela** en `tt-practice-today` al montar. Sin congelarla,
- *     marcar movería `last_practiced_at` y al recargar el generador devolvería
- *     otra lista: el criterio «no cambia al recargar» sería falso.
- *   · La **sesión es perezosa**: abrir la lista no crea nada. La primera marca
- *     abre la sesión del día y las siguientes se cuelgan de ella; si ya había
- *     una abierta hoy, se reanuda.
+ * La lista es una **caché inmutable que solo el usuario revoca**:
+ *   · Si no hay lista guardada, se genera una y se queda. Recargar, ir a The
+ *     Session y volver, cerrar el navegador: la lista sigue siendo la misma,
+ *     con sus marcas. No hay «lista de hoy» que caduque a medianoche.
+ *   · **New list** es la única acción que la sustituye: borra la guardada y
+ *     genera otra sin marcas. El objetivo diario solo decide el tamaño de la
+ *     **próxima** lista; cambiarlo no toca la actual.
+ *   · La lista lleva **su** sesión (`sessionId` en la caché). La primera marca
+ *     la abre y la deja escrita ahí mismo, así que una recarga posterior lee las
+ *     marcas de esa sesión y no de «la última sesión abierta de hoy». Esa
+ *     heurística era el bug: repartía las marcas en sesiones de una línea y solo
+ *     se veía la última.
  *   · Desmarcar es **una sola operación** de la capa de datos: borra la línea y
  *     recalcula `last_practiced_at`. Aquí no se puede olvidar la segunda mitad.
- *   · El **objetivo diario** es la única acción que reconstruye y vuelve a
- *     congelar la lista: una decisión explícita del usuario manda sobre la
- *     congelación. Las marcas de la sesión no se tocan.
  */
 
 /** El almacenamiento del navegador, tal y como lo pide `practice-storage`. */
@@ -108,8 +110,8 @@ export default function Practice() {
   const dateKey = todayKeyFor(nowMs);
 
   const [rows, setRows] = createSignal<RepertoireRow[]>([]);
-  const [listIds, setListIds] = createSignal<string[]>([]);
-  const [overflow, setOverflow] = createSignal(0);
+  /** La lista viva, con la sesión que le pertenece. `null` mientras carga. */
+  const [plan, setPlan] = createSignal<PracticePlan | null>(null);
   const [prefs, setPrefs] = createSignal<PracticePrefs>(DEFAULT_PREFS);
   const [sessionId, setSessionId] = createSignal<string | null>(null);
   const [marked, setMarked] = createSignal<ReadonlySet<string>>(new Set<string>());
@@ -124,7 +126,19 @@ export default function Practice() {
   const [notice, setNotice] = createSignal<string | null>(null);
   /** Una escritura en vuelo: evita que un doble toque abra dos sesiones. */
   const [busy, setBusy] = createSignal(false);
-  /** Las filas de la lista, en el orden congelado (no el del generador). */
+  /**
+   * «New list» es destructivo —la lista actual no se puede recuperar—, así que
+   * pide dos pulsaciones: la primera arma, la segunda sustituye. Un clic suelto
+   * a mitad de sesión no se lleva por delante la cola.
+   */
+  const [armed, setArmed] = createSignal(false);
+  let disarmTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const listIds = () => plan()?.ids ?? [];
+  const overflow = () => plan()?.overflow ?? 0;
+  /** Instante de referencia de la lista: el suyo, no el del montaje. */
+  const planAt = () => plan()?.createdAt ?? nowMs;
+  /** Las filas de la lista, en el orden guardado (no el del generador). */
   const listRows = createMemo(() => rowsByIds(rows(), listIds()));
 
   const markedInList = createMemo(() => {
@@ -140,44 +154,67 @@ export default function Practice() {
     favoriteSaturation(rows().map((row) => ({ ...row, favorite: isFavorite(row) }))),
   );
 
-  const dateLabel = createMemo(() =>
-    new Date(nowMs).toLocaleDateString('en-GB', {
+  const generatedLabel = createMemo(() =>
+    new Date(planAt()).toLocaleString('en-GB', {
       weekday: 'long',
       day: 'numeric',
       month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
     }),
   );
 
   /**
-   * Genera la lista del día para un objetivo concreto. `nowMs` y la semilla son
-   * los del montaje: misma fecha, misma semilla, misma lista.
+   * Genera una lista nueva para un objetivo concreto.
+   *
+   * La semilla es el **instante de generación**, no la fecha: así dos listas
+   * pedidas el mismo día salen distintas, que es lo que espera quien pulsa «New
+   * list» dos veces. `excludeIds` es la penalización ×0,5 de D3: lo que salió en
+   * las últimas listas —y en la que se acaba de tirar— no vuelve a salir.
    */
-  const generate = (source: readonly RepertoireRow[], dailyTarget: number) => {
+  const buildPlan = (
+    source: readonly RepertoireRow[],
+    dailyTarget: number,
+    excludeIds: ReadonlySet<string>,
+    createdAt: number,
+  ): PracticePlan => {
     const built = buildPracticeList(toCandidates(source), {
-      seed: hashSeed(session.session()?.user.id ?? '', dateKey),
-      nowMs,
+      seed: hashSeed(session.session()?.user.id ?? '', String(createdAt)),
+      nowMs: createdAt,
       dailyTarget,
-      recentIds: previousIds(storage(), dateKey),
+      recentIds: excludeIds,
     });
     const ids = rowsByIds(
       source,
       built.entries.map((entry) => entry.candidate.id),
     ).map((row) => row.id);
-    return { ids, overflow: built.overflow };
+    return { createdAt, ids, overflow: built.overflow, sessionId: null };
   };
 
   /**
-   * Congela la lista del día **y la deja en el histórico**. Sin el histórico la
-   * penalización ×0,5 de D3 —la tune que salió ayer no vuelve a salir hoy— no
-   * tiene de dónde leer, y la anti-repetición no llega a existir: la penalización
-   * siempre vería un conjunto vacío. `recordRecentList` deduplica por fecha, así
-   * que re-congelar hoy reemplaza la entrada de hoy en vez de duplicarla.
+   * Guarda la lista **y la deja en el histórico**. Sin el histórico la
+   * penalización ×0,5 de D3 no tiene de dónde leer, y la anti-repetición no llega
+   * a existir. `recordRecentList` deduplica por fecha, así que regenerar hoy
+   * reemplaza la entrada de hoy en vez de duplicarla.
    */
-  const freezeToday = (ids: readonly string[], overflowNow: number) => {
+  const persistPlan = (next: PracticePlan) => {
     tryPersist(() => {
-      writeTodayList(storage(), dateKey, ids, overflowNow);
-      recordRecentList(storage(), { date: dateKey, ids: [...ids] });
+      writePlan(storage(), next);
+      recordRecentList(storage(), { date: todayKeyFor(next.createdAt), ids: [...next.ids] });
     });
+  };
+
+  /**
+   * Deja escrita la sesión en cuanto la primera marca la abre. Es lo que hace
+   * que una recarga posterior sepa de qué sesión leer las marcas: sin esto se
+   * volvería a «la última sesión abierta de hoy», que es justo el bug.
+   */
+  const attachSession = (id: string) => {
+    const current = plan();
+    if (!current || current.sessionId === id) return;
+    const next: PracticePlan = { ...current, sessionId: id };
+    setPlan(next);
+    tryPersist(() => writePlan(storage(), next));
   };
 
   const load = async () => {
@@ -194,27 +231,38 @@ export default function Practice() {
       const storedPrefs = readPrefs(storage());
       setPrefs(storedPrefs);
 
-      // 1. La lista congelada manda. Si existe, se materializa tal cual.
-      const frozen = readTodayList(storage(), dateKey);
-      let ids = frozen ? rowsByIds(loaded, frozen.ids).map((row) => row.id) : [];
-      let overflowNow = frozen?.overflow ?? 0;
+      // 1. La lista guardada manda: no caduca con la fecha ni se regenera al
+      //    recargar. Si sus tunes ya no están en el repertorio, no sirve.
+      const stored = readPlan(storage(), nowMs);
+      let current = stored && rowsByIds(loaded, stored.ids).length > 0 ? stored : null;
 
-      // 2. Sin lista utilizable se genera y se congela.
-      if (ids.length === 0) {
-        const built = generate(loaded, storedPrefs.dailyTarget);
-        ids = built.ids;
-        overflowNow = built.overflow;
-        freezeToday(ids, overflowNow);
+      // 2. Sin lista utilizable se genera y se guarda. Es la única generación
+      //    automática: a partir de aquí, solo «New list» la sustituye.
+      if (!current) {
+        const fresh = buildPlan(
+          loaded,
+          storedPrefs.dailyTarget,
+          previousIds(storage(), dateKey),
+          nowMs,
+        );
+        persistPlan(fresh);
+        current = fresh;
       }
+      setPlan(current);
 
-      setListIds(ids);
-      setOverflow(overflowNow);
+      // 3. Las marcas son las de la sesión **de esta lista**, por id.
+      setSessionId(null);
+      setMarked(new Set<string>());
+      const openSessionId = current.sessionId;
+      if (!openSessionId) return; // sin primera marca no hay sesión que leer
 
-      // 3. La sesión no se crea: solo se busca la de hoy, si la hay.
-      const today = await findTodaySession(startOfLocalDay(nowMs));
-      if (today) {
-        setSessionId(today.sessionId);
-        setMarked(new Set(today.markedIds));
+      setSessionId(openSessionId);
+      try {
+        setMarked(new Set(await fetchSessionMarks(openSessionId)));
+      } catch (marksError) {
+        // La sesión existe pero sus marcas no se pudieron leer. Se avisa y se
+        // sigue: marcar volverá a colgar de la misma sesión.
+        setNotice(messageOf(marksError));
       }
     } catch (loadError) {
       setError(messageOf(loadError));
@@ -224,9 +272,14 @@ export default function Practice() {
   };
 
   onMount(() => void load());
+  onCleanup(() => disarmNewList());
 
   // ── objetivo diario ───────────────────────────────────────────────
 
+  /**
+   * El objetivo ya **no** reconstruye la lista: la lista es inmutable. Solo
+   * queda guardado y decide el tamaño de la próxima que se pida con «New list».
+   */
   const shiftTarget = (delta: number) => {
     const current = prefs().dailyTarget;
     const next = Math.min(DAILY_TARGET_MAX, Math.max(DAILY_TARGET_MIN, current + delta));
@@ -235,12 +288,49 @@ export default function Practice() {
     const updated: PracticePrefs = { ...prefs(), dailyTarget: next };
     setPrefs(updated);
     tryPersist(() => writePrefs(storage(), updated));
+  };
 
-    // Acción explícita del usuario: reconstruye y re-congela. Las marcas no se tocan.
-    const built = generate(rows(), next);
-    setListIds(built.ids);
-    setOverflow(built.overflow);
-    freezeToday(built.ids, built.overflow);
+  // ── revocar la lista ──────────────────────────────────────────────
+
+  const disarmNewList = () => {
+    setArmed(false);
+    if (disarmTimer !== undefined) {
+      clearTimeout(disarmTimer);
+      disarmTimer = undefined;
+    }
+  };
+
+  /**
+   * «New list»: borra la lista guardada y genera otra **sin marcas**. Es la
+   * única salida de la caché, y por eso pide dos pulsaciones: la primera arma y
+   * se desarma sola a los cinco segundos.
+   */
+  const requestNewList = () => {
+    if (!armed()) {
+      setArmed(true);
+      disarmTimer = setTimeout(() => {
+        disarmTimer = undefined;
+        setArmed(false);
+      }, 5000);
+      return;
+    }
+    disarmNewList();
+
+    const createdAt = Date.now();
+    const current = plan();
+    // La lista que se tira tampoco vuelve a salir: a la penalización de las
+    // últimas fechas se le suman sus propios ids.
+    const exclude = new Set([
+      ...previousIds(storage(), todayKeyFor(createdAt)),
+      ...(current?.ids ?? []),
+    ]);
+    const fresh = buildPlan(rows(), prefs().dailyTarget, exclude, createdAt);
+
+    persistPlan(fresh);
+    setPlan(fresh);
+    setSessionId(null);
+    setMarked(new Set<string>());
+    setNotice(null);
   };
 
   // ── marcas ────────────────────────────────────────────────────────
@@ -268,7 +358,9 @@ export default function Practice() {
       if (openSession) {
         await addSessionMarks(openSession, [{ repertoireId: row.id, position }]);
       } else {
-        setSessionId(await createSessionWithMarks([{ repertoireId: row.id, position }]));
+        const created = await createSessionWithMarks([{ repertoireId: row.id, position }]);
+        setSessionId(created);
+        attachSession(created);
       }
       addMark(row.id);
     } catch (markError) {
@@ -299,7 +391,9 @@ export default function Practice() {
       if (openSession) {
         await addSessionMarks(openSession, pending);
       } else {
-        setSessionId(await createSessionWithMarks(pending));
+        const created = await createSessionWithMarks(pending);
+        setSessionId(created);
+        attachSession(created);
       }
       setMarked((previous) => new Set([...previous, ...pending.map((mark) => mark.repertoireId)]));
     } catch (markError) {
@@ -348,17 +442,17 @@ export default function Practice() {
     <div class="repertoire-home practice">
       <header class="page-head">
         <div>
-          <h1>Today's practice</h1>
+          <h1>Practice list</h1>
           <p class="sub">
-            {dateLabel()} ·{' '}
-            <Show when={!loading()} fallback="Loading…">
-              <b>{tuneCountLabel(listIds().length)}</b> · {markedInList()} marked
+            <Show when={!loading() && plan()} fallback="Loading…">
+              Generated {generatedLabel()} · <b>{tuneCountLabel(listIds().length)}</b> ·{' '}
+              {markedInList()} marked
             </Show>
           </p>
         </div>
 
         <div class="head-tools practice-tools">
-          <div class="practice-target" role="group" aria-label="Daily target">
+          <div class="practice-target" role="group" aria-label="Daily target for the next list">
             <button
               type="button"
               class="practice-target__step"
@@ -367,7 +461,9 @@ export default function Practice() {
             >
               −
             </button>
-            <span class="practice-target__value">{prefs().dailyTarget}</span>
+            <span class="practice-target__value" title="Decides the size of the next list">
+              {prefs().dailyTarget}
+            </span>
             <button
               type="button"
               class="practice-target__step"
@@ -379,6 +475,14 @@ export default function Practice() {
           </div>
           <button type="button" class="add" onClick={() => void markAll()}>
             Mark all
+          </button>
+          <button
+            type="button"
+            class="add add--quiet"
+            title="Clear this list and generate a new one without marks"
+            onClick={() => requestNewList()}
+          >
+            {armed() ? 'Replace this list?' : 'New list'}
           </button>
         </div>
       </header>
@@ -420,7 +524,7 @@ export default function Practice() {
         <ol class="practice-list">
           <For each={listRows()}>
             {(row, index) => {
-              const days = () => stalenessDays(row, nowMs);
+              const days = () => stalenessDays(row, planAt());
               const tag = () => stalenessTag(days());
               const color = () => stalenessColor(days());
               const key = () => cardKey(row);
@@ -491,6 +595,14 @@ export default function Practice() {
             }}
           </For>
         </ol>
+
+        {/* La lista no se refresca sola: con todo marcado se dice dónde está la salida. */}
+        <Show when={listRows().length > 0 && markedInList() === listRows().length}>
+          <p class="practice-done">
+            All {tuneCountLabel(listRows().length)} marked. This list stays as it is — press{' '}
+            <b>New list</b> when you want the next one.
+          </p>
+        </Show>
 
         <Show when={saturation().overThreshold}>
           <p class="practice-saturation">

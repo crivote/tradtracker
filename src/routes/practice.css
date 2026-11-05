@@ -93,6 +93,16 @@
   font-size: 12px;
 }
 
+/* Todo marcado: la lista no se refresca sola, así que se dice dónde está la salida. */
+.practice .practice-done {
+  max-width: 1260px;
+  margin: 18px auto 16px;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
 /* ── estados ───────────────────────────────────────────────────── */
 .practice .practice-state {
   max-width: 1260px;

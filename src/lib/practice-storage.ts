@@ -35,7 +35,9 @@ export interface KeyValueStore {
 /** Claves literales de almacenamiento. No cambiar: hay datos de usuarios ahí fuera. */
 const PREFS_KEY = 'tt-practice-prefs';
 const RECENT_KEY = 'tt-practice-recent';
-const TODAY_KEY = 'tt-practice-today';
+const PLAN_KEY = 'tt-practice-plan';
+/** Clave anterior (lista congelada **por fecha**). Solo se lee para migrarla. */
+const LEGACY_TODAY_KEY = 'tt-practice-today';
 
 /** Máximo de listas recientes que se conservan. */
 export const RECENT_LIMIT = 3;
@@ -46,11 +48,23 @@ export interface RecentList {
   ids: string[];
 }
 
-export interface TodayList {
-  date: string;
+/**
+ * La lista de ensayo viva: **inmutable** hasta que el usuario pida otra.
+ *
+ * No lleva fecha de calendario a propósito. Antes se congelaba «la de hoy» y la
+ * vista reanudaba «la última sesión abierta de hoy»; cualquier recarga en un mal
+ * momento abría una sesión nueva y las marcas se repartían en fragmentos de una
+ * línea. Aquí la lista lleva **su** sesión: la identidad la da `sessionId`, no el
+ * día ni la hora.
+ */
+export interface PracticePlan {
+  /** Instante de generación (ms epoch): fecha la cabecera y siembra la lista. */
+  createdAt: number;
   ids: string[];
   /** Vencidas que no cupieron en la lista, tal y como se congeló. */
   overflow: number;
+  /** Sesión abierta para esta lista; `null` hasta la primera marca. */
+  sessionId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +148,17 @@ function compareRecent(a: RecentList, b: RecentList): number {
   return a.date < b.date ? 1 : -1;
 }
 
+/** `createdAt` válido: instante positivo y finito; cualquier otra cosa es 0 (inválido). */
+function normalizeCreatedAt(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return 0;
+  return Math.round(value);
+}
+
+/** Un id de sesión solo vale si es una cadena con algo dentro. */
+function readSessionId(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 // ---------------------------------------------------------------------------
 // Preferencias
 // ---------------------------------------------------------------------------
@@ -198,35 +223,91 @@ export function previousIds(store: KeyValueStore, todayKey: string): Set<string>
 }
 
 // ---------------------------------------------------------------------------
-// Lista congelada del día
+// Lista de ensayo viva (caché revocable a mano)
 // ---------------------------------------------------------------------------
 
-/** La lista congelada del día, o `null` si no hay o es de otra fecha. */
-export function readTodayList(store: KeyValueStore, todayKey: string): TodayList | null {
-  const raw = parseStored(store, TODAY_KEY);
-  if (!isRecord(raw) || raw.date !== todayKey) return null;
-  const ids = readIds(raw.ids);
-  if (ids === null) return null;
-  return { date: todayKey, ids, overflow: normalizeOverflow(raw.overflow) };
-}
+/**
+ * La lista viva, o `null` si no hay ninguna utilizable.
+ *
+ * Se lee sin mirar el calendario: una lista generada anteayer sigue siendo la
+ * lista hasta que el usuario pida otra. Eso es justo lo que la hace inmutable —
+ * recargar, navegar a The Session y volver no la toca.
+ *
+ * **Migración (2026-11-05):** si no hay plan, se adopta la lista congelada de la
+ * clave vieja `tt-practice-today`, pero **solo si es de hoy**; una de ayer muere
+ * como moría antes. Al adoptarla se borra la clave vieja, para que «New list» no
+ * la resucite en la siguiente lectura. La sesión de esa lista no se hereda: no
+ * hay forma fiable de saber cuál era (era el bug), así que la primera marca abre
+ * una nueva.
+ */
+export function readPlan(store: KeyValueStore, nowMs: number): PracticePlan | null {
+  const stored = parseStored(store, PLAN_KEY);
+  if (isRecord(stored)) {
+    const ids = readIds(stored.ids);
+    const createdAt = normalizeCreatedAt(stored.createdAt);
+    if (ids !== null && createdAt !== 0) {
+      return {
+        createdAt,
+        ids,
+        overflow: normalizeOverflow(stored.overflow),
+        sessionId: readSessionId(stored.sessionId),
+      };
+    }
+  }
 
-/** Congela la lista del día; descarta cualquier lista congelada de otra fecha. */
-export function writeTodayList(
-  store: KeyValueStore,
-  todayKey: string,
-  ids: readonly string[],
-  overflow = 0,
-): void {
-  const value: TodayList = {
-    date: todayKey,
-    ids: [...ids],
-    overflow: normalizeOverflow(overflow),
+  const legacy = parseStored(store, LEGACY_TODAY_KEY);
+  if (!isRecord(legacy) || legacy.date !== todayKeyFor(nowMs)) return null;
+  const legacyIds = readIds(legacy.ids);
+  if (legacyIds === null) return null;
+
+  try {
+    store.removeItem(LEGACY_TODAY_KEY);
+  } catch {
+    /* almacenamiento bloqueado: la clave vieja se queda, pero no estorba */
+  }
+
+  return {
+    createdAt: startOfLocalDay(nowMs),
+    ids: legacyIds,
+    overflow: normalizeOverflow(legacy.overflow),
+    sessionId: null,
   };
-  store.setItem(TODAY_KEY, JSON.stringify(value));
 }
 
-export function clearTodayList(store: KeyValueStore): void {
-  store.removeItem(TODAY_KEY);
+/**
+ * Guarda la lista viva. `createdAt` tiene que ser un instante válido: sin él la
+ * lista no se podría ni fechar ni sembrar, y una lista sin fecha de generación
+ * es una lista que miente. Falla en voz alta en vez de escribir basura.
+ */
+export function writePlan(store: KeyValueStore, plan: PracticePlan): void {
+  const createdAt = normalizeCreatedAt(plan.createdAt);
+  if (createdAt === 0) {
+    throw new Error('A practice plan needs a valid createdAt.');
+  }
+
+  const value: PracticePlan = {
+    createdAt,
+    ids: [...plan.ids],
+    overflow: normalizeOverflow(plan.overflow),
+    sessionId: readSessionId(plan.sessionId),
+  };
+  store.setItem(PLAN_KEY, JSON.stringify(value));
+
+  try {
+    store.removeItem(LEGACY_TODAY_KEY);
+  } catch {
+    /* almacenamiento bloqueado */
+  }
+}
+
+/** Revoca la lista viva: la próxima carga generará una nueva. */
+export function clearPlan(store: KeyValueStore): void {
+  store.removeItem(PLAN_KEY);
+  try {
+    store.removeItem(LEGACY_TODAY_KEY);
+  } catch {
+    /* almacenamiento bloqueado */
+  }
 }
 
 // ---------------------------------------------------------------------------

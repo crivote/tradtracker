@@ -32,7 +32,7 @@ vi.mock('../lib/practice', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/practice')>();
   return {
     ...actual,
-    findTodaySession: vi.fn(),
+    fetchSessionMarks: vi.fn(),
     createSessionWithMarks: vi.fn(),
     addSessionMarks: vi.fn(),
     unmarkSessionTune: vi.fn(),
@@ -60,21 +60,21 @@ import { fetchRepertoire, saveFavorite } from '../lib/repertoire';
 import {
   addSessionMarks,
   createSessionWithMarks,
-  findTodaySession,
+  fetchSessionMarks,
   unmarkSessionTune,
 } from '../lib/practice';
 import {
+  readPlan,
   readPrefs,
-  readTodayList,
   todayKeyFor,
+  writePlan,
   writePrefs,
-  writeTodayList,
 } from '../lib/practice-storage';
 import Practice from './Practice';
 
 const mockedFetch = vi.mocked(fetchRepertoire);
 const mockedFavorite = vi.mocked(saveFavorite);
-const mockedFind = vi.mocked(findTodaySession);
+const mockedMarks = vi.mocked(fetchSessionMarks);
 const mockedCreate = vi.mocked(createSessionWithMarks);
 const mockedAdd = vi.mocked(addSessionMarks);
 const mockedUnmark = vi.mocked(unmarkSessionTune);
@@ -125,6 +125,34 @@ function row(index: number, overrides: Record<string, any> = {}) {
 
 const ROWS = Array.from({ length: 12 }, (_, i) => row(i + 1));
 
+/**
+ * Las ocho primeras de la lista por defecto: la más vencida encabeza. Se usa al
+ * sembrar una lista guardada para que la prueba no dependa de regenerarla.
+ */
+const OVERDUE_FIRST = [
+  'row-12',
+  'row-11',
+  'row-10',
+  'row-09',
+  'row-08',
+  'row-07',
+  'row-06',
+  'row-05',
+];
+
+/** Siembra la lista viva tal y como la habría dejado una sesión anterior. */
+function seedPlan(overrides: Partial<Parameters<typeof writePlan>[1]> = {}) {
+  const plan = {
+    createdAt: Date.now() - 60_000,
+    ids: OVERDUE_FIRST,
+    overflow: 4,
+    sessionId: null,
+    ...overrides,
+  };
+  writePlan(localStorage, plan);
+  return plan;
+}
+
 function renderPractice() {
   const history = createMemoryHistory();
   history.set({ value: '/practice' });
@@ -164,7 +192,7 @@ beforeEach(() => {
   sessionStorage.clear();
 
   mockedFetch.mockResolvedValue(ROWS as any);
-  mockedFind.mockResolvedValue(null);
+  mockedMarks.mockResolvedValue([]);
   mockedCreate.mockResolvedValue('session-new');
   mockedAdd.mockResolvedValue(1);
   mockedUnmark.mockResolvedValue(undefined);
@@ -199,17 +227,18 @@ describe('lista del día (#36)', () => {
     expect(stored[0].ids).toEqual(idsInOrder());
   });
 
-  it('re-congelar el mismo día reemplaza la entrada del histórico en vez de duplicarla', async () => {
+  it('el objetivo diario no toca la lista viva: decide el tamaño de la próxima', async () => {
     renderPractice();
     await waitForRows(8);
 
-    const stepUp = document.querySelector('[aria-label="Increase daily target"]') as HTMLElement;
-    fireEvent.click(stepUp);
-    await waitForRows(9);
+    const before = idsInOrder();
+    fireEvent.click(screen.getByRole('button', { name: 'Increase daily target' }));
 
-    const stored = JSON.parse(localStorage.getItem('tt-practice-recent') ?? '[]');
-    expect(stored).toHaveLength(1);
-    expect(stored[0].ids).toHaveLength(9);
+    await waitFor(() => expect(readPrefs(localStorage).dailyTarget).toBe(9));
+    // La lista es inmutable: sigue la de ocho, con su instante de generación.
+    expect(idsInOrder()).toEqual(before);
+    expect(readPlan(localStorage, Date.now())?.ids).toEqual(before);
+    expect(screenText()).toContain('12 overdue, 8 in the list');
   });
 
   it('cada fila trae el disparador del dock y ninguna monta transporte propio', async () => {
@@ -228,16 +257,15 @@ describe('lista del día (#36)', () => {
     expect(document.querySelectorAll('.practice-row__media')).toHaveLength(0);
   });
 
-  it('con ids congelados manda su orden, no el del generador', async () => {
-    const today = todayKeyFor(Date.now());
-    writeTodayList(localStorage, today, ['row-03', 'row-01', 'row-09'], 0);
+  it('la lista guardada manda: su orden, y no se genera otra', async () => {
+    const seeded = seedPlan({ ids: ['row-03', 'row-01', 'row-09'], overflow: 0 });
 
     renderPractice();
     await waitForRows(3);
 
     expect(idsInOrder()).toEqual(['row-03', 'row-01', 'row-09']);
-    // Y no se regeneró: la lista congelada sigue siendo la de tres.
-    expect(readTodayList(localStorage, today)?.ids).toEqual(['row-03', 'row-01', 'row-09']);
+    // Y no se regeneró: la lista guardada sigue siendo la de tres, con su fecha.
+    expect(readPlan(localStorage, Date.now())).toEqual(seeded);
   });
 
   it('la marca de una tune sin sesión previa abre la sesión y deja la fila marcada', async () => {
@@ -255,11 +283,15 @@ describe('lista del día (#36)', () => {
     await waitFor(() => expect(markButton.textContent).toContain('Marked'));
   });
 
-  it('con sesión reanudada marca sin abrir otra', async () => {
-    mockedFind.mockResolvedValue({ sessionId: 'session-open', markedIds: ['row-01'] });
+  it('con la sesión de la lista guardada, reanuda sus marcas y no abre otra', async () => {
+    seedPlan({ sessionId: 'session-open' });
+    mockedMarks.mockResolvedValue(['row-12']);
 
     renderPractice();
     await waitForRows(8);
+    await waitFor(() => expect(screenText()).toContain('1 marked'));
+    // Las marcas se piden a la sesión de la lista, por id.
+    expect(mockedMarks).toHaveBeenCalledWith('session-open');
 
     const rows = document.querySelectorAll('.practice-row');
     const target = rows[1] as HTMLElement;
@@ -273,11 +305,13 @@ describe('lista del día (#36)', () => {
   });
 
   it('«Mark all» escribe solo las que faltan y dos pulsaciones no duplican', async () => {
-    // Las dos más vencidas: son las que encabezan la lista de ocho.
-    mockedFind.mockResolvedValue({ sessionId: 'session-open', markedIds: ['row-12', 'row-11'] });
+    // Las dos más vencidas (row-12 y row-11) ya estaban marcadas.
+    seedPlan({ sessionId: 'session-open' });
+    mockedMarks.mockResolvedValue(['row-12', 'row-11']);
 
     renderPractice();
     await waitForRows(8);
+    await waitFor(() => expect(screenText()).toContain('2 marked'));
 
     fireEvent.click(screen.getByRole('button', { name: /^Mark all$/ }));
 
@@ -293,13 +327,12 @@ describe('lista del día (#36)', () => {
   });
 
   it('desmarcar llama a la capa que borra y recalcula, con la fila correcta', async () => {
-    mockedFind.mockResolvedValue({
-      sessionId: 'session-open',
-      markedIds: ROWS.map((item) => item.id),
-    });
+    seedPlan({ sessionId: 'session-open' });
+    mockedMarks.mockResolvedValue(OVERDUE_FIRST);
 
     renderPractice();
     await waitForRows(8);
+    await waitFor(() => expect(screenText()).toContain('8 marked'));
 
     const firstId = idsInOrder()[0];
     fireEvent.click(screen.getByRole('button', { name: `Unmark Tune ${firstId.slice(-2)}` }));
@@ -353,17 +386,22 @@ describe('lista del día (#36)', () => {
     expect(heart.getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('el + del objetivo escribe prefs y reconstruye la lista', async () => {
+  it('tras subir el objetivo, «New list» genera la lista del tamaño nuevo', async () => {
     renderPractice();
     await waitForRows(8);
     expect(screenText()).toContain('12 overdue, 8 in the list');
 
     fireEvent.click(screen.getByRole('button', { name: 'Increase daily target' }));
+    await waitFor(() => expect(readPrefs(localStorage).dailyTarget).toBe(9));
+    // Subir el objetivo no toca la lista viva.
+    expect(document.querySelectorAll('.practice-row')).toHaveLength(8);
 
-    await waitForRows(9);
-    expect(readPrefs(localStorage).dailyTarget).toBe(9);
-    // Re-congelada con el objetivo nuevo: el aviso baja a 3 fuera.
-    expect(readTodayList(localStorage, todayKeyFor(Date.now()))?.ids).toHaveLength(9);
+    fireEvent.click(screen.getByRole('button', { name: 'New list' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Replace this list?' }));
+
+    await waitFor(() => expect(document.querySelectorAll('.practice-row')).toHaveLength(9));
+    expect(readPlan(localStorage, Date.now())?.ids).toHaveLength(9);
+    // Nueve de doce en la lista: tres se quedan fuera.
     expect(screenText()).toContain('12 overdue, 9 in the list');
   });
 
@@ -378,6 +416,73 @@ describe('lista del día (#36)', () => {
     await waitFor(() => expect(firstRow.classList.contains('is-marked')).toBe(true));
     expect(idsInOrder()).toEqual(before);
     expect(firstRow.textContent).toContain('Marked ✓');
+  });
+
+  it('recargar conserva la lista y sus marcas: la sesión va escrita en la lista', async () => {
+    renderPractice();
+    await waitForRows(8);
+
+    const firstId = idsInOrder()[0];
+    fireEvent.click(document.querySelector('.practice-row .practice-row__mark') as HTMLElement);
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screenText()).toContain('1 marked'));
+
+    // La primera marca dejó la sesión escrita junto a la lista.
+    const stored = readPlan(localStorage, Date.now());
+    expect(stored?.sessionId).toBe('session-new');
+    expect(stored?.ids).toEqual(idsInOrder());
+
+    // Recarga —o volver de un enlace de The Session—: las marcas se piden a ESA
+    // sesión, no a «la última abierta de hoy». Era el bug de las sesiones de una
+    // línea: cada recarga perdía todas menos la última.
+    cleanup();
+    mockedMarks.mockResolvedValue([firstId]);
+    renderPractice();
+    await waitForRows(8);
+
+    await waitFor(() => expect(mockedMarks).toHaveBeenCalledWith('session-new'));
+    await waitFor(() => expect(screenText()).toContain('1 marked'));
+    expect(idsInOrder()).toEqual(stored?.ids);
+    expect(document.querySelectorAll('.practice-row.is-marked')).toHaveLength(1);
+    // No se abrió una sesión nueva por la recarga.
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('«New list» pide confirmación y genera otra sin marcas', async () => {
+    renderPractice();
+    await waitForRows(8);
+    fireEvent.click(document.querySelector('.practice-row .practice-row__mark') as HTMLElement);
+    await waitFor(() => expect(screenText()).toContain('1 marked'));
+
+    const before = readPlan(localStorage, Date.now());
+
+    // Primera pulsación: arma, no destruye.
+    fireEvent.click(screen.getByRole('button', { name: 'New list' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Replace this list?' })).toBeTruthy(),
+    );
+    expect(readPlan(localStorage, Date.now())?.createdAt).toBe(before?.createdAt);
+
+    // Segunda: la sustituye, sin sesión y sin marcas.
+    fireEvent.click(screen.getByRole('button', { name: 'Replace this list?' }));
+    await waitFor(() => expect(screenText()).toContain('0 marked'));
+
+    const after = readPlan(localStorage, Date.now());
+    expect(after?.sessionId).toBeNull();
+    expect(after?.createdAt).not.toBe(before?.createdAt);
+    expect(document.querySelectorAll('.practice-row.is-marked')).toHaveLength(0);
+  });
+
+  it('con toda la lista marcada lo dice y remite a «New list», sin refrescarse sola', async () => {
+    seedPlan({ sessionId: 'session-open' });
+    mockedMarks.mockResolvedValue(OVERDUE_FIRST);
+
+    renderPractice();
+    await waitForRows(8);
+    await waitFor(() => expect(screenText()).toContain('All 8 tunes marked.'));
+
+    // Completa no es sinónimo de caducada: la lista sigue siendo la misma.
+    expect(idsInOrder()).toEqual(OVERDUE_FIRST);
   });
 
   it('sin repertorio lo dice y ofrece la puerta para añadir tunes', async () => {

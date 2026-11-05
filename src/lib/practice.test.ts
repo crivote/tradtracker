@@ -18,16 +18,16 @@ const h = vi.hoisted(() => ({
   /** Resultado de cada `insert` de `pr_session_tunes`, en orden; si se acaba, `lineResult`. */
   lineResults: [] as any[],
   lineResult: { error: null } as any,
-  /** Respuesta de la consulta de la sesión de hoy (`findTodaySession`). */
-  todaySessionResult: { data: null, error: null } as any,
+  /** Respuesta de `fetchSessionMarks`: líneas de una sesión concreta. */
+  marksResult: { data: null, error: null } as any,
   deleteResult: { error: null } as any,
   rpcResult: { error: null } as any,
   sessionBodies: [] as any[],
   lineBodies: [] as any[],
   deleted: [] as string[],
   deletes: [] as Array<Record<string, string>>,
-  sessionFilters: [] as any[],
-  sessionSelect: '' as string,
+  marksSelect: '' as string,
+  marksFilters: [] as any[],
   rpcCalls: [] as Array<{ fn: string; args: any }>,
 }));
 
@@ -92,10 +92,6 @@ vi.mock('./supabase', () => {
               };
               return self;
             },
-            select: (columns: string) => {
-              h.sessionSelect = columns;
-              return chain(h.todaySessionResult, (call) => h.sessionFilters.push(call));
-            },
           };
         }
 
@@ -105,6 +101,10 @@ vi.mock('./supabase', () => {
               h.lineBodies.push(body);
               if (h.lineResults.length > 0) return h.lineResults.shift();
               return h.lineResult;
+            },
+            select: (columns: string) => {
+              h.marksSelect = columns;
+              return chain(h.marksResult, (call) => h.marksFilters.push(call));
             },
             delete: () => {
               const record: Record<string, string> = {};
@@ -141,7 +141,7 @@ vi.mock('./supabase', () => {
 import {
   addSessionMarks,
   createSessionWithMarks,
-  findTodaySession,
+  fetchSessionMarks,
   logPractice,
   unmarkSessionTune,
 } from './practice';
@@ -150,15 +150,15 @@ beforeEach(() => {
   h.sessionResult = { data: { id: 'session-1' }, error: null };
   h.lineResults = [];
   h.lineResult = { error: null };
-  h.todaySessionResult = { data: null, error: null };
+  h.marksResult = { data: null, error: null };
   h.deleteResult = { error: null };
   h.rpcResult = { error: null };
   h.sessionBodies = [];
   h.lineBodies = [];
   h.deleted = [];
   h.deletes = [];
-  h.sessionFilters = [];
-  h.sessionSelect = '';
+  h.marksSelect = '';
+  h.marksFilters = [];
   h.rpcCalls = [];
 });
 
@@ -207,48 +207,38 @@ describe('logPractice', () => {
   });
 });
 
-describe('findTodaySession (#36)', () => {
-  it('busca la sesión de hoy sin cerrar, la más reciente, con sus marcas', async () => {
-    h.todaySessionResult = {
-      data: {
-        id: 'session-today',
-        started_at: '2026-10-31T09:00:00Z',
-        pr_session_tunes: [{ repertoire_id: 'row-a' }, { repertoire_id: 'row-b' }],
-      },
+describe('fetchSessionMarks (#36)', () => {
+  it('lee las marcas de la sesión de la lista, por id, sin adivinar fechas', async () => {
+    h.marksResult = {
+      data: [{ repertoire_id: 'row-a' }, { repertoire_id: 'row-b' }],
       error: null,
     };
 
-    const dayStart = new Date(2026, 9, 31, 0, 0).getTime();
-    const session = await findTodaySession(dayStart);
-
-    expect(session).toEqual({ sessionId: 'session-today', markedIds: ['row-a', 'row-b'] });
-    // Los filtros son el contrato: día local y sesión abierta.
-    expect(h.sessionSelect).toContain('pr_session_tunes(repertoire_id)');
-    expect(h.sessionFilters).toEqual([
-      { method: 'gte', col: 'started_at', val: new Date(dayStart).toISOString() },
-      { method: 'is', col: 'ended_at', val: null },
-      { method: 'order', col: 'started_at', opts: { ascending: false } },
-      { method: 'limit', n: 1 },
-    ]);
-  });
-
-  it('sin sesión devuelve null, no un error', async () => {
-    h.todaySessionResult = { data: null, error: null };
-    await expect(findTodaySession(Date.now())).resolves.toBeNull();
+    await expect(fetchSessionMarks('session-1')).resolves.toEqual(['row-a', 'row-b']);
+    expect(h.marksSelect).toBe('repertoire_id');
+    expect(h.marksFilters).toEqual([{ method: 'eq', col: 'session_id', val: 'session-1' }]);
   });
 
   it('una sesión sin líneas marca vacío y no revienta', async () => {
-    h.todaySessionResult = { data: { id: 's', pr_session_tunes: null }, error: null };
-    await expect(findTodaySession(Date.now())).resolves.toEqual({
-      sessionId: 's',
-      markedIds: [],
-    });
+    h.marksResult = { data: [], error: null };
+    await expect(fetchSessionMarks('session-1')).resolves.toEqual([]);
+
+    h.marksResult = { data: null, error: null };
+    await expect(fetchSessionMarks('session-1')).resolves.toEqual([]);
+  });
+
+  it('descarta líneas sin id en vez de devolver huecos', async () => {
+    h.marksResult = {
+      data: [{ repertoire_id: 'row-a' }, { repertoire_id: null }, {}],
+      error: null,
+    };
+    await expect(fetchSessionMarks('session-1')).resolves.toEqual(['row-a']);
   });
 
   it('el error de la consulta se lanza con contexto', async () => {
-    h.todaySessionResult = { data: null, error: { message: 'boom' } };
-    await expect(findTodaySession(Date.now())).rejects.toThrow(
-      "Could not load today's practice: boom"
+    h.marksResult = { data: null, error: { message: 'boom' } };
+    await expect(fetchSessionMarks('session-1')).rejects.toThrow(
+      'Could not load the practice marks: boom'
     );
   });
 });

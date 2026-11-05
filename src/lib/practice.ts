@@ -74,12 +74,6 @@ export interface SessionMark {
   position: number;
 }
 
-/** La sesión de hoy ya abierta, con lo que lleva marcado. */
-export interface TodaySession {
-  sessionId: string;
-  markedIds: string[];
-}
-
 /** Una línea de `pr_session_tunes` tal y como la escribe este corte. */
 function markRow(sessionId: string, mark: SessionMark) {
   return {
@@ -92,32 +86,26 @@ function markRow(sessionId: string, mark: SessionMark) {
 }
 
 /**
- * La sesión de hoy sin cerrar, si existe (#36). Se busca por `started_at`
- * dentro del día local que empieza en `dayStartMs` y `ended_at is null`, la más
- * reciente: si el usuario abrió dos, se reanuda la última.
+ * Las marcas de **una sesión concreta** (#36), por id y sin adivinar.
  *
- * «No hay sesión» es `null`, no un error: abrir la lista por la mañana no crea
- * nada y no puede parecer un fallo.
+ * Antes se buscaba «la última sesión abierta de hoy»; cuando esa consulta no
+ * acertaba —una recarga, un montaje temprano— la vista creía no tener sesión y
+ * la siguiente marca abría otra. Resultado: una sesión de una línea por marca y
+ * solo la última visible. La lista guarda su `sessionId`, así que aquí no hay
+ * nada que interpretar: o la sesión es esa, o no hay marcas.
  */
-export async function findTodaySession(dayStartMs: number): Promise<TodaySession | null> {
+export async function fetchSessionMarks(sessionId: string): Promise<string[]> {
   const { data, error } = await supabase
-    .from('pr_sessions')
-    .select('id,started_at,pr_session_tunes(repertoire_id)')
-    .gte('started_at', new Date(dayStartMs).toISOString())
-    .is('ended_at', null)
-    .order('started_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .from('pr_session_tunes')
+    .select('repertoire_id')
+    .eq('session_id', sessionId);
 
-  if (error) throw new Error(`Could not load today's practice: ${error.message}`);
-  if (!data?.id) return null;
+  if (error) throw new Error(`Could not load the practice marks: ${error.message}`);
 
-  const lines = Array.isArray(data.pr_session_tunes) ? data.pr_session_tunes : [];
-  const markedIds = lines
+  const lines = Array.isArray(data) ? data : [];
+  return lines
     .map((line: { repertoire_id?: unknown }) => line?.repertoire_id)
     .filter((id: unknown): id is string => typeof id === 'string');
-
-  return { sessionId: data.id, markedIds };
 }
 
 /**
