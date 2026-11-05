@@ -18,12 +18,22 @@ export const INSTRUMENTS: readonly PracticeInstrument[] = ['fiddle', 'whistle', 
 export interface PracticePrefs {
   instrument: PracticeInstrument;
   dailyTarget: number;
+  /**
+   * Tope del banco de trabajo (#52): cuántas tunes caben a la vez en
+   * `learning`. Es un límite WIP, no un contador: con ciento noventa y dos
+   * entradas no hay rotación, hay cola. Vive aquí —y no en una constante— para
+   * poder ajustarlo sin desplegar; el valor por defecto es el ~6 que ya declara
+   * el reparto tipo de la spec.
+   */
+  learningSlots: number;
 }
 
-export const DEFAULT_PREFS: PracticePrefs = { instrument: 'fiddle', dailyTarget: 8 };
+export const DEFAULT_PREFS: PracticePrefs = { instrument: 'fiddle', dailyTarget: 8, learningSlots: 6 };
 
 export const DAILY_TARGET_MIN = 1;
 export const DAILY_TARGET_MAX = 20;
+export const LEARNING_SLOTS_MIN = 1;
+export const LEARNING_SLOTS_MAX = 20;
 
 /** Lo que necesita el módulo de un almacenamiento: `window.localStorage` encaja sin adaptador. */
 export interface KeyValueStore {
@@ -120,10 +130,23 @@ function isInstrument(value: unknown): value is PracticeInstrument {
  * cae al valor por defecto: preferimos 8 antes que adivinar.
  */
 function normalizeDailyTarget(value: unknown): number {
-  if (typeof value !== 'number') return DEFAULT_PREFS.dailyTarget;
+  return normalizeCount(value, DEFAULT_PREFS.dailyTarget, DAILY_TARGET_MIN, DAILY_TARGET_MAX);
+}
+
+/**
+ * Entero acotado a `[min, max]`; cualquier otra cosa (cadena incluida) cae al
+ * valor por defecto: preferimos un número razonable antes que adivinar.
+ */
+function normalizeCount(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number') return fallback;
   const rounded = Math.round(value);
-  const clamped = Math.min(DAILY_TARGET_MAX, Math.max(DAILY_TARGET_MIN, rounded));
-  return Number.isFinite(clamped) ? clamped : DEFAULT_PREFS.dailyTarget;
+  const clamped = Math.min(max, Math.max(min, rounded));
+  return Number.isFinite(clamped) ? clamped : fallback;
+}
+
+/** Tope del banco de trabajo (#52), acotado igual que el objetivo diario. */
+function normalizeLearningSlots(value: unknown): number {
+  return normalizeCount(value, DEFAULT_PREFS.learningSlots, LEARNING_SLOTS_MIN, LEARNING_SLOTS_MAX);
 }
 
 /**
@@ -140,6 +163,7 @@ function normalizePrefs(raw: unknown): PracticePrefs {
   return {
     instrument: isInstrument(raw.instrument) ? raw.instrument : DEFAULT_PREFS.instrument,
     dailyTarget: normalizeDailyTarget(raw.dailyTarget),
+    learningSlots: normalizeLearningSlots(raw.learningSlots),
   };
 }
 

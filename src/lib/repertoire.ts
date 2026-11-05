@@ -35,6 +35,9 @@ const REPERTOIRE_SELECT = [
   'notes',
   'added_at',
   'last_practiced_at',
+  // Reloj del banco de trabajo (#52): el trigger solo lo mueve al cambiar de
+  // peldaño. Sin esta columna en el `select`, el taller no puede medir el dwell.
+  'status_changed_at',
   // Fondo del tune (#31): las doce columnas de la migración 005.
   'image_source',
   'image_id',

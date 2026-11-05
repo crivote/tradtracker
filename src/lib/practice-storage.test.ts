@@ -4,6 +4,8 @@ import {
   DEFAULT_PREFS,
   DAILY_TARGET_MIN,
   DAILY_TARGET_MAX,
+  LEARNING_SLOTS_MIN,
+  LEARNING_SLOTS_MAX,
   RECENT_LIMIT,
   readPrefs,
   writePrefs,
@@ -51,32 +53,45 @@ describe('constantes del contrato', () => {
     expect(INSTRUMENTS).toEqual(['fiddle', 'whistle', 'accordion', 'banjo']);
   });
 
-  it('DEFAULT_PREFS es fiddle/8 y el rango de objetivo es 1..20', () => {
-    expect(DEFAULT_PREFS).toEqual({ instrument: 'fiddle', dailyTarget: 8 });
+  it('DEFAULT_PREFS es fiddle/8/6 y los rangos son 1..20', () => {
+    expect(DEFAULT_PREFS).toEqual({ instrument: 'fiddle', dailyTarget: 8, learningSlots: 6 });
     expect(DAILY_TARGET_MIN).toBe(1);
     expect(DAILY_TARGET_MAX).toBe(20);
+    expect(LEARNING_SLOTS_MIN).toBe(1);
+    expect(LEARNING_SLOTS_MAX).toBe(20);
     expect(RECENT_LIMIT).toBe(3);
   });
 });
 
 describe('readPrefs / writePrefs', () => {
   it('sin nada guardado devuelve los defaults completos', () => {
-    expect(readPrefs(store)).toEqual({ instrument: 'fiddle', dailyTarget: 8 });
+    expect(readPrefs(store)).toEqual({ instrument: 'fiddle', dailyTarget: 8, learningSlots: 6 });
   });
 
   it('hace ida y vuelta de un instrumento y objetivo válidos', () => {
-    writePrefs(store, { instrument: 'banjo', dailyTarget: 12 });
-    expect(readPrefs(store)).toEqual({ instrument: 'banjo', dailyTarget: 12 });
+    writePrefs(store, { instrument: 'banjo', dailyTarget: 12, learningSlots: 4 });
+    expect(readPrefs(store)).toEqual({ instrument: 'banjo', dailyTarget: 12, learningSlots: 4 });
   });
 
   it('un instrumento desconocido cae a fiddle pero conserva el objetivo', () => {
     store.setItem(PREFS_KEY, JSON.stringify({ instrument: 'bouzouki', dailyTarget: 15 }));
-    expect(readPrefs(store)).toEqual({ instrument: 'fiddle', dailyTarget: 15 });
+    // Una clave escrita antes de #52 no trae el tope: cae al valor por defecto,
+    // no a `undefined` (que bloquearía el taller con un `NaN`).
+    expect(readPrefs(store)).toEqual({ instrument: 'fiddle', dailyTarget: 15, learningSlots: 6 });
   });
 
-  it('devuelve las dos claves aunque solo haya una guardada', () => {
+  it('el tope del taller se acota y una basura cae al valor por defecto (#52)', () => {
+    store.setItem(PREFS_KEY, JSON.stringify({ learningSlots: 99 }));
+    expect(readPrefs(store).learningSlots).toBe(LEARNING_SLOTS_MAX);
+    store.setItem(PREFS_KEY, JSON.stringify({ learningSlots: 0 }));
+    expect(readPrefs(store).learningSlots).toBe(LEARNING_SLOTS_MIN);
+    store.setItem(PREFS_KEY, JSON.stringify({ learningSlots: '8' }));
+    expect(readPrefs(store).learningSlots).toBe(6);
+  });
+
+  it('devuelve las tres claves aunque solo haya una guardada', () => {
     store.setItem(PREFS_KEY, JSON.stringify({ dailyTarget: 5 }));
-    expect(readPrefs(store)).toEqual({ instrument: 'fiddle', dailyTarget: 5 });
+    expect(readPrefs(store)).toEqual({ instrument: 'fiddle', dailyTarget: 5, learningSlots: 6 });
   });
 
   it('acota el objetivo fuera de rango en vez de descartarlo', () => {
@@ -104,7 +119,7 @@ describe('readPrefs / writePrefs', () => {
   it('JSON inválido, null, array, objeto y número caen a defaults sin lanzar', () => {
     for (const raw of ['{no es json', 'null', '[]', '42', '"texto"', 'true']) {
       store.setItem(PREFS_KEY, raw);
-      expect(readPrefs(store)).toEqual({ instrument: 'fiddle', dailyTarget: 8 });
+      expect(readPrefs(store)).toEqual({ instrument: 'fiddle', dailyTarget: 8, learningSlots: 6 });
     }
   });
 
@@ -468,7 +483,7 @@ describe('integración del ciclo de la lista', () => {
 describe('aislamiento entre claves', () => {
   it('las claves son literales distintas y no se pisan', () => {
     const at = new Date(2026, 9, 31, 12, 0).getTime();
-    writePrefs(store, { instrument: 'whistle', dailyTarget: 10 });
+    writePrefs(store, { instrument: 'whistle', dailyTarget: 10, learningSlots: 6 });
     recordRecentList(store, { date: '2026-10-31', ids: ['a'] });
     writePlan(store, { createdAt: at, ids: ['a'], overflow: 0, sessionId: null });
 

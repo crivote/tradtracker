@@ -61,6 +61,7 @@ import {
   loadVocabulary,
   removeTuneTag,
 } from '../lib/tags-db';
+import { readPrefs } from '../lib/practice-storage';
 import Repertoire from './Repertoire';
 
 const mockedFetch = vi.mocked(fetchRepertoire);
@@ -237,6 +238,9 @@ beforeEach(() => {
   // La preferencia de vista vive en `sessionStorage`: sin limpiar, la prueba que
   // abre la lista dejaría «table» puesto para la siguiente.
   sessionStorage.clear();
+  // El tope del taller vive en `localStorage` (#52): una prueba que lo sube
+  // dejaría el valor puesto para la siguiente, que espera el de fábrica.
+  localStorage.removeItem('tt-practice-prefs');
 });
 
 afterEach(() => cleanup());
@@ -313,10 +317,11 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
 
   it('el tope son tres filas: 12 cartas por banda, y el resto va al listado (#46)', async () => {
     // 14 en el mismo peldaño con la rejilla de cuatro columnas: caben 12 (3 × 4).
+    // Se prueban sobre `solo_ready`: el taller (`learning`) ya no es una rejilla (#52).
     const bulk = Array.from({ length: 14 }, (_, index) =>
       row({
         id: `bulk-${index}`,
-        status: 'learning',
+        status: 'solo_ready',
         tune: { ...row().tune, id: `t-bulk-${index}`, name: `Bulk Tune ${index}` },
       })
     );
@@ -346,7 +351,7 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
       renderHome();
 
       await waitFor(() => expect(screen.getByText('Bulk Tune 0')).toBeTruthy());
-      const band = document.querySelector('[data-band="learning"]') as HTMLElement;
+      const band = document.querySelector('[data-band="solo_ready"]') as HTMLElement;
       expect(band.querySelectorAll('.card').length).toBe(12);
       // Dos de las catorce se quedan fuera (el orden dentro de la banda es por
       // título, así que no se afirma *cuáles*: solo que son doce de catorce).
@@ -364,10 +369,10 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
 
     await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show only Learning' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show only Solo-ready' }));
 
-    await waitFor(() => expect(screen.queryByText('Drowsy Maggie')).toBeNull());
-    expect(screen.getByText('Cooley’s Reel')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Cooley’s Reel')).toBeNull());
+    expect(screen.getByText('Drowsy Maggie')).toBeTruthy();
     // La barra dice qué se está viendo, con la vuelta disponible.
     expect(screen.getByText(/Showing/)).toBeTruthy();
     expect(screen.getByRole('button', { name: /Back to all/ })).toBeTruthy();
@@ -378,7 +383,7 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
     await waitFor(() => {
       expect(document.querySelector('.repertoire-home table')).toBeTruthy();
     });
-    expect(screen.getByText('Cooley’s Reel')).toBeTruthy();
+    expect(screen.getByText('Drowsy Maggie')).toBeTruthy();
     expect(screen.queryByText('Morning Dew')).toBeNull();
   });
 
@@ -872,5 +877,112 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
     expect(screen.queryByRole('button', { name: 'Tag selection' })).toBeNull();
     // Y la fila del ámbito sí está, para no confundir «vacío» con «acotado».
     expect(screen.getByText('The Cameron Highlanders')).toBeTruthy();
+  });
+});
+
+/**
+ * Banco de trabajo (#52): `learning` deja de ser una banda de biblioteca.
+ *
+ * Aquí se prueba lo que solo se ve montando la pantalla —la lista en vez de
+ * cartas, el orden por dwell, el tope en la cabecera y su efecto en la puerta del
+ * backlog—; la aritmética vive en `repertoire-model.test.ts`.
+ */
+describe('banco de trabajo (#52)', () => {
+  const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+
+  function learningRow(id: string, name: string, dwell: number, practices: number) {
+    return row({
+      id,
+      status: 'learning',
+      status_changed_at: daysAgo(dwell),
+      practice_count: practices,
+      tune: { ...row().tune, id: `t-${id}`, name },
+    });
+  }
+
+  it('learning se pinta como lista de trabajo, con el dwell delante y sin cartas', async () => {
+    mockedFetch.mockResolvedValue([
+      learningRow('wb-new', 'Brand New Tune', 2, 0),
+      learningRow('wb-stuck', 'Stuck Tune', 40, 3),
+      row({
+        id: 'row-solo',
+        status: 'solo_ready',
+        tune: { ...row().tune, id: 't-solo', name: 'Drowsy Maggie' },
+      }),
+    ] as any);
+
+    renderHome('/?band=learning');
+    await waitFor(() => expect(screen.getByText('Stuck Tune')).toBeTruthy());
+
+    const band = document.querySelector('[data-band="learning"]') as HTMLElement;
+    // Ni una carta: en el taller la foto no sirve, la tune no se toca en sesión.
+    expect(band.querySelectorAll('.card').length).toBe(0);
+    // El orden es el dwell, no el abandono: la más atascada primero.
+    const titles = Array.from(band.querySelectorAll('.wb-title a')).map((node) => node.textContent);
+    expect(titles).toEqual(['Stuck Tune', 'Brand New Tune']);
+    // Y la fila dice lo que sirve para decidir.
+    const stuck = band.querySelectorAll('.workbench li')[0] as HTMLElement;
+    expect(stuck.textContent).toContain('40 days');
+    expect(stuck.textContent).toContain('3');
+    expect(stuck.textContent).toContain('practices');
+  });
+
+  it('la cabecera del taller dice cuánto ocupa del tope y cuánto sobra', async () => {
+    const bulk = Array.from({ length: 8 }, (_, index) =>
+      learningRow(`wb-${index}`, `Bench Tune ${index}`, index, 0)
+    );
+    mockedFetch.mockResolvedValue(bulk as any);
+
+    renderHome();
+    const band = await waitFor(() => {
+      const node = document.querySelector('[data-band="learning"]') as HTMLElement | null;
+      expect(node).toBeTruthy();
+      return node as HTMLElement;
+    });
+    // Seis por defecto: ocho en el taller son dos de más.
+    await waitFor(() => expect(band.textContent).toContain('8 of 6 slots'));
+    expect(band.textContent).toContain('over by 2');
+  });
+
+  it('el tope se ajusta en la propia banda y queda guardado', async () => {
+    mockedFetch.mockResolvedValue([
+      learningRow('wb-a', 'Bench Tune A', 3, 1),
+      learningRow('wb-b', 'Bench Tune B', 9, 0),
+    ] as any);
+
+    renderHome();
+    await waitFor(() => expect(screen.getByText('Bench Tune A')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'More learning slots' }));
+
+    await waitFor(() => expect(document.body.textContent).toContain('2 of 7 slots'));
+    expect(readPrefs(localStorage).learningSlots).toBe(7);
+  });
+
+  it('con el taller lleno, «Start learning» no deja entrar sin sacar una', async () => {
+    const bulk = [
+      ...Array.from({ length: 6 }, (_, index) =>
+        learningRow(`wb-${index}`, `Bench Tune ${index}`, index, 0)
+      ),
+      row({
+        id: 'row-backlog',
+        status: 'to_learn',
+        tune: { ...row().tune, id: 't-back', name: 'Morning Dew' },
+      }),
+    ];
+    mockedFetch.mockResolvedValue(bulk as any);
+
+    renderHome();
+    await waitFor(() => expect(screen.getByText('Bench Tune 0')).toBeTruthy());
+
+    // La puerta del backlog está en la cabecera; su listado trae el menú.
+    fireEvent.click(screen.getByRole('button', { name: /1 to learn/ }));
+    await waitFor(() => expect(document.querySelector('.repertoire-home table')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Morning Dew' }));
+
+    const start = screen.getByRole('menuitem', { name: /Start learning/ }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    expect(document.body.textContent).toContain('The workbench is full');
   });
 });

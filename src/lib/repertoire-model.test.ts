@@ -31,6 +31,10 @@ import {
   practiceSummary,
   qualityDots,
   rhythmOptions,
+  invariantsText,
+  learningSlots,
+  dwellDays,
+  workbenchRows,
   rowInvariants,
   rungOf,
   searchRepertoire,
@@ -162,6 +166,8 @@ function makeRow(input: {
   rating?: number | null;
   added_at?: string;
   last_practiced_at?: string | null;
+  /** Reloj del banco de trabajo (#52): solo viaja si la prueba lo pide. */
+  status_changed_at?: string | null;
   status?: TuneStatus;
   shelved?: boolean;
   key?: string | null;
@@ -1220,5 +1226,67 @@ describe('cardKey', () => {
     expect(cardKey(row)).toBe('G');
     // La tabla sigue mostrando su guion de siempre (no se toca esa vista).
     expect(displayKey(makeRow({ id: 'none', key: null }))).toBe('—');
+  });
+});
+
+/**
+ * Banco de trabajo (#52): `learning` se mide con otro reloj.
+ *
+ * El de la rejilla es el abandono (`last_practiced_at`); el del taller es el
+ * **dwell** (`status_changed_at`), porque la pregunta no es cuánto hace que no la
+ * toco sino cuánto hace que no se mueve.
+ */
+describe('banco de trabajo (#52)', () => {
+  const NOW = Date.parse('2026-11-05T12:00:00Z');
+  const daysBefore = (days: number) => new Date(NOW - days * 86_400_000).toISOString();
+
+  it('el dwell se cuenta desde el último cambio de peldaño, y sin fecha es null', () => {
+    const row = makeRow({ id: 'a', status: 'learning', status_changed_at: daysBefore(12) });
+    expect(dwellDays(row, NOW)).toBe(12);
+    // «Sin dato» no es «cero días»: un cero se leería como recién llegada.
+    expect(dwellDays(makeRow({ id: 'b', status: 'learning', status_changed_at: null }), NOW)).toBeNull();
+  });
+
+  it('ordena por dwell descendente y rompe el empate por título, no por llegada', () => {
+    const rows = [
+      makeRow({ id: 'fresh', name: 'Alpha Reel', status: 'learning', status_changed_at: daysBefore(2) }),
+      makeRow({ id: 'stuck', name: 'Zeta Jig', status: 'learning', status_changed_at: daysBefore(40) }),
+      makeRow({ id: 'tie-b', name: 'Beta Reel', status: 'learning', status_changed_at: daysBefore(9) }),
+      makeRow({ id: 'tie-a', name: 'Álpha Jig', status: 'learning', status_changed_at: daysBefore(9) }),
+    ];
+    expect(workbenchRows(rows, NOW).map((row) => row.id)).toEqual(['stuck', 'tie-a', 'tie-b', 'fresh']);
+  });
+
+  it('deja fuera aparcadas y otras bandas, y manda al final lo que no trae fecha', () => {
+    const rows = [
+      makeRow({ id: 'shelved', status: 'learning', shelved: true, status_changed_at: daysBefore(90) }),
+      makeRow({ id: 'library', status: 'solo_ready', status_changed_at: daysBefore(90) }),
+      makeRow({ id: 'unknown', status: 'learning', status_changed_at: null }),
+      makeRow({ id: 'known', status: 'learning', status_changed_at: daysBefore(30) }),
+    ];
+    expect(workbenchRows(rows, NOW).map((row) => row.id)).toEqual(['known', 'unknown']);
+  });
+
+  it('el tope cuenta lo que ocupa y lo que sobra, sin contar aparcadas', () => {
+    const rows = [
+      makeRow({ id: 'a', status: 'learning' }),
+      makeRow({ id: 'b', status: 'learning' }),
+      makeRow({ id: 'c', status: 'learning' }),
+      makeRow({ id: 'shelved', status: 'learning', shelved: true }),
+      makeRow({ id: 'other', status: 'shaky' }),
+    ];
+    expect(learningSlots(rows, 6)).toEqual({ used: 3, limit: 6, free: 3, over: 0 });
+    expect(learningSlots(rows, 2)).toEqual({ used: 3, limit: 2, free: 0, over: 1 });
+    // Un tope roto cae a 1, no a «sin tope»: quedarse corto es lo seguro.
+    expect(learningSlots(rows, Number.NaN).limit).toBe(1);
+    expect(learningSlots(rows, 0).limit).toBe(1);
+  });
+
+  it('los invariantes se juntan en una línea y lo que falta se omite', () => {
+    expect(
+      invariantsText(makeRow({ id: 'a', rhythm: 'Reel', meter: '4/4', composer: 'Tommy Coen' }))
+    ).toBe('Reel · 4/4 · Tommy Coen');
+    expect(invariantsText(makeRow({ id: 'b', rhythm: 'Jig', meter: null, composer: null }))).toBe('Jig');
+    expect(invariantsText(makeRow({ id: 'c', rhythm: null, meter: null, composer: null }))).toBe('');
   });
 });

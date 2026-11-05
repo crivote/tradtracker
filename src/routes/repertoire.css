@@ -1401,3 +1401,117 @@
     width: 100%;
   }
 }
+
+/* ── banco de trabajo (#52): lista, no rejilla ─────────────────────────
+   `learning` no se mira como la biblioteca: aquí lo que decide es el dwell
+   —días en el peldaño— y el historial, así que la fila es de una sola línea y
+   las salidas son botones de texto: promocionar a shaky o devolver al backlog.
+   El tope se ajusta en la propia cabecera, donde el número se entiende solo. */
+.repertoire-home .wb-slots {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.repertoire-home .wb-slots .count {
+  margin-left: 0;
+}
+.repertoire-home .wb-slots button {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.repertoire-home .wb-slots button:hover,
+.repertoire-home .wb-slots button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.repertoire-home .band-head .count--over {
+  color: var(--accent);
+}
+
+.repertoire-home .workbench {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.repertoire-home .workbench li {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.repertoire-home .workbench li:first-child {
+  border-top: 1px solid var(--line);
+}
+.repertoire-home .wb-title {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.repertoire-home .wb-title a {
+  font-family: var(--serif);
+  font-size: 16px;
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.repertoire-home .wb-title a:hover,
+.repertoire-home .wb-title a:focus-visible {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.repertoire-home .wb-title small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+}
+.repertoire-home .wb-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 84px;
+}
+.repertoire-home .wb-cell b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.repertoire-home .wb-cell small {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.repertoire-home .wb-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.repertoire-home .wb-actions button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0 0 1px;
+  cursor: pointer;
+}
+.repertoire-home .wb-actions button:hover,
+.repertoire-home .wb-actions button:focus-visible {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}

@@ -95,6 +95,15 @@ export interface RepertoireRow {
   notes: string | null;
   added_at: string;
   last_practiced_at: string | null;
+  /**
+   * Instante del último cambio de peldaño (#52). Lo mantiene el trigger
+   * `pr_repertoire_touch_trg` y **solo** avanza cuando cambia `status`: aparcar
+   * no lo mueve, y el cliente nunca lo escribe. Es el reloj del banco de
+   * trabajo: en `learning` lo que se mide no es el abandono sino el **dwell**.
+   * `null` = el dato no vino (fila anterior al corte, doble de test); no se
+   * sustituye por `added_at` ni por un cero.
+   */
+  status_changed_at: string | null;
   tune: TuneRecord;
   /** Fondo elegido; null si la tune no tiene imagen todavía. */
   image: ChosenImage | null;
@@ -221,6 +230,7 @@ export function mapRepertoireRow(
     notes: row.notes ?? null,
     added_at: row.added_at,
     last_practiced_at: row.last_practiced_at ?? null,
+    status_changed_at: typeof row.status_changed_at === 'string' ? row.status_changed_at : null,
     // El autor viaja en la relación embebida (#44) y se normaliza aquí: una fila
     // anterior a la migración 010, un doble de test o un `composer` vacío son lo
     // mismo —no hay autor— y la fila que lo lea no puede recibir `undefined`.
@@ -278,6 +288,19 @@ export function rowInvariants(row: RepertoireRow): RowInvariants {
     meter: text(row.tune.meter),
     composer: text(row.tune.composer),
   };
+}
+
+/**
+ * Los invariantes de la pieza en una línea (`Reel · 4/4 · Tommy Coen`), sin
+ * rellenos: lo que falta se omite igual que en la tabla (#42). Lo pide el banco
+ * de trabajo (#52), donde la fila es de una sola línea y no cabe la composición
+ * en tres nodos.
+ */
+export function invariantsText(row: RepertoireRow): string {
+  const parts = rowInvariants(row);
+  return [parts.rhythm, parts.meter, parts.composer]
+    .filter((part): part is string => Boolean(part))
+    .join(' · ');
 }
 
 /** Barras encendidas del icono de peldaño (1–5), desde `bandFor`. */
@@ -983,6 +1006,72 @@ export function groupIntoBands(rows: readonly RepertoireRow[], now: number): Ban
       .filter((row) => !row.shelved && row.status === band.status)
       .sort((left, right) => compareStaleness(left, right, now)),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Banco de trabajo (#52): `learning` no es una banda de biblioteca
+// ---------------------------------------------------------------------------
+
+/**
+ * Días que lleva una fila en su peldaño actual (#52), desde `status_changed_at`.
+ *
+ * Es el reloj del taller, y no el de la rejilla: en `learning` la pregunta no es
+ * «cuánto hace que no la toco» sino «cuánto hace que no se mueve». `null` cuando
+ * la fecha no viene: sin dato no se inventa un cero, que se leería como «recién
+ * llegada» —justo lo contrario de lo que hay que ver—.
+ */
+export function dwellDays(row: RepertoireRow, now: number): number | null {
+  return daysSince(row.status_changed_at, now);
+}
+
+/**
+ * El banco de trabajo: las tunes de `learning`, ordenadas por **dwell**
+ * descendente —la que más lleva atascada, primero— y, a igual dwell, por título
+ * (mismo `collationKey` que el resto: nunca `localeCompare`).
+ *
+ * Las aparcadas quedan fuera, como en las bandas: aparcar no cambia el peldaño,
+ * pero las saca de rotación. Una fila sin `status_changed_at` va al final, no al
+ * principio: no se pone por delante de una que sí se sabe.
+ */
+export function workbenchRows(rows: readonly RepertoireRow[], now: number): RepertoireRow[] {
+  return rows
+    .filter((row) => !row.shelved && row.status === 'learning')
+    .sort((left, right) => {
+      const a = dwellDays(left, now);
+      const b = dwellDays(right, now);
+      if (a === null && b !== null) return 1;
+      if (b === null && a !== null) return -1;
+      if (a !== null && b !== null && a !== b) return b - a;
+      return compareStrings(collationKey(displayTitle(left)), collationKey(displayTitle(right)));
+    });
+}
+
+/** El tope del taller: cuánto ocupa `learning` y cuánto le queda (#52). */
+export interface LearningSlots {
+  used: number;
+  /** Tope normalizado; nunca por debajo de 1. */
+  limit: number;
+  free: number;
+  /** Cuántas sobran cuando ya está por encima del tope (`0` si cabe). */
+  over: number;
+}
+
+/**
+ * Recuento del banco de trabajo contra su tope. `learning` sin sesión y sin
+ * tope no es un estado: es un almacén —medido: 192 de 424 el 2026-11-05—.
+ *
+ * Un `limit` inválido cae a **1**, no a «sin tope»: si el valor guardado está
+ * roto, es más seguro quedarse corto que abrir la puerta de par en par.
+ */
+export function learningSlots(rows: readonly RepertoireRow[], limit: number): LearningSlots {
+  const used = rows.filter((row) => !row.shelved && row.status === 'learning').length;
+  const bounded = Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 1;
+  return {
+    used,
+    limit: bounded,
+    free: Math.max(0, bounded - used),
+    over: Math.max(0, used - bounded),
+  };
 }
 
 /**

@@ -524,7 +524,7 @@ describe('lista del día (#36)', () => {
   });
 
   it('el objetivo diario respeta los topes del esquema', async () => {
-    writePrefs(localStorage, { instrument: 'fiddle', dailyTarget: 20 });
+    writePrefs(localStorage, { instrument: 'fiddle', dailyTarget: 20, learningSlots: 6 });
 
     renderPractice();
     await waitForRows(12);

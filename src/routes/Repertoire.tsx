@@ -16,8 +16,11 @@ import {
   capForColumns,
   capRows,
   displayTitle,
+  dwellDays,
   fetchRepertoire,
   groupIntoBands,
+  invariantsText,
+  learningSlots,
   levelText,
   parseScope,
   parseViewMode,
@@ -32,8 +35,10 @@ import {
   stalenessTag,
   stalenessTitle,
   statusCounts,
+  workbenchRows,
   VIEW_MODE_KEY,
   type BandGroup,
+  type LearningSlots,
   type RepertoireRow,
   type RepertoireScope,
   type SortDirection,
@@ -55,6 +60,7 @@ import {
 } from '../lib/catalogue-db';
 import { normalizeTitle } from '../lib/format';
 import { logPractice } from '../lib/practice';
+import { readPrefs, writePrefs, LEARNING_SLOTS_MAX, LEARNING_SLOTS_MIN } from '../lib/practice-storage';
 import { facetTree } from '../lib/tags';
 import { addTuneTags, loadVocabulary, type TagVocabulary } from '../lib/tags-db';
 import TuneCard from '../components/TuneCard';
@@ -133,6 +139,12 @@ function BandView(props: {
   /** Abre el listado completo de esta banda, en la tabla. */
   onSeeList: () => void;
   onPractise: (row: RepertoireRow) => void | Promise<void>;
+  /** Tope del taller (#52). Solo viaja en la banda de `learning`; en las demás, `null`. */
+  slots: LearningSlots | null;
+  /** Mueve una fila de peldaño desde el taller: promocionar a `shaky` o devolver al backlog. */
+  onMove: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
+  /** Sube o baja el tope del taller; lo persiste la pantalla, no la banda. */
+  onShiftSlots: (delta: number) => void;
 }) {
   let grid: HTMLDivElement | undefined;
 
@@ -171,6 +183,23 @@ function BandView(props: {
   /** Hay más de las que caben, o la banda está aislada y se quiere entera. */
   const offersList = createMemo(() => props.scoped || total() > cap());
 
+  /**
+   * `learning` no se pinta como las demás (#52): es el **banco de trabajo**, no
+   * una banda de biblioteca. Aquí no se mira «qué puedo tocar esta noche» sino
+   * «qué se ha movido», así que el orden es el dwell —la más atascada primero— y
+   * la lista lleva lo que sirve para decidir, no una foto.
+   */
+  const isWorkbench = createMemo(() => props.group.band.status === 'learning');
+  const bench = createMemo(() => workbenchRows(props.group.rows, props.now));
+
+  /** Días en el peldaño, en palabras. Sin fecha no se inventa un cero. */
+  const dwellText = (row: RepertoireRow): string => {
+    const days = dwellDays(row, props.now);
+    if (days === null) return '—';
+    if (days === 0) return 'today';
+    return days === 1 ? '1 day' : `${days} days`;
+  };
+
   return (
     <section class="band" data-band={props.group.band.status} aria-labelledby={`band-${props.group.band.status}`}>
       <div class="band-head">
@@ -199,12 +228,94 @@ function BandView(props: {
           </Show>
         </h2>
         <span class="def">{props.group.band.definition}</span>
-        <span class="count">{tuneCountLabel(total())}</span>
+        {/* En el taller el recuento no es «cuántas hay» sino «cuánto ocupa del
+            tope»: un número sin límite al lado no dice nada. Y el tope se ajusta
+            aquí mismo (#52), donde el número se entiende sin explicación: en
+            `/practice` sería un segundo número suelto al lado del objetivo diario. */}
+        <Show
+          when={isWorkbench() && props.slots}
+          fallback={<span class="count">{tuneCountLabel(total())}</span>}
+        >
+          <span class="wb-slots" role="group" aria-label="Workbench cap for learning">
+            <button
+              type="button"
+              aria-label="Fewer learning slots"
+              onClick={() => props.onShiftSlots(-1)}
+            >
+              −
+            </button>
+            <span class="count" classList={{ 'count--over': props.slots!.over > 0 }}>
+              {props.slots!.used} of {props.slots!.limit} slots
+              <Show when={props.slots!.over > 0}> · over by {props.slots!.over}</Show>
+            </span>
+            <button
+              type="button"
+              aria-label="More learning slots"
+              onClick={() => props.onShiftSlots(1)}
+            >
+              +
+            </button>
+          </span>
+        </Show>
       </div>
 
+      {/* El banco de trabajo (#52): lista, no rejilla. La foto es una mnemotecnia
+          para recordar en la sesión, y una tune que no se pasa entera no se toca
+          en sesión: se trabaja. Aquí lo que decide es el dwell y el historial, y
+          las salidas son explícitas —promocionar, devolver al backlog—, porque el
+          tope solo sirve si sacar una cuesta un clic. */}
+      <Show when={isWorkbench()}>
+        <Show
+          when={bench().length > 0}
+          fallback={
+            <p class="band-empty">
+              Nothing in the workbench. Pick one from the backlog to start learning it.
+            </p>
+          }
+        >
+          <ul class="workbench">
+            <For each={bench()}>
+              {(row) => (
+                <li>
+                  <div class="wb-title">
+                    <A href={`/repertoire/${row.id}`}>{displayTitle(row)}</A>
+                    <Show when={invariantsText(row)}>
+                      <small>{invariantsText(row)}</small>
+                    </Show>
+                  </div>
+                  <span class="wb-cell">
+                    <b>{dwellText(row)}</b>
+                    <small>in learning</small>
+                  </span>
+                  <span class="wb-cell">
+                    <b>{row.practice_count ?? 0}</b>
+                    <small>{(row.practice_count ?? 0) === 1 ? 'practice' : 'practices'}</small>
+                  </span>
+                  <span class="wb-actions">
+                    <button type="button" onClick={() => void props.onPractise(row)}>
+                      Practise
+                    </button>
+                    <button type="button" onClick={() => void props.onMove(row, 'shaky')}>
+                      To shaky
+                    </button>
+                    <button type="button" onClick={() => void props.onMove(row, 'to_learn')}>
+                      Back to backlog
+                    </button>
+                  </span>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
+      </Show>
+
       <Show
-        when={total() > 0}
-        fallback={<p class="band-empty">Nothing at this level yet.</p>}
+        when={!isWorkbench() && total() > 0}
+        fallback={
+          <Show when={!isWorkbench()}>
+            <p class="band-empty">Nothing at this level yet.</p>
+          </Show>
+        }
       >
         <div class="grid-4" ref={grid}>
           <For each={rows()}>
@@ -256,6 +367,8 @@ function RepertoireRowView(props: {
   onToggleFavorite: (row: RepertoireRow) => void | Promise<void>;
   onPractise: (row: RepertoireRow) => void | Promise<void>;
   onStatusChange: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
+  /** El taller está lleno (#52): «Start learning» queda cerrado hasta que salga una. */
+  learningFull: boolean;
 }) {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [subOpen, setSubOpen] = createSignal(false);
@@ -435,11 +548,17 @@ function RepertoireRowView(props: {
             onClick={(event) => event.stopPropagation()}
           >
             {/* El gesto que saca una pieza del backlog (#50): una acción, no un
-                submenú. Solo aparece cuando de verdad no se ha empezado. */}
+                submenú. Solo aparece cuando de verdad no se ha empezado.
+
+                Y desde #52 la puerta tiene tope: `learning` es un banco de
+                trabajo, no un almacén. Lleno, el renglón se queda pero no se
+                puede pulsar, y dice por qué y dónde se libera: esconderlo haría
+                creer que la acción no existe. */}
             <Show when={props.row.status === 'to_learn'}>
               <button
                 type="button"
                 role="menuitem"
+                disabled={props.learningFull}
                 onClick={() => {
                   closeMenu();
                   void props.onStatusChange(props.row, 'learning');
@@ -447,7 +566,11 @@ function RepertoireRowView(props: {
               >
                 <span>
                   Start learning
-                  <small>Move it out of the backlog and into the rotation</small>
+                  <small>
+                    {props.learningFull
+                      ? 'The workbench is full — free a slot before starting another'
+                      : 'Move it out of the backlog and into the rotation'}
+                  </small>
                 </span>
               </button>
             </Show>
@@ -583,6 +706,8 @@ function RepertoireTable(props: {
   onPractise: (row: RepertoireRow) => void | Promise<void>;
   onToggleFavorite: (row: RepertoireRow) => void | Promise<void>;
   onStatusChange: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
+  /** El taller está lleno (#52): la puerta del backlog lo dice al abrirse. */
+  learningFull: boolean;
 }) {
   const allSelected = () =>
     props.rows.length > 0 && props.rows.every((row) => props.selected.includes(row.id));
@@ -675,6 +800,7 @@ function RepertoireTable(props: {
                 onPractise={props.onPractise}
                 onToggleFavorite={props.onToggleFavorite}
                 onStatusChange={props.onStatusChange}
+                learningFull={props.learningFull}
               />
             )}
           </For>
@@ -758,6 +884,32 @@ export default function Repertoire() {
 
   const tokens = createMemo(() => tokenizeQuery(query()));
   const counts = createMemo(() => statusCounts(rows()));
+  /**
+   * El tope del banco de trabajo (#52) es configuración del usuario
+   * (`PracticePrefs.learningSlots`, en `localStorage`), no una constante: se
+   * ajusta sin desplegar y vive donde ya vive el objetivo diario.
+   */
+  const [limit, setLimit] = createSignal(readPrefs(window.localStorage).learningSlots);
+  /** Cuánto ocupa `learning` contra su tope: cabecera del taller y puerta del backlog. */
+  const slots = createMemo(() => learningSlots(rows(), limit()));
+
+  /**
+   * El tope se ajusta en la propia banda del taller. Bajar el tope por debajo de
+   * lo que ya hay **no mueve filas**: la cabecera avisa de cuánto sobra y el
+   * dueño decide cuál sale. Persistir aquí es deliberado —la banda no escribe en
+   * la base, y esto no es la base: es la misma configuración del navegador donde
+   * vive el objetivo diario—.
+   */
+  const shiftLearningSlots = (delta: number) => {
+    const next = Math.min(LEARNING_SLOTS_MAX, Math.max(LEARNING_SLOTS_MIN, limit() + delta));
+    if (next === limit()) return;
+    setLimit(next);
+    try {
+      writePrefs(window.localStorage, { ...readPrefs(window.localStorage), learningSlots: next });
+    } catch {
+      /* almacenamiento bloqueado: el cambio vale para esta visita */
+    }
+  };
   /** Las del backlog, para la puerta de la cabecera (#50). */
   const backlogTotal = createMemo(() => backlogCount(rows()));
   /** Las del cajón, para que la cabecera sume: bandas + backlog + aparcadas = repertorio. */
@@ -1472,6 +1624,7 @@ export default function Repertoire() {
                 onPractise={practise}
                 onToggleFavorite={toggleFavorite}
                 onStatusChange={changeStatus}
+                learningFull={slots().free === 0}
               />
             }
           >
@@ -1484,6 +1637,9 @@ export default function Repertoire() {
                   onShowOnly={() => showOnly(group.band.status)}
                   onSeeList={() => seeList(group.band.status)}
                   onPractise={practise}
+                  slots={group.band.status === 'learning' ? slots() : null}
+                  onMove={changeStatus}
+                  onShiftSlots={shiftLearningSlots}
                 />
               )}
             </For>
