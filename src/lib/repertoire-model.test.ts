@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BACKLOG_BAND,
   BANDS,
+  LEVEL_OPTIONS,
   alphabeticalRows,
+  backlogCount,
   bandFor,
+  isLadderStatus,
   capForColumns,
   capRows,
   cardKey,
@@ -386,13 +390,17 @@ describe('invariantes y peldaño de la fila (#42)', () => {
 
   it('el icono de peldaño sale de bandFor y su nombre accesible lleva etiqueta y definición', () => {
     const solo = makeRow({ id: 'e', status: 'solo_ready' });
-    expect(rungOf(solo)).toBe(5);
+    expect(rungOf(solo)).toBe(4);
     expect(levelText(solo)).toBe(
-      'Solo-ready — If someone asks for a tune, this is one you’d give them.'
+      'Solo-ready — Play it unaided and correctly — no one else needed.'
     );
 
+    const mastered = makeRow({ id: 'g', status: 'mastered' });
+    expect(rungOf(mastered)).toBe(5);
+
+    // El backlog no enciende ninguna barra: no es un peldaño (#50).
     const learn = makeRow({ id: 'f', status: 'to_learn' });
-    expect(rungOf(learn)).toBe(1);
+    expect(rungOf(learn)).toBe(0);
   });
 });
 
@@ -636,23 +644,24 @@ describe('mapRepertoireRow con los agregados de la vista (#29)', () => {
   });
 });
 
-describe('bandas de la escalera (#29, quinta en #46)', () => {
-  it('son cinco, en orden de capacidad, con su definición y su peldaño', () => {
+describe('bandas de la escalera (#29, quinta en #46, cima en #50)', () => {
+  it('son cinco y no incluyen el backlog: eso no es un peldaño', () => {
     expect(BANDS.map((band) => band.status)).toEqual([
-      'to_learn',
       'learning',
       'shaky',
       'playing_along',
       'solo_ready',
+      'mastered',
     ]);
     expect(BANDS.map((band) => band.label)).toEqual([
-      'To learn',
       'Learning',
       'Shaky',
       'Playing along',
       'Solo-ready',
+      'Mastered',
     ]);
     expect(BANDS.map((band) => band.rung)).toEqual([1, 2, 3, 4, 5]);
+    expect(BANDS.map((band) => band.status)).not.toContain('to_learn');
     // Una sola carta para todas las filas: la banda no lleva densidad.
     for (const band of BANDS) {
       expect('density' in band).toBe(false);
@@ -660,28 +669,57 @@ describe('bandas de la escalera (#29, quinta en #46)', () => {
     for (const band of BANDS) {
       expect(band.definition.length).toBeGreaterThan(10);
     }
-    expect(BANDS[0].definition).toBe('Want to learn it. Not started.');
-    expect(BANDS[4].definition).toBe("If someone asks for a tune, this is one you’d give them.");
+    expect(BANDS[0].definition).toBe('Know the parts, but can’t get through it end to end.');
+    expect(BANDS[4].definition).toBe(
+      'Improvise variations and ornament it — a tune you can show off with.',
+    );
   });
 
-  it('el quinto peldaño es el del medio: se pasa entera, pero con fragmentos que fallan', () => {
+  it('el backlog vive fuera de las bandas, con el indicador apagado', () => {
+    expect(BACKLOG_BAND.status).toBe('to_learn');
+    expect(BACKLOG_BAND.rung).toBe(0);
+    expect(bandFor('to_learn')).toBe(BACKLOG_BAND);
+    expect(rungOf(makeRow({ id: 'b', status: 'to_learn' }))).toBe(0);
+    expect(levelText(makeRow({ id: 'b', status: 'to_learn' }))).toBe(
+      `To learn — ${BACKLOG_BAND.definition}`,
+    );
+    // Y se puede elegir en un selector (para volver a él), siempre el primero.
+    expect(LEVEL_OPTIONS.map((option) => option.status)).toEqual([
+      'to_learn',
+      'learning',
+      'shaky',
+      'playing_along',
+      'solo_ready',
+      'mastered',
+    ]);
+  });
+
+  it('`mastered` es la cima: se practica para lucirse, no para sostenerse', () => {
+    expect(BANDS[4].status).toBe('mastered');
+    expect(BANDS[4].rung).toBe(5);
+    expect(bandFor('mastered').rung).toBeGreaterThan(bandFor('solo_ready').rung);
+    expect(isLadderStatus('mastered')).toBe(true);
+    expect(isLadderStatus('to_learn')).toBe(false);
+  });
+
+  it('el segundo peldaño es el del medio: se pasa entera, pero con fragmentos que fallan', () => {
     // Está **entre** learning y playing_along a propósito: seguir a otro es más
     // fácil que sacarla solo con agujeros, así que no puede cotizar por encima.
     const index = BANDS.findIndex((band) => band.status === 'shaky');
-    expect(index).toBe(2);
+    expect(index).toBe(1);
     expect(BANDS[index].label).toBe('Shaky');
     expect(BANDS[index].definition).toBe(
       'Get through it, but some passages don’t come out or the rhythm slips.'
     );
     // Y el nombre accesible lo compone con las dos piezas, no con la etiqueta sola.
-    expect(levelText(makeRow({ id: 's', status: 'shaky' }))).toBe(`Shaky — ${BANDS[2].definition}`);
+    expect(levelText(makeRow({ id: 's', status: 'shaky' }))).toBe(`Shaky — ${BANDS[1].definition}`);
   });
 
-  it('parseScope acepta los cinco peldaños y el cajón, y rechaza lo demás', () => {
+  it('parseScope acepta los cinco peldaños, el backlog y el cajón, y rechaza lo demás', () => {
     for (const band of BANDS) {
       expect(parseScope(band.status)).toBe(band.status);
     }
-    expect(parseScope('shaky')).toBe('shaky');
+    expect(parseScope('to_learn')).toBe('to_learn');
     expect(parseScope('shelved')).toBe('shelved');
     expect(parseScope(undefined)).toBeNull();
     expect(parseScope('nueva')).toBeNull();
@@ -690,12 +728,12 @@ describe('bandas de la escalera (#29, quinta en #46)', () => {
   });
 
   it('bandFor devuelve la banda del estado y no rompe con un valor desconocido', () => {
-    expect(bandFor('shaky').rung).toBe(3);
-    expect(bandFor('playing_along').rung).toBe(4);
+    expect(bandFor('shaky').rung).toBe(2);
+    expect(bandFor('playing_along').rung).toBe(3);
     expect(bandFor('nueva' as TuneStatus).status).toBe('to_learn');
   });
 
-  it('statusCounts cuenta por peldaño y deja las cinco claves siempre', () => {
+  it('statusCounts cuenta por peldaño y deja las seis claves siempre', () => {
     const rows = [
       makeRow({ id: 'a', status: 'to_learn' }),
       makeRow({ id: 'b', status: 'learning' }),
@@ -709,6 +747,7 @@ describe('bandas de la escalera (#29, quinta en #46)', () => {
       shaky: 1,
       playing_along: 0,
       solo_ready: 1,
+      mastered: 0,
     });
     expect(statusCounts([])).toEqual({
       to_learn: 0,
@@ -716,25 +755,38 @@ describe('bandas de la escalera (#29, quinta en #46)', () => {
       shaky: 0,
       playing_along: 0,
       solo_ready: 0,
+      mastered: 0,
     });
   });
 
-  it('shelvedCount cierra la cuenta de la cabecera: bandas + cajón = repertorio', () => {
+  it('backlogCount cuenta lo no aparcado que aún no se ha empezado (#50)', () => {
+    const rows = [
+      makeRow({ id: 'a', status: 'to_learn' }),
+      makeRow({ id: 'b', status: 'to_learn' }),
+      makeRow({ id: 'c', status: 'to_learn', shelved: true }),
+      makeRow({ id: 'd', status: 'learning' }),
+    ];
+    expect(backlogCount(rows)).toBe(2);
+    expect(backlogCount([])).toBe(0);
+  });
+
+  it('shelvedCount cierra la cuenta de la cabecera: escalera + backlog + cajón = repertorio', () => {
     const rows = [
       makeRow({ id: 'a', status: 'to_learn' }),
       makeRow({ id: 'b', status: 'learning', shelved: true }),
       makeRow({ id: 'c', status: 'solo_ready', shelved: true }),
     ];
     const counts = statusCounts(rows);
-    const enBandas =
+    const enEscaleraYBacklog =
       counts.to_learn +
       counts.learning +
       counts.shaky +
       counts.playing_along +
-      counts.solo_ready;
+      counts.solo_ready +
+      counts.mastered;
 
     expect(shelvedCount(rows)).toBe(2);
-    expect(enBandas + shelvedCount(rows)).toBe(rows.length);
+    expect(enEscaleraYBacklog + shelvedCount(rows)).toBe(rows.length);
     expect(shelvedCount([])).toBe(0);
     expect(shelvedCount([makeRow({ id: 'd', shelved: false })])).toBe(0);
   });
@@ -842,16 +894,25 @@ describe('medidor de calidad (#29)', () => {
 });
 
 describe('groupIntoBands y orden por staleness (#29)', () => {
-  it('devuelve las cinco bandas en orden de escalera, aunque estén vacías', () => {
+  it('devuelve las cinco bandas de la escalera, en orden, aunque estén vacías', () => {
     const groups = groupIntoBands([], NOW);
     expect(groups.map((group) => group.band.status)).toEqual([
-      'to_learn',
       'learning',
       'shaky',
       'playing_along',
       'solo_ready',
+      'mastered',
     ]);
     expect(groups.every((group) => group.rows.length === 0)).toBe(true);
+  });
+
+  it('el backlog no forma banda: sus filas no se cuelan en ninguna (#50)', () => {
+    const rows = [
+      makeRow({ id: 'deseo', status: 'to_learn' }),
+      makeRow({ id: 'en-curso', status: 'learning' }),
+    ];
+    const groups = groupIntoBands(rows, NOW);
+    expect(groups.flatMap((group) => group.rows.map((row) => row.id))).toEqual(['en-curso']);
   });
 
   it('dentro de cada banda, nunca tocada primero y después días descendentes', () => {
@@ -862,8 +923,7 @@ describe('groupIntoBands y orden por staleness (#29)', () => {
       makeRow({ id: 'never-a', name: 'Never A', status: 'learning' }),
       makeRow({ id: 'mid', name: 'Mid', status: 'learning', last_practiced_at: daysAgo(41) }),
     ];
-    const [toLearn, learning] = groupIntoBands(rows, NOW);
-    expect(toLearn.rows).toEqual([]);
+    const [learning, shaky] = groupIntoBands(rows, NOW);
     expect(learning.rows.map((row) => row.id)).toEqual([
       'never-a',
       'never-b',
@@ -871,20 +931,21 @@ describe('groupIntoBands y orden por staleness (#29)', () => {
       'mid',
       'recent',
     ]);
+    expect(shaky.rows).toEqual([]);
   });
 
   it('el empate de staleness se rompe por título sin diacríticos (collationKey)', () => {
     const rows = [
-      makeRow({ id: 'z', name: 'Zed', status: 'to_learn', last_practiced_at: daysAgo(10) }),
-      makeRow({ id: 'a', name: 'Ángel', status: 'to_learn', last_practiced_at: daysAgo(10) }),
-      makeRow({ id: 'n', name: 'nube', status: 'to_learn', last_practiced_at: daysAgo(10) }),
+      makeRow({ id: 'z', name: 'Zed', status: 'learning', last_practiced_at: daysAgo(10) }),
+      makeRow({ id: 'a', name: 'Ángel', status: 'learning', last_practiced_at: daysAgo(10) }),
+      makeRow({ id: 'n', name: 'nube', status: 'learning', last_practiced_at: daysAgo(10) }),
     ];
     expect(groupIntoBands(rows, NOW)[0].rows.map((row) => row.id)).toEqual(['a', 'n', 'z']);
   });
 
   it('no muta las filas de entrada y no se cuela ningún estado ajeno', () => {
     const rows = Object.freeze([
-      makeRow({ id: 'a', status: 'to_learn' }),
+      makeRow({ id: 'a', status: 'learning' }),
       makeRow({ id: 'b', status: 'nueva' as TuneStatus }),
     ]);
     const groups = groupIntoBands(rows, NOW);
@@ -1062,8 +1123,8 @@ describe('aparcadas (#11): fuera de las bandas y del recuento', () => {
   it('groupIntoBands deja fuera las aparcadas aunque su peldaño sea el de la banda', () => {
     const groups = groupIntoBands(rows, NOW);
     expect(groups.map((group) => group.rows.map((row) => row.id))).toEqual([
-      [],
       ['work'],
+      [],
       [],
       [],
       [],
@@ -1088,6 +1149,7 @@ describe('aparcadas (#11): fuera de las bandas y del recuento', () => {
       shaky: 0,
       playing_along: 0,
       solo_ready: 0,
+      mastered: 0,
     });
     // Sin aparcadas el recuento es el de siempre.
     expect(statusCounts([makeRow({ id: 'x', status: 'solo_ready' })])).toEqual({
@@ -1096,6 +1158,7 @@ describe('aparcadas (#11): fuera de las bandas y del recuento', () => {
       shaky: 0,
       playing_along: 0,
       solo_ready: 1,
+      mastered: 0,
     });
   });
 });

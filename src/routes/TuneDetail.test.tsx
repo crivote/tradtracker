@@ -242,13 +242,15 @@ describe('TuneDetail', () => {
 
     const select = screen.getByLabelText('Level') as HTMLSelectElement;
     expect(select.value).toBe('learning');
-    // Las cinco etiquetas canónicas, en orden de escalera.
+    // Las cinco etiquetas de la escalera, en orden, y el backlog delante: se
+    // puede volver a él, y una pieza sin empezar tiene que enseñar su estado.
     expect(Array.from(select.options).map((option) => option.textContent)).toEqual([
       'To learn',
       'Learning',
       'Shaky',
       'Playing along',
       'Solo-ready',
+      'Mastered',
     ]);
     // La definición del peldaño actual sale de BANDS, no se reescribe aquí.
     expect(screen.getByText('Know the parts, but can’t get through it end to end.')).toBeTruthy();

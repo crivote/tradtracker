@@ -1,13 +1,17 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { A, useNavigate, useSearchParams } from '@solidjs/router';
 import {
+  BACKLOG_SCOPE,
   BANDS,
+  LEVEL_OPTIONS,
+  RUNG_BARS,
   SHELVED_SCOPE,
   SORT_DEFAULT_DIRECTION,
   SORT_LABELS,
   STATUS_LABELS,
   addCatalogueTune,
   addedAge,
+  backlogCount,
   bandFor,
   capForColumns,
   capRows,
@@ -171,7 +175,7 @@ function BandView(props: {
     <section class="band" data-band={props.group.band.status} aria-labelledby={`band-${props.group.band.status}`}>
       <div class="band-head">
         <span class="rungs" aria-hidden="true">
-          <For each={[1, 2, 3, 4, 5]}>
+          <For each={RUNG_BARS}>
             {(rung) => <i classList={{ on: rung <= props.group.band.rung }} />}
           </For>
         </span>
@@ -375,7 +379,7 @@ function RepertoireRowView(props: {
             `aria-label`, y los dos se pintan del mismo texto para que cambiar
             de peldaño los mueva a la vez. */}
         <span class="rung" role="img" aria-label={`Level: ${level()}`} title={level()}>
-          <For each={[1, 2, 3, 4, 5]}>
+          <For each={RUNG_BARS}>
             {(rung) => <span classList={{ on: rung <= rungOf(props.row) }} />}
           </For>
         </span>
@@ -430,6 +434,24 @@ function RepertoireRowView(props: {
             ref={menuEl}
             onClick={(event) => event.stopPropagation()}
           >
+            {/* El gesto que saca una pieza del backlog (#50): una acción, no un
+                submenú. Solo aparece cuando de verdad no se ha empezado. */}
+            <Show when={props.row.status === 'to_learn'}>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeMenu();
+                  void props.onStatusChange(props.row, 'learning');
+                }}
+              >
+                <span>
+                  Start learning
+                  <small>Move it out of the backlog and into the rotation</small>
+                </span>
+              </button>
+            </Show>
+
             {/* El peldaño vive en un submenú de segundo nivel: desplegado en el
                 menú principal lo estiraba hasta necesitar un techo de altura, y
                 ese techo recortaba el submenú. El menú padre no lleva `overflow`. */}
@@ -447,7 +469,7 @@ function RepertoireRowView(props: {
                 <span aria-hidden="true">▸</span>
               </button>
               <div class="submenu" hidden={!subOpen()} role="menu" aria-label="Level">
-                <For each={BANDS}>
+                <For each={LEVEL_OPTIONS}>
                   {(band) => (
                     <button
                       type="button"
@@ -710,21 +732,23 @@ export default function Repertoire() {
   };
 
   // Lo que se está mirando vive en la URL (§2.7): recargar mantiene la vista.
-  // `?band=` acepta los cinco peldaños y `shelved`, que es el cajón.
+  // `?band=` acepta los cinco peldaños, el backlog (`to_learn`) y `shelved`.
   const [params, setParams] = useSearchParams<{ band?: string }>();
   const scope = createMemo<RepertoireScope | null>(() => parseScope(params.band));
-  /** El ámbito es un peldaño (no el cajón): lo que aísla una banda de la home. */
+  /** El ámbito es un peldaño (ni el cajón ni el backlog): lo que aísla una banda. */
   const scopedBand = createMemo<TuneStatus | null>(() => {
     const current = scope();
-    return current !== null && current !== SHELVED_SCOPE ? current : null;
+    return current !== null && current !== SHELVED_SCOPE && current !== BACKLOG_SCOPE
+      ? current
+      : null;
   });
   /**
-   * El cajón no se pinta en rejilla nunca: sus tunes se miran en lista, que es
-   * la única superficie de la app hecha para muchas filas. Así no hay un estado
-   * muerto en el que el conmutador Table/Cards no signifique nada.
+   * Ni el cajón ni el backlog se pintan en rejilla: sus tunes se miran en lista,
+   * que es la única superficie de la app hecha para muchas filas. Así no hay un
+   * estado muerto en el que el conmutador Table/Cards no signifique nada.
    */
   const effectiveMode = createMemo<ViewMode>(() =>
-    scope() === SHELVED_SCOPE ? 'table' : viewMode()
+    scope() === SHELVED_SCOPE || scope() === BACKLOG_SCOPE ? 'table' : viewMode()
   );
 
   const chooseView = (mode: ViewMode) => {
@@ -734,7 +758,9 @@ export default function Repertoire() {
 
   const tokens = createMemo(() => tokenizeQuery(query()));
   const counts = createMemo(() => statusCounts(rows()));
-  /** Las del cajón, para que la cabecera sume: bandas + aparcadas = repertorio. */
+  /** Las del backlog, para la puerta de la cabecera (#50). */
+  const backlogTotal = createMemo(() => backlogCount(rows()));
+  /** Las del cajón, para que la cabecera sume: bandas + backlog + aparcadas = repertorio. */
   const shelvedTotal = createMemo(() => shelvedCount(rows()));
 
   /** Las cinco bandas, cada una ordenada por staleness. */
@@ -871,11 +897,13 @@ export default function Repertoire() {
     }
   };
 
-  /** Título del ámbito para la barra: el peldaño o «Shelved». */
+  /** Título del ámbito para la barra: el peldaño, el cajón o el backlog. */
   const scopeLabel = createMemo(() => {
     const current = scope();
     if (current === null) return null;
-    return current === SHELVED_SCOPE ? 'Shelved' : bandFor(current).label;
+    if (current === SHELVED_SCOPE) return 'Shelved';
+    if (current === BACKLOG_SCOPE) return 'Backlog';
+    return bandFor(current).label;
   });
 
   const load = async () => {
@@ -1076,14 +1104,15 @@ export default function Repertoire() {
   };
   /** La puerta de las aparcadas: su recuento en la cabecera lleva a su listado. */
   const seeShelved = () => seeList(SHELVED_SCOPE);
+  /** La puerta del backlog: lo que se quiere aprender y aún no se ha empezado. */
+  const seeBacklog = () => seeList(BACKLOG_SCOPE);
   /**
-   * «Back to all». Desde el cajón se vuelve a la **home** —las cinco bandas—,
-   * que es lo que se estaba mirando antes de entrar: dejar la lista completa de
-   * todo el repertorio es otra pantalla y el lector no la ha pedido. Desde un
+   * «Back to all». Desde el cajón —o desde el backlog— se vuelve a la **home**
+   * —las cinco bandas—, que es lo que se estaba mirando antes de entrar. Desde un
    * peldaño solo se limpia el ámbito, sin cambiar el modo de vista.
    */
   const backToAll = () => {
-    if (scope() === SHELVED_SCOPE) {
+    if (scope() === SHELVED_SCOPE || scope() === BACKLOG_SCOPE) {
       navigate('/');
       chooseView('grid');
       return;
@@ -1100,13 +1129,20 @@ export default function Repertoire() {
             <Show when={!loading()} fallback="Loading…">
               <b>{tuneCountLabel(rows().length)}</b>
               {' · '}
-              {counts().to_learn} to learn · {counts().learning} learning ·{' '}
-              {counts().shaky} shaky · {counts().playing_along} playing along ·{' '}
-              {counts().solo_ready} solo-ready
+              {/* El backlog no es un peldaño (#50): se nombra para que el total
+                  cuadre, y su recuento es la puerta a su listado —igual que el
+                  de las aparcadas—. */}
+              <button type="button" class="shelved-link" onClick={seeBacklog}>
+                {backlogTotal()} to learn
+              </button>
+              {' · '}
+              {counts().learning} learning · {counts().shaky} shaky ·{' '}
+              {counts().playing_along} playing along · {counts().solo_ready} solo-ready ·{' '}
+              {counts().mastered} mastered
               {/* Las aparcadas no se pintan en la home, solo su recuento —y ese
                   recuento es la puerta a su listado, que si no no habría dónde
-                  mirarlas—. Se nombran para que el total cuadre: bandas más
-                  aparcadas son el repertorio entero. */}
+                  mirarlas—. Se nombran para que el total cuadre: bandas, backlog
+                  y aparcadas son el repertorio entero. */}
               <Show when={shelvedTotal() > 0}>
                 {' · '}
                 <button type="button" class="shelved-link" onClick={seeShelved}>

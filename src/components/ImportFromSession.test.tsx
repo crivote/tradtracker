@@ -195,7 +195,7 @@ describe('import del tunebook de The Session (#32)', () => {
     fireEvent.change(screen.getByLabelText('Add them as'), {
       target: { value: 'solo_ready' },
     });
-    expect(screen.getByText(/If someone asks for a tune/)).toBeTruthy();
+    expect(screen.getByText(/Play it unaided and correctly/)).toBeTruthy();
 
     fireEvent.click(importButton);
 

@@ -1,8 +1,9 @@
-import type { RepertoireRow, TuneStatus } from './repertoire-model';
+import { isLadderStatus, type LadderStatus, type RepertoireRow } from './repertoire-model';
 
 export interface PracticeCandidate {
   id: string;
-  status: TuneStatus;
+  /** Solo peldaños: el backlog nunca llega aquí (#50). */
+  status: LadderStatus;
   addedAt: string;                 // ISO
   lastPracticedAt: string | null;  // ISO o null si nunca se ensayó
   rhythm: string | null;           // p. ej. 'Reel', 'Jig'
@@ -10,36 +11,48 @@ export interface PracticeCandidate {
 }
 
 export interface UrgencyTargets {
-  byStatus: Record<TuneStatus, number>;
+  byStatus: Record<LadderStatus, number>;
   activeCount: number;
   dailyTarget: number;
 }
 
 /**
- * Factor de urgencia por peldaño (#46). `shaky` va interpolado entre `learning`
- * y `playing_along`: lo que se cae por fragmentos pide máquina más a menudo que
- * lo que ya se sigue sin problema, y menos que lo que aún no se pasa entero.
+ * Factor de urgencia por peldaño (#46, cima en #50). El intervalo objetivo es
+ * `factor × (activas / objetivo)`: **a menor factor, más a menudo**.
+ *
+ * `to_learn` no está aquí porque no es un peldaño: es el backlog, y una pieza
+ * que no se ha empezado no puede estar vencida (#50). Tenía 0,5 —heredado del
+ * `nueva` de la spec v0.2— y eso lo convertía en lo más urgente del repertorio.
+ *
+ * `shaky` va interpolado entre `learning` y `playing_along`: lo que se cae por
+ * fragmentos pide máquina más a menudo que lo que ya se sigue sin problema, y
+ * menos que lo que aún no se pasa entero. `mastered` es la que menos: se toca
+ * para mantener el lustre, no para sostenerla.
  */
-export const PRACTICE_FACTORS: Record<TuneStatus, number> = {
-  to_learn: 0.5,
+export const PRACTICE_FACTORS: Record<LadderStatus, number> = {
   learning: 1,
   shaky: 1.5,
   playing_along: 2,
   solo_ready: 4,
+  mastered: 6,
 };
 
 /**
  * Peldaños que sirven para un hueco de descanso. `shaky` **no** entra (#46): una
  * tune con fragmentos que no salen no es descanso, es trabajo — y su urgencia ya
- * la sube el factor 1,5.
+ * la sube el factor 1,5. `mastered` sí: es el descanso por excelencia (#50).
  */
-export const KNOWN_STATUSES: readonly TuneStatus[] = ['playing_along', 'solo_ready'];
+export const KNOWN_STATUSES: readonly LadderStatus[] = [
+  'playing_along',
+  'solo_ready',
+  'mastered',
+];
 
 export function computeTargets(activeCount: number, dailyTarget: number): UrgencyTargets {
-  const byStatus = {} as Record<TuneStatus, number>;
+  const byStatus = {} as Record<LadderStatus, number>;
   const ratio = activeCount / dailyTarget;
   
-  (Object.keys(PRACTICE_FACTORS) as TuneStatus[]).forEach(status => {
+  (Object.keys(PRACTICE_FACTORS) as LadderStatus[]).forEach(status => {
     byStatus[status] = PRACTICE_FACTORS[status] * ratio;
   });
 
@@ -297,6 +310,9 @@ export function toCandidates(rows: readonly RepertoireRow[]): PracticeCandidate[
   const candidates: PracticeCandidate[] = [];
   for (const row of rows) {
     if (row.shelved) continue;
+    // El backlog no es candidato: no se ha empezado, así que no se puede deber
+    // (#50). Es la regla que impide que 16 deseos viejos llenen la lista.
+    if (!isLadderStatus(row.status)) continue;
     candidates.push({
       id: row.id,
       status: row.status,

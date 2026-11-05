@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal } from 'solid-js';
 import {
   BANDS,
+  LEVEL_OPTIONS,
   STATUS_LABELS,
   importSessionTunes,
   type SessionImportResult,
@@ -267,7 +268,7 @@ export default function ImportFromSession(props: ImportFromSessionProps) {
             value={status()}
             onChange={(event) => setStatus(event.currentTarget.value as TuneStatus)}
           >
-            <For each={BANDS}>
+            <For each={LEVEL_OPTIONS}>
               {(band) => <option value={band.status}>{STATUS_LABELS[band.status]}</option>}
             </For>
           </select>

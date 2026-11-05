@@ -485,6 +485,21 @@ describe('lista del día (#36)', () => {
     expect(idsInOrder()).toEqual(OVERDUE_FIRST);
   });
 
+  it('el backlog no entra en la lista, por viejo que sea (#50)', async () => {
+    mockedFetch.mockResolvedValue([
+      ...ROWS,
+      // Un deseo de hace dos años y medio: antes encabezaba la lista.
+      row(99, { status: 'to_learn', added_at: daysAgo(900), last_practiced_at: null }),
+    ] as any);
+
+    renderPractice();
+    await waitForRows(8);
+
+    expect(idsInOrder()).not.toContain('row-99');
+    // Y la lista sigue siendo la de ocho: el backlog no ocupa hueco.
+    expect(document.querySelectorAll('.practice-row')).toHaveLength(8);
+  });
+
   it('sin repertorio lo dice y ofrece la puerta para añadir tunes', async () => {
     mockedFetch.mockResolvedValue([] as any);
 

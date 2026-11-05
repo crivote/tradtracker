@@ -2,6 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'so
 import { A, useNavigate, useParams } from '@solidjs/router';
 import {
   BANDS,
+  LEVEL_OPTIONS,
   OVERRIDE_FIELDS,
   STATUS_LABELS,
   STATUS_STYLES,
@@ -454,10 +455,23 @@ export default function TuneDetail() {
                         void changeLevel(item(), event.currentTarget.value as TuneStatus)
                       }
                     >
-                      <For each={BANDS}>
+                      <For each={LEVEL_OPTIONS}>
                         {(band) => <option value={band.status}>{STATUS_LABELS[band.status]}</option>}
                       </For>
                     </select>
+                    {/* El gesto que saca la pieza del backlog (#50): el selector
+                        ya puede hacerlo, pero empezar a aprender es una decisión
+                        que merece nombre propio. */}
+                    <Show when={item().status === 'to_learn'}>
+                      <button
+                        type="button"
+                        class="rounded border border-rose-700 bg-rose-900/40 px-2 py-0.5 text-xs text-rose-200 disabled:opacity-60"
+                        disabled={savingLevel()}
+                        onClick={() => void changeLevel(item(), 'learning')}
+                      >
+                        Start learning
+                      </button>
+                    </Show>
                     <span class="max-w-[17rem] text-xs text-gray-400 italic">{level().definition}</span>
                   </div>
                 </header>

@@ -288,7 +288,7 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
   it('todas las cartas de la home son iguales: ni una sola en miniatura', async () => {
     renderHome();
 
-    await waitFor(() => expect(screen.getByText('Morning Dew')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
     const cards = document.querySelectorAll('.repertoire-home .card');
     expect(cards.length).toBeGreaterThan(0);
     for (const card of Array.from(cards)) {
@@ -298,14 +298,17 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
     }
   });
 
-  it('la home pinta las cinco bandas, en orden de escalera', async () => {
+  it('la home pinta las cinco bandas de la escalera y ninguna de backlog (#50)', async () => {
     renderHome();
 
-    await waitFor(() => expect(screen.getByText('Morning Dew')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
     const bands = Array.from(document.querySelectorAll('.repertoire-home .band')).map(
       (node) => node.getAttribute('data-band')
     );
-    expect(bands).toEqual(['to_learn', 'learning', 'shaky', 'playing_along', 'solo_ready']);
+    expect(bands).toEqual(['learning', 'shaky', 'playing_along', 'solo_ready', 'mastered']);
+    // El backlog no es una banda: su pieza no se pinta en la home.
+    expect(document.querySelector('[data-band="to_learn"]')).toBeNull();
+    expect(screen.queryByText('Morning Dew')).toBeNull();
   });
 
   it('el tope son tres filas: 12 cartas por banda, y el resto va al listado (#46)', async () => {
@@ -359,11 +362,11 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
   it('el título de la banda la aísla en la rejilla y ofrece su listado', async () => {
     renderHome();
 
-    await waitFor(() => expect(screen.getByText('Morning Dew')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: 'Show only Learning' }));
 
-    await waitFor(() => expect(screen.queryByText('Morning Dew')).toBeNull());
+    await waitFor(() => expect(screen.queryByText('Drowsy Maggie')).toBeNull());
     expect(screen.getByText('Cooley’s Reel')).toBeTruthy();
     // La barra dice qué se está viendo, con la vuelta disponible.
     expect(screen.getByText(/Showing/)).toBeTruthy();
@@ -382,7 +385,7 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
   it('la carta de la home no enseña el peldaño: eso es de la búsqueda (#9)', async () => {
     renderHome();
 
-    await waitFor(() => expect(screen.getByText('Morning Dew')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
 
     const metas = Array.from(
       document.querySelectorAll<HTMLElement>('.repertoire-home .card .tune-meta')
@@ -519,14 +522,15 @@ describe('tabla del listado (#42)', () => {
     const icon = rowOf('Cooley’s Reel').querySelector('.rung')!;
     expect(icon.getAttribute('role')).toBe('img');
     expect(icon.getAttribute('aria-label')).toBe(
-      'Level: Solo-ready — If someone asks for a tune, this is one you’d give them.'
+      'Level: Solo-ready — Play it unaided and correctly — no one else needed.'
     );
     expect(icon.querySelectorAll('span').length).toBe(5);
-    expect(icon.querySelectorAll('span.on').length).toBe(5);
+    expect(icon.querySelectorAll('span.on').length).toBe(4);
 
     // Un peldaño bajo enciende solo la primera: las barras dicen la altura.
-    expect(rowOf('Drowsy Maggie').querySelectorAll('.rung span.on').length).toBe(1);
-    expect(rowOf('The Cameron Highlanders').querySelectorAll('.rung span.on').length).toBe(2);
+    // Y el backlog no enciende ninguna (#50).
+    expect(rowOf('Drowsy Maggie').querySelectorAll('.rung span.on').length).toBe(0);
+    expect(rowOf('The Cameron Highlanders').querySelectorAll('.rung span.on').length).toBe(1);
   });
 
   it('el menú abre el submenú del peldaño; elegir guarda y mueve icono, title y aria-label a la vez', async () => {
@@ -543,10 +547,10 @@ describe('tabla del listado (#42)', () => {
     fireEvent.click(within(row).getByRole('button', { name: /^Level/ }));
 
     const options = within(row).getAllByRole('menuitemradio');
-    expect(options.length).toBe(5);
+    expect(options.length).toBe(6);
     for (const option of options) {
       expect(option.textContent).toMatch(
-        /to learn|know the parts|passages|someone else leads|asks for a tune/i
+        /to learn|know the parts|passages|someone else leads|unaided|show off/i
       );
     }
     expect(
@@ -562,10 +566,10 @@ describe('tabla del listado (#42)', () => {
     // El icono cambia de barras y su nombre accesible con él: tocar solo el
     // `title` dejaría el nombre viejo (trampa medida del boceto).
     const updated = rowOf('The Cameron Highlanders').querySelector('.rung')!;
-    const described = 'Solo-ready — If someone asks for a tune, this is one you’d give them.';
+    const described = 'Solo-ready — Play it unaided and correctly — no one else needed.';
     expect(updated.getAttribute('aria-label')).toBe(`Level: ${described}`);
     expect(updated.getAttribute('title')).toBe(described);
-    expect(updated.querySelectorAll('span.on').length).toBe(5);
+    expect(updated.querySelectorAll('span.on').length).toBe(4);
   });
 
   it('un solo menú abierto a la vez, y Escape cierra antes el submenú que el menú', async () => {
@@ -644,6 +648,24 @@ describe('tabla del listado (#42)', () => {
     expect(document.querySelector('.repertoire-home table')).toBeNull();
   });
 
+  it('el backlog tiene puerta propia y su listado trae «Start learning» (#50)', async () => {
+    renderHome();
+    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
+
+    // La cabecera lo nombra y es la puerta: la home no tiene banda de backlog.
+    // En la tabla del listado, la pieza del backlog es Drowsy Maggie.
+    fireEvent.click(screen.getByRole('button', { name: /1 to learn/ }));
+    await waitFor(() => expect(document.querySelector('.repertoire-home table')).toBeTruthy());
+    expect(screen.getByText('Drowsy Maggie')).toBeTruthy();
+    expect(document.body.textContent).toContain('Backlog');
+
+    // La acción que saca la pieza del backlog guarda el salto a `learning`.
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Drowsy Maggie' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Start learning/ }));
+
+    await waitFor(() => expect(mockedSaveStatus).toHaveBeenCalledWith('row-drowsy', 'learning'));
+  });
+
   /**
    * El hueco que dejó #44: el buscador del catálogo no devuelve el autor, así
    * que el alta tiene que recogerlo del catálogo antes de crear el tune, o cada
@@ -657,7 +679,7 @@ describe('tabla del listado (#42)', () => {
     mockedLookupMeta.mockResolvedValue(new Map([[1234, { meter: '4/4', composer: 'Tommy Coen' }]]));
 
     renderHome();
-    await waitFor(() => expect(screen.getByText('Morning Dew')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: 'Add a tune' }));
     fireEvent.input(screen.getByLabelText('Search the tune catalogue'), {

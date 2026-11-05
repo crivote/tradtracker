@@ -6,19 +6,32 @@ import { daysSince, normalizeTitle } from './format';
  */
 
 /**
- * Peldaños de capacidad (#29). Sustituyen a la escala de calidad de #11: ya no
- * dicen «cómo de bien la toco» sino «cuánto puedo contar con ella».
+ * Peldaños de capacidad (#29, quinta en #46, cima en #50). Ya no dicen «cómo de
+ * bien la toco» sino «cuánto puedo contar con ella».
  *
- * `aparcada` no está aquí a propósito: aparcar no es una altura de la escalera,
- * es una bandera transversal (`shelved`), y una tune aparcada conserva su
- * peldaño.
+ * `to_learn` **no es un peldaño**: es el **backlog** —una lista de deseos de
+ * piezas que aún no se han empezado— y vive fuera de `BANDS`, del generador y
+ * del recuento de la escalera (#50). Sigue siendo un valor de la columna porque
+ * es el default del alta y hay que poder volver a él.
+ *
+ * `shelved` tampoco está aquí a propósito: aparcar no es una altura de la
+ * escalera, es una bandera transversal, y una tune aparcada conserva su peldaño.
  */
 export type TuneStatus =
   | 'to_learn'
   | 'learning'
   | 'shaky'
   | 'playing_along'
-  | 'solo_ready';
+  | 'solo_ready'
+  | 'mastered';
+
+/** Los peldaños de verdad: todo lo que no es el backlog. */
+export type LadderStatus = Exclude<TuneStatus, 'to_learn'>;
+
+/** `true` para los peldaños; `false` para el backlog. Guarda de tipo. */
+export function isLadderStatus(status: TuneStatus): status is LadderStatus {
+  return status !== 'to_learn';
+}
 
 export interface TuneRecord {
   id: string;
@@ -283,9 +296,12 @@ export function levelText(row: RepertoireRow): string {
 }
 
 /**
- * Las cinco bandas de la home (#29, quinta en #46), en orden de escalera. Cada
- * una lleva el nombre, la definición que se pinta al lado y el peldaño que
- * enciende el indicador de barras.
+ * Las cinco bandas de la home (#29, cuarta en #46, cima en #50), en orden de
+ * escalera. Cada una lleva el nombre, la definición que se pinta al lado y el
+ * peldaño que enciende el indicador de barras.
+ *
+ * El **backlog no está aquí**: `to_learn` no es una banda (#50). Su recuento vive
+ * en la cabecera y su listado es un ámbito propio, como el cajón de aparcadas.
  *
  * **Una sola densidad.** La dirección anterior partía la pantalla en dos —carta
  * grande en las bandas de trabajo, miniatura en las de biblioteca— porque daba
@@ -307,16 +323,10 @@ export interface BandDefinition {
 
 export const BANDS: readonly BandDefinition[] = [
   {
-    status: 'to_learn',
-    label: 'To learn',
-    definition: 'Want to learn it. Not started.',
-    rung: 1,
-  },
-  {
     status: 'learning',
     label: 'Learning',
     definition: 'Know the parts, but can’t get through it end to end.',
-    rung: 2,
+    rung: 1,
   },
   {
     // El peldaño que faltaba (#46): la pieza se sabe de arriba abajo —no es
@@ -327,25 +337,62 @@ export const BANDS: readonly BandDefinition[] = [
     label: 'Shaky',
     definition:
       'Get through it, but some passages don’t come out or the rhythm slips.',
-    rung: 3,
+    rung: 2,
   },
   {
     status: 'playing_along',
     label: 'Playing along',
     definition: 'Can follow it when someone else leads.',
-    rung: 4,
+    rung: 3,
   },
   {
     status: 'solo_ready',
     label: 'Solo-ready',
-    definition: 'If someone asks for a tune, this is one you’d give them.',
+    definition: 'Play it unaided and correctly — no one else needed.',
+    rung: 4,
+  },
+  {
+    // La cima (#50): no es «solo y correcta», eso ya lo dice solo_ready. Es la
+    // pieza con la que uno se luce —variaciones, adornos, recursos expresivos—,
+    // y por eso se practica para mantener, no para sostener.
+    status: 'mastered',
+    label: 'Mastered',
+    definition: 'Improvise variations and ornament it — a tune you can show off with.',
     rung: 5,
   },
 ];
 
-/** La banda de un estado; nunca undefined para un TuneStatus válido. */
+/**
+ * El backlog: no es una banda, pero hace falta su ficha para pintar una fila
+ * (`bandFor`) y para ofrecerlo como opción en los selectores de nivel.
+ *
+ * `rung: 0` es deliberado: el indicador de barras no enciende ninguna, porque no
+ * está en la escalera. `to_learn` cae aquí y **nunca** entra en `BANDS`, que es
+ * lo que lo mantiene fuera de la home, del generador y del recuento (#50).
+ */
+export const BACKLOG_BAND: BandDefinition = {
+  status: 'to_learn',
+  label: 'To learn',
+  definition: 'Want to learn it. Not started — the backlog.',
+  rung: 0,
+};
+
+/** Las barras del indicador de peldaño, de la primera a la cima. */
+export const RUNG_BARS = [1, 2, 3, 4, 5] as const;
+
+/**
+ * Lo que se puede elegir en un selector de nivel: el backlog primero (para
+ * volver a él y para enseñar el estado actual de una pieza sin empezar) y
+ * después los cinco peldaños.
+ */
+export const LEVEL_OPTIONS: readonly BandDefinition[] = [BACKLOG_BAND, ...BANDS];
+
+/** La banda de un estado: el backlog tiene la suya, `rung: 0`; nunca undefined. */
 export function bandFor(status: TuneStatus): BandDefinition {
-  return BANDS.find((band) => band.status === status) ?? BANDS[0];
+  if (status === 'to_learn') return BACKLOG_BAND;
+  // Un valor que no conocemos no se disfraza de peldaño: cae al backlog, que es
+  // «no está en la escalera» y no afirma nada falso.
+  return BANDS.find((band) => band.status === status) ?? BACKLOG_BAND;
 }
 
 /**
@@ -360,12 +407,19 @@ export type RepertoireScope = TuneStatus | 'shelved';
 export const SHELVED_SCOPE = 'shelved' as const;
 
 /**
+ * El backlog como ámbito: `?band=to_learn`. No es una banda (#50), pero se puede
+ * mirar entero y su listado es la puerta a «Start learning».
+ */
+export const BACKLOG_SCOPE = 'to_learn' as const;
+
+/**
  * El ámbito que llega por la URL (`?band=`), validado. Un valor desconocido o
  * ausente no rompe la pantalla: devuelve null y se ve la home entera.
  */
 export function parseScope(raw: unknown): RepertoireScope | null {
   if (typeof raw !== 'string') return null;
   if (raw === SHELVED_SCOPE) return SHELVED_SCOPE;
+  if (raw === BACKLOG_SCOPE) return BACKLOG_SCOPE;
   return BANDS.some((band) => band.status === raw) ? (raw as TuneStatus) : null;
 }
 
@@ -375,6 +429,7 @@ export const STATUS_LABELS: Record<TuneStatus, string> = {
   shaky: 'Shaky',
   playing_along: 'Playing along',
   solo_ready: 'Solo-ready',
+  mastered: 'Mastered',
 };
 
 /** Colores de la tabla: sigue siendo la vista oscura de siempre. */
@@ -384,10 +439,14 @@ export const STATUS_STYLES: Record<TuneStatus, string> = {
   shaky: 'bg-orange-900/60 text-orange-300 border-orange-700',
   playing_along: 'bg-violet-900/60 text-violet-300 border-violet-700',
   solo_ready: 'bg-emerald-900/60 text-emerald-300 border-emerald-700',
+  mastered: 'bg-rose-900/60 text-rose-300 border-rose-700',
 };
 
 /**
- * Cuántas tunes hay en cada peldaño; las cinco claves siempre están.
+ * Cuántas tunes hay en cada peldaño; las seis claves siempre están.
+ *
+ * `to_learn` se cuenta aquí porque la cabecera lo nombra, pero **no es un
+ * peldaño**: es el backlog, y su recuento es la puerta a su listado (#50).
  *
  * Las aparcadas **no** cuentan: aparcar no cambia el peldaño, así que contarlas
  * aquí daría una cabecera que no cuadra con las bandas, que tampoco las pintan.
@@ -400,12 +459,22 @@ export function statusCounts(rows: readonly RepertoireRow[]): Record<TuneStatus,
     shaky: 0,
     playing_along: 0,
     solo_ready: 0,
+    mastered: 0,
   };
   for (const row of rows) {
     if (row.shelved) continue;
     if (row.status in counts) counts[row.status] += 1;
   }
   return counts;
+}
+
+/** Las no aparcadas que están en el backlog: lo que aún no se ha empezado. */
+export function backlogCount(rows: readonly RepertoireRow[]): number {
+  let count = 0;
+  for (const row of rows) {
+    if (!row.shelved && row.status === 'to_learn') count += 1;
+  }
+  return count;
 }
 
 /**

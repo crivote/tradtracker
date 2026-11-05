@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { RepertoireRow, TuneStatus } from './repertoire-model';
+import type { LadderStatus, RepertoireRow } from './repertoire-model';
 import type { PracticeCandidate } from './practice-plan';
 import { 
   computeTargets, 
@@ -23,17 +23,44 @@ describe('Practice Plan Model', () => {
   describe('computeTargets', () => {
     it('calculates targets correctly for 421/8', () => {
       const targets = computeTargets(421, 8);
-      // T(status) = factor * (421 / 8) = factor * 52.625
-      // to_learn: 0.5 * 52.625 = 26.3125
-      // learning: 1 * 52.625 = 52.625
-      // shaky: 1.5 * 52.625 = 78.9375
-      // playing_along: 2 * 52.625 = 105.25
-      // solo_ready: 4 * 52.625 = 210.5
-      expect(targets.byStatus.to_learn).toBeCloseTo(26.3, 1);
+      // T(peldaño) = factor * (421 / 8) = factor * 52.625
+      // learning: 1 * 52.625 · shaky: 1.5 · playing_along: 2 · solo_ready: 4
+      // mastered: 6 * 52.625 = 315.75
+      // El backlog (`to_learn`) NO tiene intervalo: no es un peldaño (#50).
       expect(targets.byStatus.learning).toBeCloseTo(52.6, 1);
       expect(targets.byStatus.shaky).toBeCloseTo(78.9, 1);
       expect(targets.byStatus.playing_along).toBeCloseTo(105.3, 1);
       expect(targets.byStatus.solo_ready).toBeCloseTo(210.5, 1);
+      expect(targets.byStatus.mastered).toBeCloseTo(315.75, 2);
+      expect(Object.keys(targets.byStatus)).not.toContain('to_learn');
+    });
+  });
+
+  describe('factores por peldaño (#46, cima en #50)', () => {
+    it('mastered es la que menos se toca, y el backlog no tiene factor', () => {
+      expect(PRACTICE_FACTORS.mastered).toBeGreaterThan(PRACTICE_FACTORS.solo_ready);
+      expect(Object.keys(PRACTICE_FACTORS)).not.toContain('to_learn');
+      expect(Object.keys(PRACTICE_FACTORS)).toHaveLength(5);
+    });
+
+    it('el descanso admite mastered y nunca el backlog', () => {
+      expect(KNOWN_STATUSES).toContain('mastered');
+      expect(KNOWN_STATUSES).not.toContain('to_learn');
+    });
+
+    it('a igual antigüedad, mastered es menos urgente que cualquier peldaño de abajo', () => {
+      const targets = computeTargets(50, 8);
+      const base = {
+        id: 'x',
+        addedAt: new Date(nowMs - 40 * 86_400_000).toISOString(),
+        lastPracticedAt: new Date(nowMs - 30 * 86_400_000).toISOString(),
+        rhythm: 'Reel',
+        favorite: false,
+      };
+      const mastered = urgencyOf({ ...base, status: 'mastered' }, targets, nowMs);
+      for (const status of ['learning', 'shaky', 'playing_along', 'solo_ready'] as const) {
+        expect(mastered).toBeLessThan(urgencyOf({ ...base, status }, targets, nowMs));
+      }
     });
   });
 
@@ -88,7 +115,8 @@ describe('Practice Plan Model', () => {
 
   describe('buildPracticeList', () => {
     const targets = computeTargets(10, 5); // T = factor * 2
-    // to_learn: 1, learning: 2, playing_along: 4, solo_ready: 8
+    // learning: 2 · shaky: 3 · playing_along: 4 · solo_ready: 8 · mastered: 12
+    // (`to_learn` no tiene intervalo: es el backlog, no un peldaño — #50)
 
     it('handles empty candidates', () => {
       const result = buildPracticeList([], { seed: 123, nowMs, dailyTarget: 5 });
@@ -116,7 +144,7 @@ describe('Practice Plan Model', () => {
       // 10 known candidates, threshold 8. Positions 4 and 8 should be 'rest'.
       const candidates = Array.from({ length: 15 }, (_, i) => ({
         id: `id${i}`,
-        status: (i < 10 ? 'solo_ready' : 'to_learn') as TuneStatus,
+        status: (i < 10 ? 'solo_ready' : 'learning') as LadderStatus,
         addedAt: new Date(nowMs - 1 * 86_400_000).toISOString(),
         lastPracticedAt: null,
         rhythm: 'Reel',
@@ -133,7 +161,7 @@ describe('Practice Plan Model', () => {
       // 3 known candidates, threshold 8. Only pos 4 should be 'rest'.
       const candidates = Array.from({ length: 15 }, (_, i) => ({
         id: `id${i}`,
-        status: (i < 3 ? 'solo_ready' : 'to_learn') as TuneStatus,
+        status: (i < 3 ? 'solo_ready' : 'learning') as LadderStatus,
         addedAt: new Date(nowMs - 1 * 86_400_000).toISOString(),
         lastPracticedAt: null,
         rhythm: 'Reel',
@@ -232,7 +260,7 @@ describe('Practice Plan Model', () => {
     it('el respiro ocupa solo las posiciones 4 y 8, no las intermedias', () => {
       const cands = Array.from({ length: 15 }, (_, i) =>
         mk(`id${String(i).padStart(2, '0')}`, {
-          status: (i < 10 ? 'solo_ready' : 'to_learn') as TuneStatus, addedAt: iso(1),
+          status: (i < 10 ? 'solo_ready' : 'learning') as LadderStatus, addedAt: iso(1),
         }));
       const res = buildPracticeList(cands, { seed: 123, nowMs, dailyTarget: 12, knownThreshold: 8 });
       expect(res.entries[3].reason).toBe('rest');
@@ -308,6 +336,16 @@ describe('toCandidates (#36)', () => {
     ];
 
     expect(toCandidates(rows).map((candidate) => candidate.id)).toEqual(['a', 'c']);
+  });
+
+  it('deja fuera el backlog: una pieza sin empezar no puede estar vencida (#50)', () => {
+    const rows = [
+      repertoireRow({ id: 'learning' }),
+      repertoireRow({ id: 'deseo', status: 'to_learn' }),
+      repertoireRow({ id: 'mastered', status: 'mastered' }),
+    ];
+
+    expect(toCandidates(rows).map((candidate) => candidate.id)).toEqual(['learning', 'mastered']);
   });
 
   it('usa el ritmo personal, no el del catálogo', () => {
