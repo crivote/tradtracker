@@ -5,10 +5,16 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  ARTIC_FULL_WIDTH,
+  ARTIC_THUMB_WIDTH,
   ART_MEDIA_TERMS,
+  ART_QUERY_TERMS,
   CANDIDATE_COUNT,
-  LANE_QUOTAS,
+  articImageUrl,
+  articMedium,
+  articSearchUrl,
   candidateKey,
+  commonsMedium,
   commonsQueries,
   cropGeometry,
   focalAfterDrag,
@@ -18,6 +24,7 @@ import {
   isShareAlike,
   licenseLabel,
   mergeCandidates,
+  parseArticResponse,
   parseCommonsResponse,
   parsePexelsResponse,
   pexelsSearchUrl,
@@ -29,7 +36,11 @@ import {
 } from './image-sources';
 
 /** Candidato de mentira, con el mínimo que usa la fusión. */
-function candidate(source: 'commons' | 'pexels', id: string, extra: Partial<ImageCandidate> = {}): ImageCandidate {
+function candidate(
+  source: 'commons' | 'pexels' | 'artic',
+  id: string,
+  extra: Partial<ImageCandidate> = {}
+): ImageCandidate {
   return {
     source,
     id,
@@ -62,57 +73,44 @@ describe('palabras de búsqueda', () => {
 describe('consultas de Commons', () => {
   const lanes = commonsQueries('  The Butterfly ', 'both');
 
-  it('construye los cuatro carriles en orden, con el cupo que les toca', () => {
-    expect(lanes.map((lane) => lane.kind)).toEqual(['title', 'art', 'photo', 'exact']);
-    expect(
-      lanes.reduce((total, lane) => total + LANE_QUOTAS[lane.kind], 0)
-    ).toBe(CANDIDATE_COUNT);
+  it('con `both` pide un carril por término de arte y uno de foto', () => {
+    expect(lanes.map((lane) => lane.kind)).toEqual(['art', 'art', 'art', 'art', 'photo']);
+    // Grabado y estampa valen tanto como pintura: criterio del dueño.
+    expect(ART_QUERY_TERMS).toEqual(['painting', 'engraving', 'drawing', 'print']);
   });
 
-  it('el carril título busca el nombre y el de arte añade `painting`', () => {
-    expect(lanes[0].search).toBe('filetype:bitmap Butterfly');
-    expect(lanes[1].search).toBe('filetype:bitmap Butterfly painting');
-  });
-
-  it('el carril foto usa NEGACIÓN, no `+photograph` (que era ruido)', () => {
-    const photo = lanes.find((lane) => lane.kind === 'photo')!;
-    expect(photo.search).toBe(
-      'filetype:bitmap Butterfly -painting -engraving -drawing -lithograph -watercolour -woodcut'
+  it('cada medio de arte va en su propia consulta, sin grupos OR', () => {
+    expect(lanes.slice(0, 4).map((lane) => lane.search)).toEqual(
+      ART_QUERY_TERMS.map((medium) => `filetype:bitmap Butterfly ${medium}`)
     );
-    expect(photo.search).not.toContain('photograph');
-    // Nada de grupos OR de medios: devolvían los mismos grabados para todo.
-    expect(photo.search).not.toContain('(');
-    for (const media of ART_MEDIA_TERMS) expect(photo.search).toContain(`-${media}`);
+    // Un OR de medios devolvía los mismos tres grabados para todos los títulos.
+    for (const lane of lanes) expect(lane.search).not.toContain('(');
   });
 
-  it('el carril exacto va entre comillas', () => {
-    expect(lanes[3].search).toBe('filetype:bitmap "Butterfly"');
+  it('ya no hay carril sin registro: ni título suelto ni frase exacta', () => {
+    // Eran 5 de las 9 plazas y hacían que arte y foto se vieran iguales.
+    const searches = lanes.map((lane) => lane.search);
+    expect(searches).not.toContain('filetype:bitmap Butterfly');
+    expect(searches.some((search) => search.includes('"'))).toBe(false);
+  });
+
+  it('el carril foto usa NEGACIÓN e incluye los términos de impresión', () => {
+    const photo = lanes.find((lane) => lane.kind === 'photo')!;
+    expect(photo.search).not.toContain('photograph');
+    for (const media of ART_MEDIA_TERMS) expect(photo.search).toContain(`-${media}`);
+    // Medido: sin negar `print`, *storm at sea* en modo foto devolvía cuadros.
+    expect(photo.search).toContain('-print');
+    expect(photo.search).toContain('-etching');
   });
 
   it('el registro decide qué carriles se piden', () => {
     expect(commonsQueries('Butterfly', 'art').map((lane) => lane.kind)).toEqual([
-      'title',
       'art',
-      'exact',
+      'art',
+      'art',
+      'art',
     ]);
-    expect(commonsQueries('Butterfly', 'photo').map((lane) => lane.kind)).toEqual([
-      'title',
-      'photo',
-      'exact',
-    ]);
-  });
-
-  it('con el registro en `photo` la negación va también en título y frase exacta', () => {
-    // Medido: sin esto, el carril título de «Harvest Home» devuelve el Turner y el
-    // mosaico de fotos trae una pintura.
-    const photo = commonsQueries('Harvest Home', 'photo');
-    expect(photo[0].search).toContain('-painting');
-    expect(photo[photo.length - 1].search).toContain('-painting');
-    expect(photo[photo.length - 1].search.startsWith('filetype:bitmap "Harvest Home"')).toBe(true);
-
-    // Con arte o con el registro por defecto, el carril título va limpio.
-    expect(commonsQueries('Harvest Home', 'art')[0].search).toBe('filetype:bitmap Harvest Home');
-    expect(commonsQueries('Harvest Home', 'both')[0].search).toBe('filetype:bitmap Harvest Home');
+    expect(commonsQueries('Butterfly', 'photo').map((lane) => lane.kind)).toEqual(['photo']);
   });
 
   it('sin palabras no hay consulta', () => {
@@ -120,73 +118,51 @@ describe('consultas de Commons', () => {
   });
 });
 
-describe('fusión con cupo y relleno', () => {
-  it('reparte 4/2/2/1 cuando todos los carriles tienen de sobra', () => {
+describe('fusión en ronda', () => {
+  it('alterna carriles y deja el mosaico corto antes que mezclar criterios', () => {
     const lanes: CandidateLane[] = [
-      { kind: 'title', candidates: [1, 2, 3, 4, 5, 6].map((n) => candidate('commons', `t${n}`)) },
       { kind: 'art', candidates: [1, 2, 3].map((n) => candidate('commons', `a${n}`)) },
       { kind: 'photo', candidates: [1, 2, 3].map((n) => candidate('commons', `p${n}`)) },
-      { kind: 'exact', candidates: [1, 2].map((n) => candidate('commons', `e${n}`)) },
     ];
 
     const merged = mergeCandidates(lanes);
 
-    expect(merged).toHaveLength(9);
-    expect(merged.map((item) => item.id)).toEqual([
-      't1',
-      't2',
-      't3',
-      't4',
-      'a1',
-      'a2',
-      'p1',
-      'p2',
-      'e1',
-    ]);
+    // Seis, no nueve: es la decisión del dueño (2026-11-08).
+    expect(merged.map((item) => item.id)).toEqual(['a1', 'p1', 'a2', 'p2', 'a3', 'p3']);
   });
 
-  it('un carril devuelve 2 y hay que rellenar a 9 con el resto', () => {
-    // Este es el caso del bug medido: el deduplicado marcaba como vistas las que
-    // no entraban en el cupo y el mosaico se quedaba en siete. Aquí el carril
-    // título solo trae dos, así que los dos huecos se completan con los otros.
+  it('un carril con sobrantes no se come las plazas del otro', () => {
+    // Con cupos fijos esto no se podía: el carril largo llenaba por adelantado.
     const lanes: CandidateLane[] = [
-      { kind: 'title', candidates: [candidate('commons', 't1'), candidate('commons', 't2')] },
-      { kind: 'art', candidates: [1, 2, 3, 4].map((n) => candidate('commons', `a${n}`)) },
-      { kind: 'photo', candidates: [1, 2, 3, 4].map((n) => candidate('commons', `p${n}`)) },
-      { kind: 'exact', candidates: [candidate('commons', 'e1')] },
+      {
+        kind: 'art',
+        candidates: Array.from({ length: 12 }, (_, n) => candidate('commons', `a${n}`)),
+      },
+      { kind: 'photo', candidates: [candidate('commons', 'p1')] },
     ];
 
     const merged = mergeCandidates(lanes);
 
     expect(merged).toHaveLength(9);
+    // El carril corto entra en la primera ronda, no al final.
+    expect(merged[1].id).toBe('p1');
     expect(new Set(merged.map(candidateKey)).size).toBe(9);
-    // El cupo se respeta primero: 2 + 2 + 2 + 1 = 7.
-    expect(merged.slice(0, 7).map((item) => item.id)).toEqual([
-      't1',
-      't2',
-      'a1',
-      'a2',
-      'p1',
-      'p2',
-      'e1',
-    ]);
-    // El relleno recupera lo que el cupo dejó fuera: a3 y p3 existían y no
-    // entraron en el primer pase, así que tienen que poder volver.
-    expect(merged.slice(7).map((item) => item.id)).toEqual(['a3', 'p3']);
   });
 
   it('deduplica por source:id y no confunde un id de Commons con uno de Pexels', () => {
     const lanes: CandidateLane[] = [
       {
-        kind: 'title',
+        kind: 'art',
         candidates: [
           candidate('commons', 'Maggie.jpg'),
           candidate('commons', 'Maggie.jpg'),
           candidate('pexels', 'Maggie.jpg'),
         ],
       },
-      { kind: 'art', candidates: [candidate('commons', 'Maggie.jpg'), candidate('commons', 'Otro.jpg')] },
-      { kind: 'exact', candidates: [candidate('commons', 'Otro.jpg')] },
+      {
+        kind: 'photo',
+        candidates: [candidate('commons', 'Maggie.jpg'), candidate('commons', 'Otro.jpg')],
+      },
     ];
 
     const merged = mergeCandidates(lanes);
@@ -195,21 +171,22 @@ describe('fusión con cupo y relleno', () => {
     expect(merged.filter((item) => item.source === 'commons' && item.id === 'Maggie.jpg')).toHaveLength(1);
     // …pero un id igual en Pexels es otra imagen.
     expect(merged.filter((item) => item.id === 'Maggie.jpg')).toHaveLength(2);
-    expect(merged.map(candidateKey)).toEqual(['commons:Maggie.jpg', 'pexels:Maggie.jpg', 'commons:Otro.jpg']);
+    // Orden del reparto en ronda: arte, foto, y el sobrante de arte al final.
+    expect(merged.map(candidateKey)).toEqual(['commons:Maggie.jpg', 'commons:Otro.jpg', 'pexels:Maggie.jpg']);
   });
 
   it('nunca pasa del límite ni inventa candidatos cuando hay menos de nueve', () => {
-    const lanes: CandidateLane[] = [
-      { kind: 'title', candidates: [candidate('commons', 't1')] },
-      { kind: 'art', candidates: [] },
-      { kind: 'photo', candidates: [candidate('commons', 'p1')] },
-      { kind: 'exact', candidates: [] },
+    const short: CandidateLane[] = [
+      { kind: 'art', candidates: [candidate('commons', 'a1')] },
+      { kind: 'photo', candidates: [] },
     ];
-
-    expect(mergeCandidates(lanes)).toHaveLength(2);
+    expect(mergeCandidates(short)).toHaveLength(1);
 
     const many: CandidateLane[] = [
-      { kind: 'title', candidates: Array.from({ length: 20 }, (_, n) => candidate('commons', `t${n}`)) },
+      {
+        kind: 'art',
+        candidates: Array.from({ length: 20 }, (_, n) => candidate('commons', `a${n}`)),
+      },
     ];
     expect(mergeCandidates(many, 9)).toHaveLength(9);
   });
@@ -479,5 +456,170 @@ describe('consulta de Pexels', () => {
     expect(url.searchParams.get('per_page')).toBe('9');
     // Las verticales, descartadas en origen: es la mitad del problema del recorte.
     expect(url.searchParams.get('orientation')).toBe('landscape');
+  });
+});
+
+
+describe('clasificación de medio en Commons', () => {
+  it('lee el medio de las categorías, no del título', () => {
+    expect(
+      commonsMedium({ title: 'Matthieu van Plattenberg - Storm at Sea.jpg', categories: ['Marine paintings by Matthieu van Plattenberg'] })
+    ).toBe('art');
+    expect(
+      commonsMedium({ title: 'Gillanders, Monaghan.jpg', categories: ['Photographs by Oliver Dixon'] })
+    ).toBe('photo');
+  });
+
+  it('la fotografía gana al arte: un «salted paper print» no es una estampa', () => {
+    expect(
+      commonsMedium({ title: 'Head of Harbour', categories: ['Albumen prints'] })
+    ).toBe('photo');
+  });
+
+  it('sin categorías que hablen del medio, no inventa', () => {
+    // Caso real: un cuadro con solo categorías de fecha queda en unknown, y eso
+    // no lo descarta — el carril que lo trajo ya pedía arte.
+    expect(commonsMedium({ title: 'Burrasca di mare.jpg', categories: ['May 2023 in Venice'] })).toBe(
+      'unknown'
+    );
+    expect(commonsMedium({ title: 'Cottage at 12 Anglesea Street.jpg' })).toBe('unknown');
+  });
+});
+
+describe('parseo de categorías de Commons', () => {
+  it('quita el prefijo Category: y las deja en el candidato', () => {
+    const payload = {
+      query: {
+        pages: {
+          '1': {
+            pageid: 1,
+            index: 0,
+            title: 'File:Storm at Sea.jpg',
+            categories: [
+              { title: 'Category:Marine paintings by Matthieu van Plattenberg' },
+              { title: 'Category:17th-century sailing ships in paintings' },
+            ],
+            imageinfo: [
+              {
+                thumburl: 'https://upload.wikimedia.org/thumb/a/ab/Storm.jpg/330px-Storm.jpg',
+                descriptionurl: 'https://commons.wikimedia.org/wiki/File:Storm_at_Sea.jpg',
+                width: 2400,
+                height: 1800,
+                extmetadata: { LicenseShortName: { value: 'Public domain' } },
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    const [parsed] = parseCommonsResponse(payload);
+    expect(parsed.categories).toEqual([
+      'Marine paintings by Matthieu van Plattenberg',
+      '17th-century sailing ships in paintings',
+    ]);
+    expect(commonsMedium(parsed)).toBe('art');
+  });
+});
+
+describe('Art Institute of Chicago', () => {
+  const payload = {
+    data: [
+      {
+        id: 1,
+        title: 'Storm at Sea',
+        is_public_domain: true,
+        image_id: 'aaa-111',
+        artwork_type_title: 'Painting',
+        classification_title: 'oil on canvas',
+        artist_title: 'Joseph Mallord William Turner',
+        thumbnail: { width: 3000, height: 2400 },
+      },
+      {
+        id: 2,
+        title: 'Head of Harbour, Balaklava',
+        is_public_domain: true,
+        image_id: 'bbb-222',
+        artwork_type_title: 'Photograph',
+        classification_title: 'salted paper print',
+        artist_title: 'Roger Fenton',
+        thumbnail: { width: 3000, height: 2385 },
+      },
+      {
+        id: 3,
+        title: 'Not public domain',
+        is_public_domain: false,
+        image_id: 'ccc-333',
+        artwork_type_title: 'Painting',
+      },
+      {
+        id: 4,
+        title: 'Public domain but no image',
+        is_public_domain: true,
+        image_id: null,
+        artwork_type_title: 'Painting',
+      },
+    ],
+  };
+
+  it('la miniatura y el grande van por IIIF, solo con ancho', () => {
+    // El servidor bloquea `!w,h` y `/square/`: solo `full/<ancho>,`.
+    expect(articImageUrl('aaa-111')).toBe(
+      `https://www.artic.edu/iiif/2/aaa-111/full/${ARTIC_THUMB_WIDTH},/0/default.jpg`
+    );
+    expect(articImageUrl('aaa-111', ARTIC_FULL_WIDTH)).toContain('/full/843,/0/default.jpg');
+  });
+
+  it('la búsqueda filtra dominio público en servidor y pide el tipo de obra', () => {
+    const url = new URL(articSearchUrl('The Butterfly'));
+    expect(url.origin + url.pathname).toBe('https://api.artic.edu/api/v1/artworks/search');
+    expect(url.searchParams.get('q')).toBe('Butterfly');
+    expect(url.searchParams.get('query[term][is_public_domain]')).toBe('true');
+    expect(url.searchParams.get('fields')).toContain('artwork_type_title');
+  });
+
+  it('con registro art solo pasan las obras, y con photo solo las fotografías', () => {
+    const art = parseArticResponse(payload, 'art');
+    const photo = parseArticResponse(payload, 'photo');
+    const both = parseArticResponse(payload, 'both');
+
+    expect(art.map((item) => item.id)).toEqual(['1']);
+    expect(photo.map((item) => item.id)).toEqual(['2']);
+    // `both` se queda sin filtro de medio, no sin filtro de derechos.
+    expect(both.map((item) => item.id)).toEqual(['1', '2']);
+    expect(both.every((item) => item.source === 'artic')).toBe(true);
+  });
+
+  it('descarta lo que no es dominio público o no trae imagen', () => {
+    const ids = parseArticResponse(payload, 'both').map((item) => item.id);
+    expect(ids).not.toContain('3');
+    expect(ids).not.toContain('4');
+  });
+
+  it('trae crédito, ficha, licencia y medidas en píxeles', () => {
+    const [work] = parseArticResponse(payload, 'art');
+    expect(work.author).toBe('Joseph Mallord William Turner');
+    expect(work.pageUrl).toBe('https://www.artic.edu/artworks/1');
+    expect(work.license).toBe('Public domain');
+    expect(isFreeLicense(work.license)).toBe(true);
+    // Sin medidas no hay desborde que arrastrar en el encuadre.
+    expect(work.width).toBe(3000);
+    expect(work.height).toBe(2400);
+    expect(ratioLabel(work)).toBeNull();
+  });
+
+  it('clasifica el medio por el tipo de obra y no se traga una fotografía con «print»', () => {
+    expect(articMedium({ artwork_type_title: 'Print' })).toBe('art');
+    expect(articMedium({ artwork_type_title: 'Drawing and Watercolor' })).toBe('art');
+    expect(articMedium({ artwork_type_title: 'Photograph' })).toBe('photo');
+    expect(articMedium({ classification_title: 'gelatin silver print' })).toBe('photo');
+    expect(articMedium({ artwork_type_title: 'Textile' })).toBe('unknown');
+    expect(articMedium({})).toBe('unknown');
+  });
+
+  it('una respuesta rota no revienta: cero candidatos', () => {
+    expect(parseArticResponse(undefined)).toEqual([]);
+    expect(parseArticResponse({ data: [] })).toEqual([]);
+    expect(parseArticResponse({})).toEqual([]);
   });
 });

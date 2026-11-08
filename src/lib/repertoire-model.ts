@@ -56,7 +56,7 @@ export interface TuneRecord {
  * tune. `null` cuando no hay fondo, y entonces la carta se pinta como antes.
  */
 export interface ChosenImage {
-  source: 'commons' | 'pexels' | 'upload';
+  source: 'commons' | 'pexels' | 'artic' | 'upload';
   id: string | null;
   thumbUrl: string | null;
   fullUrl: string | null;
@@ -175,7 +175,9 @@ function clampZoomValue(value: unknown): number {
  */
 export function mapImageRow(row: Record<string, any>): ChosenImage | null {
   const source = row.image_source;
-  if (source !== 'commons' && source !== 'pexels' && source !== 'upload') return null;
+  if (source !== 'commons' && source !== 'pexels' && source !== 'artic' && source !== 'upload') {
+    return null;
+  }
   if (!row.image_thumb_url) return null;
 
   return {

@@ -240,7 +240,8 @@ export default function BackgroundPicker(props: BackgroundPickerProps) {
 
   const chooseRegister = (next: ImageRegister) => {
     setRegister(next);
-    if (source() === 'commons') void runSearch();
+    // Pexels no distingue registro: relanzar ahí sería una petición de más.
+    if (source() !== 'pexels') void runSearch();
   };
 
   const saveKeyAndSearch = () => {
@@ -489,6 +490,14 @@ export default function BackgroundPicker(props: BackgroundPickerProps) {
               </button>
               <button
                 type="button"
+                class={`px-3 py-1.5 ${source() === 'artic' ? 'bg-amber-500 text-gray-900' : 'hover:text-amber-300'}`}
+                aria-pressed={source() === 'artic'}
+                onClick={() => chooseSource('artic')}
+              >
+                Art Institute
+              </button>
+              <button
+                type="button"
                 class={`px-3 py-1.5 ${source() === 'pexels' ? 'bg-amber-500 text-gray-900' : 'hover:text-amber-300'}`}
                 aria-pressed={source() === 'pexels'}
                 onClick={() => chooseSource('pexels')}
@@ -497,20 +506,28 @@ export default function BackgroundPicker(props: BackgroundPickerProps) {
               </button>
             </div>
 
-            <div class="flex overflow-hidden rounded border border-gray-600" role="group" aria-label="Image register">
-              <For each={['both', 'art', 'photo'] as ImageRegister[]}>
-                {(option) => (
-                  <button
-                    type="button"
-                    class={`px-3 py-1.5 ${register() === option ? 'bg-amber-500 text-gray-900' : 'hover:text-amber-300'}`}
-                    aria-pressed={register() === option}
-                    onClick={() => chooseRegister(option)}
-                  >
-                    {option === 'both' ? 'Both' : option === 'art' ? 'Art' : 'Photo'}
-                  </button>
-                )}
-              </For>
-            </div>
+            {/*
+              El registro solo tiene sentido donde la fuente lo distingue: el Art
+              Institute filtra por tipo de obra y Commons por carril. Pexels sirve
+              fotos y nada más, así que con Pexels los botones no se pintan — un
+              «Art» que devuelve fotos es una promesa que no se cumple.
+            */}
+            <Show when={source() !== 'pexels'}>
+              <div class="flex overflow-hidden rounded border border-gray-600" role="group" aria-label="Image register">
+                <For each={['both', 'art', 'photo'] as ImageRegister[]}>
+                  {(option) => (
+                    <button
+                      type="button"
+                      class={`px-3 py-1.5 ${register() === option ? 'bg-amber-500 text-gray-900' : 'hover:text-amber-300'}`}
+                      aria-pressed={register() === option}
+                      onClick={() => chooseRegister(option)}
+                    >
+                      {option === 'both' ? 'Both' : option === 'art' ? 'Art' : 'Photo'}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
 
             <Show when={source() === 'pexels'}>
               <label class="flex items-center gap-2" for="pexels-key">
@@ -616,7 +633,11 @@ export default function BackgroundPicker(props: BackgroundPickerProps) {
           <Show when={candidates().length > 0 && !searching()}>
             <p class="text-xs text-gray-500">
               {candidates().length} of {CANDIDATE_COUNT} candidates · green licence = public domain,
-              CC0 or Pexels · thumbnails at 330 px
+              CC0 or Pexels · thumbnails at {source() === 'artic' ? '400' : '330'} px
+              <Show when={candidates().length > 0 && candidates().length < CANDIDATE_COUNT}>
+                {' '}
+                — the rest did not match the register, so they are not shown
+              </Show>
             </p>
           </Show>
 

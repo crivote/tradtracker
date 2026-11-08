@@ -220,7 +220,7 @@ export async function removeFromRepertoire(repertoireId: string): Promise<void> 
  * volver a pedir el grande.
  */
 export interface ImageSelection {
-  source: 'commons' | 'pexels';
+  source: 'commons' | 'pexels' | 'artic';
   id: string;
   thumbUrl: string;
   fullUrl: string;
