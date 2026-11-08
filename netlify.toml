@@ -1,0 +1,39 @@
+# Netlify como frontal público de tradtracker (2026-11-08).
+#
+# Motivo: el par anycast que Cloudflare asigna a esta zona —188.114.96.5 / 188.114.97.5— está
+# bloqueado por los cinco operadores españoles en cada ventana de partido (sentencia de 2024 a
+# instancia de LaLiga). Netlify sirve desde su propia red y no aparece en esas listas, igual que
+# TradTube. Ver la skill `tradtracker`, sección «Bloqueo por fútbol».
+#
+# Esto NO es inmunidad: la lista bloquea IPs concretas —hay Twitch, Vercel y GitHub Pages—, así
+# que si algún día entra una IP de Netlify el síntoma vuelve. Por eso el Worker de Cloudflare se
+# conserva como respaldo y no se borra nada.
+#
+# El dominio propio no forma parte de este corte: primero se comprueba el hostname de Netlify.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Las cabeceras (COOP same-origin, caché del catálogo, immutable de /assets) viajan en
+# public/_headers. Netlify lee `dist/_headers` igual que Cloudflare Pages, así que no se
+# duplican aquí a propósito.
+
+# Fallback SPA con la lección del issue #40: un asset ausente NUNCA puede devolver index.html.
+# Los ficheros que existen ganan a estas reglas (force = false por defecto), así que los assets
+# reales se sirven intactos y solo el hueco cae en el 404.
+[[redirects]]
+  from = "/assets/*"
+  to = "/404.html"
+  status = 404
+
+[[redirects]]
+  from = "/soundfonts/*"
+  to = "/404.html"
+  status = 404
+
+# Cualquier otra ruta es de la app: index.html y el router de SolidJS decide.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
