@@ -19,13 +19,17 @@ import {
   COMMONS_FULL_WIDTH,
   COMMONS_THUMB_WIDTH,
   PEXELS_PER_PAGE,
+  articSearchUrl,
   candidateKey,
+  commonsMedium,
   commonsQueries,
   mergeCandidates,
+  parseArticResponse,
   parseCommonsResponse,
   parsePexelsResponse,
   pexelsSearchUrl,
   type CandidateLane,
+  type CommonsQuery,
   type ImageCandidate,
   type ImageRegister,
   type SearchSource,
@@ -81,19 +85,33 @@ async function commonsApi(params: Record<string, string>): Promise<any> {
   return response.json();
 }
 
-/** Una consulta de un carril (`generator=search` en el espacio de ficheros). */
-async function commonsLane(search: string, limit: number): Promise<ImageCandidate[]> {
+/**
+ * Una consulta de un carril (`generator=search` en el espacio de ficheros).
+ *
+ * Pide `prop=categories` además de `imageinfo` porque las categorías son la
+ * única señal de medio que da Commons, y **veta** lo que las categorías
+ * contradicen: en el carril de arte se cae lo que se declara fotografía, y en el
+ * de foto lo que se declara obra gráfica. Lo que no declara nada (`unknown`) se
+ * queda: el carril que lo trajo ya pedía ese medio.
+ */
+async function commonsLane(query: CommonsQuery): Promise<ImageCandidate[]> {
   const payload = await commonsApi({
     action: 'query',
     generator: 'search',
-    gsrsearch: search,
+    gsrsearch: query.search,
     gsrnamespace: '6',
-    gsrlimit: String(limit),
-    prop: 'imageinfo',
+    gsrlimit: String(query.limit),
+    prop: 'imageinfo|categories',
+    cllimit: 'max',
+    clshow: '!hidden',
     iiprop: 'url|extmetadata|size',
     iiurlwidth: String(COMMONS_THUMB_WIDTH),
   });
-  return parseCommonsResponse(payload, search);
+
+  return parseCommonsResponse(payload, query.search).filter((candidate) => {
+    const medium = commonsMedium(candidate);
+    return medium === 'unknown' || medium === query.kind;
+  });
 }
 
 /**
@@ -109,9 +127,7 @@ export async function searchCommons(
   const queries = commonsQueries(words, register);
   if (queries.length === 0) return [];
 
-  const settled = await Promise.allSettled(
-    queries.map((query) => commonsLane(query.search, query.limit))
-  );
+  const settled = await Promise.allSettled(queries.map((query) => commonsLane(query)));
 
   if (settled.every((result) => result.status === 'rejected')) {
     const first = settled[0] as PromiseRejectedResult;
@@ -202,6 +218,41 @@ export async function searchPexels(words: string, apiKey: string): Promise<Image
   return candidates;
 }
 
+/**
+ * Los candidatos del Art Institute of Chicago. Es la única fuente con **filtro
+ * de medio de verdad**: `artwork_type_title` distingue `Painting`, `Print`,
+ * `Drawing and Watercolor` y `Photograph`, cosa que la búsqueda léxica de
+ * Commons no hace. Sin clave, CORS abierto y solo dominio público.
+ *
+ * Se pide un pozo de 40 y se filtra en cliente por registro; el mosaico puede
+ * salir corto, y eso es lo acordado: no se rellena con lo que no cumple.
+ */
+export async function searchArtic(
+  words: string,
+  register: ImageRegister = 'both'
+): Promise<ImageCandidate[]> {
+  let response: Response;
+  try {
+    response = await fetch(articSearchUrl(words), {
+      headers: { Accept: 'application/json' },
+    });
+  } catch (cause) {
+    throw new ImageSearchError(
+      `Could not reach the Art Institute of Chicago: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+      'network'
+    );
+  }
+
+  if (!response.ok) {
+    throw new ImageSearchError(`The Art Institute responded ${response.status}.`, 'http');
+  }
+
+  const payload = await response.json();
+  return parseArticResponse(payload, register, words).slice(0, CANDIDATE_COUNT);
+}
+
 /** Lo que necesita la pantalla para pedir un mosaico. */
 export interface ImageSearchRequest {
   words: string;
@@ -215,6 +266,9 @@ export interface ImageSearchRequest {
 export async function searchCandidates(request: ImageSearchRequest): Promise<ImageCandidate[]> {
   if (request.source === 'pexels') {
     return searchPexels(request.words, request.pexelsKey ?? '');
+  }
+  if (request.source === 'artic') {
+    return searchArtic(request.words, request.register ?? 'both');
   }
   return searchCommons(request.words, request.register ?? 'both');
 }

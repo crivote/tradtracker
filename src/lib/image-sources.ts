@@ -1,13 +1,25 @@
 /**
  * Modelo puro del fondo del tune (issue #31). Sin red y sin DOM: construye las
- * consultas, funde los carriles con cupo y relleno, clasifica el ratio y calcula
- * la geometría del encuadre. El adaptador que habla con Commons y Pexels vive en
- * `image-search.ts`.
+ * consultas, funde los carriles, clasifica el ratio y calcula la geometría del
+ * encuadre. El adaptador que habla con Commons, Pexels y el Art Institute vive
+ * en `image-search.ts`.
  *
- * Por qué así y no de otra forma (medido el 2026-10-30, ver issue #31):
- *   · El carril foto usa **negación**, no `+photograph`: `+photograph` movía 2 de
- *     9 miniaturas (0 en *Drowsy Maggie*). Con negación el solape es 0 de 9 en
- *     tres de cuatro títulos.
+ * Por qué así y no de otra forma:
+ *
+ *   · **Commons tiene dos carriles y solo dos: arte y foto.** Medido el
+ *     2026-11-08 sobre 15 títulos del catálogo: los carriles de arte y de foto no
+ *     compartían ni un fichero (0 % de solape) y **el mosaico salía igual de las
+ *     dos maneras**, porque el carril de título (4 plazas) y el de frase exacta
+ *     (1) no llevaban registro y ocupaban cinco de las nueve. Se retiraron: sin
+ *     registro no hay plaza.
+ *   · **El carril foto usa negación**, no `+photograph` (que era ruido). La
+ *     negación ahora incluye los términos de impresión: un grabado que no se
+ *     niega se cuela como foto.
+ *   · **`+painting` es léxico, no un filtro de medio.** El carril de arte se
+ *     queda vacío en 4 de 15 títulos, y en *Monaghan* devolvió seis resultados
+ *     sin un solo cuadro. Por eso cada candidato se contrasta con las categorías
+ *     del fichero (`commonsMedium`) y, cuando hay que filtrar por medio de
+ *     verdad, se usa el Art Institute, que sí tiene `artwork_type_title`.
  *   · Nada de grupos OR de medios (`(painting OR engraving OR …)`): devolvía los
  *     mismos tres grabados para todos los títulos.
  *   · `thumburl` se guarda tal cual lo devuelve el API. Una ruta de miniatura
@@ -15,10 +27,10 @@
  */
 
 /** De dónde sale la imagen. `upload` es la subida manual (F10), sin tocar. */
-export type ImageSourceName = 'commons' | 'pexels' | 'upload';
+export type ImageSourceName = 'commons' | 'pexels' | 'artic' | 'upload';
 
-/** Las dos fuentes que se consultan por API. */
-export type SearchSource = 'commons' | 'pexels';
+/** Las fuentes que se consultan por API. */
+export type SearchSource = 'commons' | 'pexels' | 'artic';
 
 /** Filtro por registro visual: arte, foto o ambos carriles. */
 export type ImageRegister = 'both' | 'art' | 'photo';
@@ -44,10 +56,19 @@ export interface ImageCandidate {
   height: number;
   /** Palabras que trajeron el candidato; sirve para depurar la fusión. */
   term: string;
+  /**
+   * Categorías del fichero en Commons (`prop=categories`). Es la única señal de
+   * medio que Commons da de verdad; Pexels y el Art Institute no las usan.
+   */
+  categories?: readonly string[];
 }
 
-/** Carriles del buscador de Commons. */
-export type LaneKind = 'title' | 'art' | 'photo' | 'exact';
+/**
+ * Carriles del buscador de Commons: arte y foto, nada más. Los carriles de
+ * título y de frase exacta se retiraron el 2026-11-08 — eran los que no llevaban
+ * registro y los que hacían que arte y foto se vieran iguales.
+ */
+export type LaneKind = 'art' | 'photo';
 
 /** Una consulta de Commons con su carril y su límite de petición. */
 export interface CommonsQuery {
@@ -58,29 +79,31 @@ export interface CommonsQuery {
   limit: number;
 }
 
-/**
- * Cupo de cada carril en el mosaico, 4/2/2/1 = 9. Si un carril devuelve menos,
- * el relleno completa con el resto: el mosaico nunca sale corto si hay nueve
- * resultados distintos.
- */
-export const LANE_QUOTAS: Record<LaneKind, number> = {
-  title: 4,
-  art: 2,
-  photo: 2,
-  exact: 1,
-};
-
 /** Cuántos candidatos tiene el mosaico: 3×3. */
 export const CANDIDATE_COUNT = 9;
 
-/** Términos de medio que se niegan en el carril foto. */
+/**
+ * Términos con los que se pide el carril de arte, **uno por consulta**. Grabado
+ * y estampa valen tanto como pintura: el criterio del dueño (2026-11-08) es que
+ * arte es la obra gráfica, no solo el óleo. Nada de grupos OR: devolvían los
+ * mismos tres grabados para todos los títulos.
+ */
+export const ART_QUERY_TERMS = ['painting', 'engraving', 'drawing', 'print'] as const;
+
+/**
+ * Términos de medio que se niegan en el carril foto. Incluye los de impresión:
+ * un grabado que no se niega se cuela como si fuera una foto (medido: *storm at
+ * sea* en modo foto devolvía dos cuadros de Palma il Vecchio).
+ */
 export const ART_MEDIA_TERMS = [
   'painting',
   'engraving',
+  'etching',
   'drawing',
   'lithograph',
   'watercolour',
   'woodcut',
+  'print',
 ] as const;
 
 /** Ancho de la miniatura que se pide a Commons: el cubo de 330 (21 KB). */
@@ -116,37 +139,31 @@ export function searchWords(title: string): string {
 }
 
 /**
- * Las consultas de Commons para un juego de palabras. El carril de arte se
- * omite con el registro en `photo` y el de foto con el registro en `art`; el de
- * título y el exacto van siempre.
+ * Las consultas de Commons para un juego de palabras: **una por término de arte**
+ * y, si el registro lo admite, una de foto con la negación. No hay carril sin
+ * registro — esa era la vía por la que arte y foto acababan mostrando lo mismo.
  *
- * Con el registro en `photo` la negación se aplica **también** al título y a la
- * frase exacta. Medido el 2026-10-30: el carril título de *Harvest Home* devuelve
- * el Turner como primer resultado, así que sin esto el mosaico «de fotos» traía
- * una pintura y el criterio de la issue («con `foto`, ninguna de las nueve es una
- * pintura») no se cumplía. Con el registro por defecto, las consultas son
- * exactamente las de la issue.
+ * Cada término de arte va en su propia consulta porque la búsqueda de Commons es
+ * léxica: `painting` encuentra ficheros que mencionan la palabra, y agrupar los
+ * medios en un OR hacía que todos los títulos devolvieran el mismo grabado.
  */
 export function commonsQueries(words: string, register: ImageRegister = 'both'): CommonsQuery[] {
   const term = searchWords(words);
   if (term.length === 0) return [];
 
-  const negatives = ART_MEDIA_TERMS.map((media) => `-${media}`).join(' ');
-  const exclusion = register === 'photo' ? ` ${negatives}` : '';
-
-  const queries: CommonsQuery[] = [
-    { kind: 'title', search: `filetype:bitmap ${term}${exclusion}`, limit: 10 },
-  ];
+  const queries: CommonsQuery[] = [];
 
   if (register !== 'photo') {
-    queries.push({ kind: 'art', search: `filetype:bitmap ${term} painting`, limit: 6 });
+    for (const medium of ART_QUERY_TERMS) {
+      queries.push({ kind: 'art', search: `filetype:bitmap ${term} ${medium}`, limit: 6 });
+    }
   }
 
   if (register !== 'art') {
-    queries.push({ kind: 'photo', search: `filetype:bitmap ${term} ${negatives}`, limit: 6 });
+    const negatives = ART_MEDIA_TERMS.map((media) => `-${media}`).join(' ');
+    // Pide más de las que caben: el veto por categorías descarta después.
+    queries.push({ kind: 'photo', search: `filetype:bitmap ${term} ${negatives}`, limit: 12 });
   }
-
-  queries.push({ kind: 'exact', search: `filetype:bitmap "${term}"${exclusion}`, limit: 5 });
 
   return queries;
 }
@@ -176,13 +193,18 @@ export interface CandidateLane {
 }
 
 /**
- * Fusión con cupo y **relleno**.
+ * Fusión **en ronda**: un candidato por carril y vuelta, hasta llenar el mosaico.
  *
- * El bug que esto evita es real: el prototipo marcaba como «vistas» las que no
- * entraban en el cupo, y el relleno ya no podía recuperarlas — mosaicos de siete
- * con nueve resultados disponibles. Aquí solo se marca lo que **entra**: primero
- * se respeta el cupo de cada carril y después se completa hueco a hueco, en
- * rondas, con el resto de los carriles.
+ * Sin cupos por tipo. Los cupos fijos (4/2/2/1) repartían las plazas antes de ver
+ * los resultados, así que un carril con sobrantes no podía aportar más y, sobre
+ * todo, cinco de las nueve plazas quedaban en carriles sin registro: arte y foto
+ * se veían iguales por construcción, no por falta de resultados.
+ *
+ * Y **sin relleno mezclado**: si hay menos candidatos que plazas, el mosaico sale
+ * corto. Es la decisión del dueño (2026-11-08): el silencio informa, el relleno
+ * con lo que no cumple el criterio engaña. Lo que se deduplica aquí es por
+ * `source:id`, no por imagen: la misma foto servida por dos proveedores sigue
+ * entrando dos veces.
  */
 export function mergeCandidates(
   lanes: readonly CandidateLane[],
@@ -191,34 +213,16 @@ export function mergeCandidates(
   const pool: ImageCandidate[] = [];
   const seen = new Set<string>();
 
-  /** Toma un candidato si es nuevo; devuelve si entró. */
-  const take = (candidate: ImageCandidate): boolean => {
-    if (pool.length >= limit) return false;
-    const key = candidateKey(candidate);
-    if (seen.has(key)) return false;
-    // Solo ahora se marca como vista: si no entra, el relleno la recupera.
-    seen.add(key);
-    pool.push(candidate);
-    return true;
-  };
-
-  for (const lane of lanes) {
-    let quota = LANE_QUOTAS[lane.kind] ?? 1;
-    for (const candidate of lane.candidates) {
-      if (quota <= 0) break;
-      if (take(candidate)) quota -= 1;
-    }
-  }
-
-  // Relleno en rondas: un candidato por carril y vuelta, para no llenar los
-  // huecos con un solo carril cuando hay más de uno con sobrantes.
   let progressed = true;
   while (pool.length < limit && progressed) {
     progressed = false;
     for (const lane of lanes) {
       if (pool.length >= limit) break;
       const next = lane.candidates.find((candidate) => !seen.has(candidateKey(candidate)));
-      if (next && take(next)) progressed = true;
+      if (!next) continue;
+      seen.add(candidateKey(next));
+      pool.push(next);
+      progressed = true;
     }
   }
 
@@ -276,6 +280,166 @@ export function isShareAlike(license: string): boolean {
 export function licenseLabel(license: string): string {
   const clean = (license ?? '').replace(/\s+/g, ' ').trim();
   return clean.replace(/\s+license$/i, '') || 'unknown';
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Medio: la señal que Commons no da como campo
+ * ───────────────────────────────────────────────────────────── */
+
+/** Categoría que declara fotografía. Se prueba antes que el arte a propósito. */
+const PHOTO_CATEGORY = /photograph|daguerreotype|ambrotype|tintype|albumen|gelatin silver/;
+
+/** Categoría que declara obra gráfica o pictórica. */
+const ART_CATEGORY =
+  /\b(paintings?|engravings?|etchings?|lithographs?|woodcuts?|drawings?|watercolou?rs?|printmaking|artworks?|sculptures?)\b/;
+
+/**
+ * Qué medio declara un fichero de Commons, mirando su nombre y sus categorías.
+ *
+ * Medido el 2026-11-08: Commons **no tiene filtro de medio** utilizable.
+ * `haswbstatement:P31=Q3305213` (pintura) devuelve cero al combinarlo con un
+ * término e `incategory:"Paintings"` devuelve basura. Las categorías sí
+ * discriminan cuando existen («Marine paintings by …», «17th-century sailing
+ * ships in paintings»), pero un cuadro con solo categorías de fecha queda en
+ * `unknown` — de ahí que `unknown` no se descarte: el carril que lo trajo ya
+ * declaraba el medio.
+ *
+ * La foto gana al arte en el orden de las pruebas: un «salted paper print» es una
+ * fotografía, no una estampa, y su categoría contiene la palabra `print`.
+ */
+export function commonsMedium(
+  candidate: Pick<ImageCandidate, 'categories' | 'title'>
+): 'art' | 'photo' | 'unknown' {
+  const haystack = `${candidate.title} ${(candidate.categories ?? []).join(' ')}`.toLowerCase();
+  if (PHOTO_CATEGORY.test(haystack)) return 'photo';
+  if (ART_CATEGORY.test(haystack)) return 'art';
+  return 'unknown';
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Art Institute of Chicago: el filtro de medio que Commons no tiene
+ * ───────────────────────────────────────────────────────────── */
+
+/** Búsqueda de obras. Sin clave y con `access-control-allow-origin: *` (medido). */
+export const ARTIC_SEARCH_ENDPOINT = 'https://api.artic.edu/api/v1/artworks/search';
+/** Servidor IIIF de las imágenes. Solo admite ancho: el recorte va en cliente. */
+export const ARTIC_IIIF_BASE = 'https://www.artic.edu/iiif/2';
+/** Campos que se piden: los justos para candidato, crédito y medidas. */
+export const ARTIC_FIELDS = [
+  'id',
+  'title',
+  'is_public_domain',
+  'image_id',
+  'artwork_type_title',
+  'classification_title',
+  'medium_display',
+  'artist_title',
+  'date_display',
+  'thumbnail',
+].join(',');
+/** Ancho de la miniatura: medido, 400 px = 50 KB. */
+export const ARTIC_THUMB_WIDTH = 400;
+/** Ancho del grande para encuadrar: medido, 843 px = 262 KB. */
+export const ARTIC_FULL_WIDTH = 843;
+/**
+ * Cuántas obras se piden por búsqueda. El API no filtra por medio, así que se
+ * pide un pozo y se filtra en cliente por `artwork_type_title`; con 40 hay
+ * margen para sacar nueve tras descartar lo que no es del registro pedido.
+ */
+export const ARTIC_POOL = 40;
+export const ARTIC_LICENSE = 'Public domain';
+export const ARTIC_LICENSE_URL = 'https://www.artic.edu/terms';
+
+/** Tipo de obra de AIC que cuenta como arte. Grabado y estampa entran: son `Print`. */
+const ARTIC_ART_TYPE = /\b(paintings?|prints?|drawings?|watercolou?rs?)\b/i;
+/**
+ * Medio que cuenta como fotografía. No basta `photograph`: AIC cataloga muchas
+ * como «gelatin silver print» o «salted paper print», y sin estos términos una
+ * fotografía caería del lado del arte porque su clasificación dice `print`.
+ */
+const ARTIC_PHOTO_TYPE =
+  /photograph|gelatin silver|albumen|albumen silver|salted paper|daguerreotype|tintype/i;
+
+/**
+ * URL de una imagen IIIF. **Solo se puede pedir ancho**: el servidor del Art
+ * Institute bloquea por lista blanca el recorte en servidor (`!400,320` y
+ * `/square/` responden 403 «IIIF allowlist policy»), así que el 5:4 se resuelve
+ * en cliente, como en Commons.
+ *
+ * Ojo: la imagen exige `Referer`. Sin él responde el desafío de Cloudflare, así
+ * que estas `<img>` no pueden llevar `referrerpolicy="no-referrer"`.
+ */
+export function articImageUrl(imageId: string, width = ARTIC_THUMB_WIDTH): string {
+  return `${ARTIC_IIIF_BASE}/${imageId}/full/${width},/0/default.jpg`;
+}
+
+/**
+ * URL de búsqueda. `query[term][is_public_domain]=true` filtra en servidor
+ * (medido: 62.119 obras frente a 133.165 sin filtro), así que el pozo que llega
+ * ya es todo utilizable en derechos.
+ */
+export function articSearchUrl(words: string, pool = ARTIC_POOL): string {
+  const url = new URL(ARTIC_SEARCH_ENDPOINT);
+  url.searchParams.set('q', searchWords(words));
+  url.searchParams.set('limit', String(pool));
+  url.searchParams.set('fields', ARTIC_FIELDS);
+  url.searchParams.set('query[term][is_public_domain]', 'true');
+  return url.toString();
+}
+
+/** Medio de una obra del Art Institute, por su tipo y clasificación. */
+export function articMedium(artwork: Loose): 'art' | 'photo' | 'unknown' {
+  const haystack = [artwork?.artwork_type_title, artwork?.classification_title, artwork?.medium_display]
+    .filter((value) => typeof value === 'string')
+    .join(' ');
+  if (ARTIC_PHOTO_TYPE.test(haystack)) return 'photo';
+  if (ARTIC_ART_TYPE.test(haystack)) return 'art';
+  return 'unknown';
+}
+
+/**
+ * Candidatos a partir de `/artworks/search`. Descarta lo que no está en dominio
+ * público o no tiene imagen —un `200` sin `image_id` no es un candidato— y, con
+ * registro `art` o `photo`, lo que no sea de ese medio. Con `both` entra también
+ * el medio desconocido (textil, cerámica): el mosaico no promete medio.
+ */
+export function parseArticResponse(
+  payload: Loose,
+  register: ImageRegister = 'both',
+  term = ''
+): ImageCandidate[] {
+  const works: Loose[] = Array.isArray(payload?.data) ? payload.data : [];
+  const out: ImageCandidate[] = [];
+
+  for (const work of works) {
+    if (work?.is_public_domain !== true) continue;
+    const imageId = typeof work?.image_id === 'string' ? work.image_id : '';
+    if (!imageId) continue;
+
+    const medium = articMedium(work);
+    if (register === 'art' && medium !== 'art') continue;
+    if (register === 'photo' && medium !== 'photo') continue;
+
+    const id = work?.id === undefined || work?.id === null ? '' : String(work.id);
+    if (!id) continue;
+
+    out.push({
+      source: 'artic',
+      id,
+      title: String(work?.title ?? '') || `Art Institute ${id}`,
+      thumbUrl: articImageUrl(imageId, ARTIC_THUMB_WIDTH),
+      fullUrl: articImageUrl(imageId, ARTIC_FULL_WIDTH),
+      pageUrl: `https://www.artic.edu/artworks/${id}`,
+      author: String(work?.artist_title ?? '') || '—',
+      license: ARTIC_LICENSE,
+      licenseUrl: ARTIC_LICENSE_URL,
+      width: Number(work?.thumbnail?.width ?? 0) || 0,
+      height: Number(work?.thumbnail?.height ?? 0) || 0,
+      term,
+    });
+  }
+
+  return out;
 }
 
 export const ZOOM_MIN = 1;
@@ -436,6 +600,13 @@ export function parseCommonsResponse(payload: Loose, term = ''): ImageCandidate[
     if (!title) continue;
 
     const metadata = info?.extmetadata ?? {};
+    // Las categorías son la única señal de medio que da Commons. Con
+    // `prop=categories` llegan en la página, no en `imageinfo`.
+    const categories: string[] = Array.isArray(page?.categories)
+      ? page.categories
+          .map((entry: Loose) => String(entry?.title ?? '').replace(/^Category:/, '').trim())
+          .filter((name: string) => name.length > 0)
+      : [];
     out.push({
       source: 'commons',
       id: title,
@@ -451,6 +622,7 @@ export function parseCommonsResponse(payload: Loose, term = ''): ImageCandidate[
       width: Number(info?.width ?? 0) || 0,
       height: Number(info?.height ?? 0) || 0,
       term,
+      categories,
     });
   }
   return out;
