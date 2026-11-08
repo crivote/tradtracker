@@ -1,4 +1,4 @@
-# Cabeceras de tradtracker. Las leen igual Cloudflare Pages/Workers y Netlify (_headers en la raíz del publish).
+# Cabeceras de tradtracker. Netlify las lee de `_headers` en la raíz del publish.
 # Sintaxis: ruta + (indentadas) Nombre: valor
 
 /*

@@ -60,7 +60,7 @@ if (problems.length > 0) {
   console.error(
     `\n[build] Faltan variables de Supabase: ${problems.join(', ')}.\n` +
       '[build] Se compilaría un frontal sin configuración. Build abortado a propósito.\n' +
-      '[build] En local: revisa .env.local. En Cloudflare: Settings > Build > Build variables and secrets.\n'
+      '[build] En local: revisa .env.local. En Netlify: Project configuration > Environment variables.\n'
   );
   process.exit(1);
 }

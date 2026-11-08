@@ -42,7 +42,7 @@ const COMMONS_API = 'https://commons.wikimedia.org/w/api.php';
  * lugar de un UA de navegador: si abusan del API, lo que se corta es esto.
  */
 export const COMMONS_USER_AGENT =
-  'TradTracker/0.1 (Irish traditional music practice manager; +https://tradtracker.crivote.workers.dev)';
+  'TradTracker/0.1 (Irish traditional music practice manager; +https://tuneshed.netlify.app)';
 
 /**
  * Errores con causa distinguible. La pantalla tiene que separar «falta la clave»

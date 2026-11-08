@@ -161,7 +161,7 @@ describe.skipIf(!enabled)('Art Institute en vivo', () => {
       // La imagen responde de verdad. **Con `Referer`**: el IIIF del Art Institute
       // lo exige, y un script no lo manda (el navegador sí). Sin él devuelve 403.
       const response = await fetch(candidates[0].thumbUrl, {
-        headers: { Referer: 'https://tradtracker.crivote.workers.dev/' },
+        headers: { Referer: 'https://tuneshed.netlify.app/' },
       });
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toContain('image/');

@@ -7,8 +7,8 @@ const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.
 
 /**
  * Vite incrusta estas variables en el bundle **en tiempo de build**. Si faltan
- * (p. ej. porque están puestas como variables de runtime en Cloudflare y no de
- * build), la app no puede hablar con Supabase. Antes se lanzaba en el import y el
+ * (p. ej. porque están puestas como variables de runtime y no de build), la app
+ * no puede hablar con Supabase. Antes se lanzaba en el import y el
  * resultado era una pantalla en blanco sin explicación; ahora se avisa en la UI.
  */
 export const supabaseConfigError: string | null =

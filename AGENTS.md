@@ -40,7 +40,7 @@ Dependencias ya elegidas en el andamio: `@sqlite.org/sqlite-wasm`, `abcjs`, `@su
   Se cambia con `PATCH /v1/projects/<ref>/config/auth`.
 - **Recuperación de contraseña: FUERA DE ALCANCE por decisión del propietario** (2026-10-28). El SMTP por
   defecto del plan free entrega 2 correos/hora; no prometer el flujo hasta configurar SMTP propio.
-- `site_url` del proyecto: `https://tradtracker.crivote.workers.dev`.
+- `site_url` del proyecto: `https://tuneshed.netlify.app`.
 - Cliente en `src/lib/supabase.ts` (`persistSession` + `autoRefreshToken`, sin OAuth ni magic link); la
   sesión se expone por `src/lib/session.tsx`; el guard de rutas vive en `src/components/Layout.tsx`.
 - **La Admin API (`/auth/v1/admin/users`) exige `apikey` Y `Authorization: Bearer` con la `service_role`

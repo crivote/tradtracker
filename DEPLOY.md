@@ -1,8 +1,11 @@
 # Despliegue — tradtracker
 
-**Decisión 2026-10-28:** frontal en **Cloudflare**, construido desde el **espejo público de GitHub**. Motivo: ancho de banda ilimitado y 500 builds/mes (el catálogo son 4,7 MB por visitante nuevo; Netlify free son 100 GB/mes).
-
-**Ojo con el nombre:** lo que el panel ofrece hoy como «Pages» acaba desplegándose como **Worker con assets estáticos** (`npx wrangler deploy`, nombre de worker `tradtracker`). No es una diferencia cosmética: cambia dónde se declara el fallback SPA (ver más abajo).
+**Decisión 2026-11-08:** frontal en **Netlify**, construido desde el **espejo público de GitHub**.
+Motivo: el bloqueo por fútbol de LaLiga no bloquea dominios sino **IPs concretas**, y el par anycast que
+Cloudflare asignaba a esta zona (`188.114.96.5` / `188.114.97.5`) figura en la lista de todos los
+partidos desde agosto de 2026. Netlify sirve desde su propia red y no aparece en esas listas —igual que
+TradTube—. El Worker de Cloudflare se retiró el mismo día; el diagnóstico completo vive en la skill
+`tradtracker`, sección «Bloqueo por fútbol».
 
 ## Flujo
 
@@ -11,125 +14,126 @@ git push forgejo main
         │  (push mirror de Forgejo, sync_on_commit=True)
         ▼
 github.com/crivote/tradtracker  (público, espejo)
-        │  (integración Git de Cloudflare)
+        │  (integración Git de Netlify)
         ▼
-Cloudflare (Worker `tradtracker`) → https://tradtracker.<subdominio>.workers.dev
+Netlify (proyecto `tuneshed`) → https://tuneshed.netlify.app
 ```
 
-- Forgejo (self-hosted) es el **origen de verdad**. GitHub es solo el puente que Cloudflare sabe leer: ninguno de los dos soporta Forgejo directamente.
-- El mirror se configuró el 2026-10-28 desde la API de Forgejo con los mismos parámetros que el de TradTube: `sync_on_commit=true`, `interval=0s`.
-- Si el espejo falla, Cloudflare no reconstruye. Comprobarlo con:
-  `GET /api/v1/repos/crivote/tradtracker/push_mirrors` → `last_error` debe estar vacío.
+- Forgejo (self-hosted) es el **origen de verdad**. GitHub es sólo el puente que Netlify sabe leer.
+- El mirror se configuró el 2026-10-28 desde la API de Forgejo (`sync_on_commit=true`, `interval=0s`).
+- Si el espejo se queda atrás, Netlify no reconstruye. Comprobarlo con
+  `GET /api/v1/repos/crivote/tradtracker/push_mirrors` (`last_error` vacío) y, si hace falta, forzar con
+  `POST …/push_mirrors-sync` y volver a mirar **en GitHub**, no en el log de Forgejo.
 
-## Configuración del proyecto en Cloudflare
+## Configuración del proyecto en Netlify
 
 | Ajuste | Valor |
 |---|---|
 | Repositorio | `crivote/tradtracker` (rama `main`) |
-| Framework preset | None (proyecto Vite propio) |
 | Build command | `npm run build` |
-| Output directory | `dist` |
-| Deploy command | `npx wrangler deploy` (lo pone Cloudflare por defecto) |
-| Variables de entorno | `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` |
+| Publish directory | `dist` |
+| Nombre del proyecto | `tuneshed` → `tuneshed.netlify.app` |
 
-Las dos variables se configuran **en el panel de Cloudflare**, no en el repo. La anon key es pública por diseño, pero no se commitea: así se puede rotar sin tocar el código.
+`tradtracker.netlify.app` y `tunetracker.netlify.app` están ocupados por terceros: el nombre libre que se
+eligió fue **tuneshed**.
+
+Las **cuatro** variables van en **Project configuration → Environment variables**, con scope **Builds**:
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_TRADTUBE_URL`, `VITE_TRADTUBE_ANON`.
 
 ### Tienen que ser variables de BUILD, no de runtime
 
-**Medido el 2026-10-28:** el despliegue salió sin ellas y la app quedó en blanco. Vite incrusta `VITE_*`
-en el bundle **en tiempo de compilación**; una variable de runtime no llega al JavaScript y el cliente no
-puede hablar con Supabase.
+Vite incrusta las `VITE_*` en el bundle **en tiempo de compilación**; una variable de runtime no llega al
+JavaScript y el cliente no puede hablar con Supabase.
 
-- Ruta correcta: **Workers & Pages → tradtracker → Settings → Build → «Build variables and secrets»**.
-- Ruta que NO sirve para esto: **Settings → Variables & Secrets** (esa es de runtime).
-- Después de guardarlas hay que **reconstruir** (Retry deployment o un push nuevo): cambiarlas no
-  reconstruye solo.
-- Comprobación rápida de si el build las lleva: `curl -s https://…/ | grep -o 'assets/index-[^"]*\.js'`
-  y buscar el `ref` del proyecto dentro del bundle. Si no aparece, faltan.
-- Desde el 2026-10-28 la app no se queda en blanco si faltan: muestra un aviso de configuración en la
-  cabecera (`src/lib/supabase.ts` lo detecta y `Layout.tsx` lo pinta).
-- **Y el build ahora falla antes de desplegar** (`scripts/check-env.mjs`, encadenado en `npm run build`).
-  Un build fallido deja intacto el despliegue anterior; un build mudo lo sustituía por una app sin
-  configurar. Si Cloudflare marca el build en rojo con «Faltan variables de Supabase», es esta guarda:
-  el problema está en esta sección, no en el código.
-- **Comprobado el 2026-10-28**: Vite sí incrusta variables que vengan del entorno del proceso (probado
-  compilando sin `.env.local` y con `VITE_*` exportadas). Si la guarda salta en Cloudflare, las
-  variables no están llegando al contenedor de build; no es limitación de Vite.
-- **El nombre importa al carácter**: `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`. Una variable llamada
-  `VITE_SUPABASE` no la lee nadie y el build sale mudo — fue la causa real del episodio del 2026-10-28.
-  Una barra final en la URL, en cambio, ya se tolera (se recorta y se avisa en el log).
+- `scripts/check-env.mjs`, encadenado en `npm run build`, **aborta el build** si faltan. Un build fallido
+  deja intacto el despliegue anterior; un build mudo lo sustituía por una app sin configurar —fue el
+  episodio del 2026-10-28, cuando una variable llamada `VITE_SUPABASE` (sin sufijo) dejó la app en blanco.
+- El nombre importa al carácter: `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY`. Una barra final en la
+  URL se tolera (se recorta y se avisa en el log).
+- Comprobación de que el build las lleva: `curl -s https://tuneshed.netlify.app/ | grep -o
+  'assets/index-[^"]*\.js'` y buscar el `ref` del proyecto dentro del bundle descargado.
+- **La `service_role`/`secret` no se pone nunca aquí.** El front habla sólo con la anon key y las RLS.
 
-**La `service_role`/`secret` no se pone nunca aquí.** Todo el front habla con la anon key y las políticas RLS.
+## Ruteo: el fallback SPA va en `netlify.toml`, con el 404 de los assets DELANTE
 
-## Ruteo: el fallback SPA va en `wrangler.jsonc`, NO en `_redirects`
+La regla clásica `/* → /index.html 200` a secas **resucita el issue #40**: un asset ausente acaba servido
+como `index.html` con 200 y `Cache-Control: immutable`, el navegador guarda HTML bajo la URL de un `.js` y
+la app queda en negro sin recuperación —ni F5 la arregla, porque no vuelve a pedir el fichero—. Por eso en
+`netlify.toml` van **antes** del catch-all:
 
-Primer despliegue (2026-10-28) falló con:
+```toml
+[[redirects]]
+  from = "/assets/*"
+  to = "/404.html"
+  status = 404
 
-```
-Invalid _redirects configuration:
-Line 2: Infinite loop detected in this rule. [code: 100324]
-```
+[[redirects]]
+  from = "/soundfonts/*"
+  to = "/404.html"
+  status = 404
 
-La regla clásica de Pages `/* /index.html 200` se interpreta en Workers como un bucle: servir `index.html` y volver a casar la regla. La forma correcta para assets estáticos es declararlo en `wrangler.jsonc`, que **sí** se versiona en el repo:
-
-```jsonc
-{
-  "name": "tradtracker",
-  "compatibility_date": "2026-10-23",
-  "assets": {
-    "directory": "./dist",
-    "not_found_handling": "single-page-application"
-  }
-}
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
 ```
 
-`not_found_handling: "single-page-application"` hace que cualquier ruta desconocida devuelva `index.html` con 200, que es lo que necesita el router de SolidJS. Por eso **no hay `public/_redirects`**: se borró a propósito.
+Los ficheros que existen ganan a las redirecciones (`force = false` por defecto), así que los assets
+reales se sirven intactos y sólo el hueco cae en `public/404.html` (404 seco, página propia).
+
+**Residuo conocido:** Netlify aplica la cabecera `immutable` de `/assets/*` también al 404 de esa ruta, de
+modo que un asset inexistente queda cacheado. Es mucho menos grave que el #40 —un 404 no ejecuta nada—,
+pero si tras un despliegue aparece una pantalla en blanco, la salida es limpiar la caché del sitio.
 
 ## Cabeceras
 
-`public/_headers` lo copia Vite a `dist/` y el worker lo respeta:
+`public/_headers` lo copia Vite a `dist/` y Netlify lo respeta:
 
 - `Cross-Origin-Opener-Policy: same-origin` global — **necesario para SQLite WASM**.
-- COEP `credentialless` solo en el worker aislado, si algún día se usa ffmpeg.wasm: `require-corp` rompería los iframes de YouTube (lección heredada de TradTube).
-- `/thesession.db` con `Cache-Control: 1 día`; `/assets/*` inmutable.
+- COEP `credentialless` sólo en `/ffmpeg-worker.html`: `require-corp` rompería los iframes de YouTube
+  (lección heredada de TradTube).
+- `/thesession.db` con `Cache-Control` de un día y `application/octet-stream`; `/assets/*` inmutable.
+- HSTS lo pone Netlify por su cuenta (`max-age=31536000; includeSubDomains; preload`).
 
-## El catálogo viaja en el build (4,48 MB)
+## El catálogo viaja en el build (4,9 MB)
 
-`public/thesession.db` **se versiona en el repo**: el build de Cloudflare no tiene acceso al repo de
-TradTube y el navegador descarga el artefacto tal cual para abrirlo con SQLite WASM. Es la excepción
-declarada a la regla de no meter artefactos grandes (issue #4).
+`public/thesession.db` **se versiona en el repo**: el build no tiene acceso al repo de TradTube y el
+navegador descarga el artefacto tal cual para abrirlo con SQLite WASM. Es la excepción declarada a la
+regla de no meter artefactos grandes (issue #4).
 
-- Límite de Workers assets: **25 MiB por fichero**. El catálogo son 4,48 MB; entra con margen.
 - Se regenera con `node scripts/fetch-catalogue.mjs [--source <ruta>]`, que además escribe
   `public/thesession.meta.json` (fecha de copia, commit de TradTube, sha256, recuentos). La vista «About»
   lee ese sidecar y el recuento real del artefacto abierto.
 - El wasm de SQLite (`dist/assets/sqlite3-*.wasm`, ~860 kB) lo emite Vite con hash y se descarga **en
-  segundo plano al entrar en el repertorio** (`preloadCatalogue()` en el montaje de la vista), no en el
-  login: cuando el usuario abre el buscador, la consulta ya es local. Medido el 2026-10-28: 4,69 MB + 860 kB
-  descargados una sola vez, y cero peticiones nuevas en las búsquedas siguientes.
-- `/thesession.db` se sirve con `Content-Type: application/octet-stream` y caché de un día (`_headers`).
+  segundo plano al entrar en el repertorio** (`preloadCatalogue()`), no en el login: cuando el usuario
+  abre el buscador, la consulta ya es local. Medido el 2026-10-28: 4,69 MB + 860 kB una sola vez, y cero
+  peticiones nuevas en las búsquedas siguientes.
+- Plan free de Netlify: 100 GB/mes de ancho de banda. A 4,9 MB por visitante nuevo son ~20.000 cargas
+  frías al mes; de sobra para el uso actual.
 
 **Verificación tras desplegar** (no basta con que el build esté en verde):
 
 ```bash
-curl -sI https://tradtracker.crivote.workers.dev/thesession.db | head -5   # 200 y ~4,7 MB
-curl -s  https://tradtracker.crivote.workers.dev/ | grep -oE 'assets/index-[^"]+\.js'
+H=https://tuneshed.netlify.app
+curl -sI $H/thesession.db | head -5                     # 200, octet-stream, ~4,9 MB
+curl -s  $H/ | grep -oE 'assets/index-[^"]+\.js'        # hash del bundle servido
+curl -s -o /dev/null -w '%{http_code}\n' $H/tune/1234    # 200 (fallback SPA)
+curl -s -o /dev/null -w '%{http_code}\n' $H/assets/inventado.js   # 404 seco, no 200 text/html
 ```
 
-Y en la app: abrir «Add tunes» debe decir «22.775 tunes from a local database» sin esperas, y «About»
-debe mostrar la fecha de copia y el commit de origen.
-
-## Alternativa sin espejo
-
-Si algún día se quiere desplegar sin GitHub:
-
-```bash
-npm run build
-npx wrangler deploy          # usa el wrangler.jsonc del repo
-```
-
-Requiere un token de Cloudflare en `CLOUDFLARE_API_TOKEN`. No hay auto-deploy al hacer push por esta vía: habría que dispararlo desde un script o un runner.
+Y en la app: «Add tunes» debe decir «22.775 tunes from a local database» sin esperas, y «About» debe
+mostrar la fecha de copia y el commit de origen.
 
 ## Dominio
 
-`crivote.dedyn.io` está en **deSEC** (`ns1.desec.io`), con el ápex apuntando al homelab. Para un dominio propio (p. ej. `tradtracker.crivote.dedyn.io`) hay que añadir el dominio en Cloudflare y crear el CNAME que indique, en deSEC. Pendiente de decisión: no bloquea el despliegue en `*.workers.dev`.
+Pendiente de decisión. El plan es `tradtracker.jiggyreel.com`, con el dominio en Cloudflare como
+registrador y DNS, y un CNAME **DNS-only (nube gris)** al sitio de Netlify —como TradTube—. Con la nube
+naranja se atasca la renovación del certificado de Netlify. El dominio no cambia nada frente al bloqueo de
+fútbol: lo que lo evita es servir desde la red de Netlify, no el nombre.
+
+## Historia: el frontal en Cloudflare (2026-10-28 → 2026-11-08)
+
+Se sirvió desde un **Worker con assets estáticos** (`wrangler.jsonc`, fallback en `worker/index.ts`). Se
+retiró porque su par anycast estaba en todas las listas de bloqueo. Las dos lecciones que siguen valiendo
+y ahora aplican a Netlify: **el fallback SPA nunca debe servir HTML en `/assets/*`**, y **las `VITE_*`
+tienen que existir en el build o la app sale muda**.
