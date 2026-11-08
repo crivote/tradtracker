@@ -3,7 +3,7 @@
  *
  * Papel, no paleta oscura: el div raíz lleva `repertoire-home practice`, así que
  * las variables (`--paper`, `--ink`, `--muted`, `--faint`, `--line`, `--accent`,
- * `--serif`, `--sans`) vienen declaradas de `repertoire.css` y aquí no se
+ * `--display`, `--sans`) vienen declaradas de `repertoire.css` y aquí no se
  * redeclaran. Todas las reglas de este fichero viven bajo `.practice`: nada de
  * esta pantalla puede teñir la home, el detalle ni el catálogo.
  *
@@ -165,7 +165,7 @@
 
 .practice .practice-row__title {
   display: inline-block;
-  font-family: var(--serif);
+  font-family: var(--display);
   font-weight: 400;
   font-size: 19px;
   line-height: 1.2;

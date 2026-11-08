@@ -17,9 +17,11 @@
  * variables se declaran en `.repertoire-home` y no en `:root` para no teñir el
  * resto de la aplicación (tabla, detalle, catálogo).
  *
- * `--serif` pide Fraunces, que el boceto carga de Google Fonts; aquí no se añade
- * una petición a un tercero por una tipografía: Georgia es el respaldo y las
- * medidas de la carta no dependen de la fuente (las pone la rejilla).
+ * `--display` es la familia de la marca, Raleway, servida desde el propio repo
+ * (`src/assets/fonts`, SIL OFL 1.1): no hay petición a un tercero. Sustituyó el
+ * 2026-11-08 a la serif del boceto —Fraunces, que se pedía pero nunca se cargaba
+ * y caía a Georgia— porque la marca es una sans monolínea y la serif no casaba.
+ * Se llamaba `--serif` hasta esa fecha; el nombre se corrigió para no mentir.
  */
 
 .repertoire-home {
@@ -29,8 +31,8 @@
   --faint: #9c9282;
   --line: #ded6c6;
   --accent: #8a3524;
-  --serif: "Fraunces", Georgia, "Times New Roman", serif;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  --display: "Raleway", Georgia, "Times New Roman", serif;
+  --sans: "Raleway", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
 
   font-family: var(--sans);
   color: var(--ink);
@@ -54,7 +56,7 @@
   flex-wrap: wrap;
 }
 .repertoire-home h1 {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-weight: 300;
   font-size: clamp(28px, 3.2vw, 38px);
   letter-spacing: -0.02em;
@@ -359,7 +361,7 @@
 }
 /* El peldaño que la carta enseña solo en la búsqueda (`showLevel`). */
 .repertoire-home .tune-meta .level {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-style: italic;
 }
 
@@ -451,7 +453,7 @@
   border-bottom: 1px solid var(--line);
 }
 .repertoire-home .band-head h2 {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-weight: 400;
   font-size: 19px;
   letter-spacing: -0.01em;
@@ -459,7 +461,7 @@
   margin: 0;
 }
 .repertoire-home .band-head .def {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-style: italic;
   font-size: 13px;
   color: var(--muted);
@@ -588,7 +590,7 @@
   top: 12px;
   left: 12px;
   z-index: 2;
-  font-family: var(--serif);
+  font-family: var(--display);
   font-size: 12.5px;
   letter-spacing: 0.01em;
   padding: 5px 9px 4px;
@@ -722,7 +724,7 @@
   padding: 0 14px 13px;
 }
 .repertoire-home .card h2 {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-weight: 400;
   font-size: clamp(19px, 1.7vw, 23px);
   letter-spacing: -0.012em;
@@ -791,7 +793,7 @@
 .repertoire-home .quality.none {
   color: rgba(255, 255, 255, 0.42);
   font-style: italic;
-  font-family: var(--serif);
+  font-family: var(--display);
   font-size: 12.5px;
 }
 
@@ -925,7 +927,7 @@
   text-underline-offset: 3px;
 }
 .repertoire-home .band-empty {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-style: italic;
   font-size: 13px;
   color: var(--faint);
@@ -1051,7 +1053,7 @@
   padding: 16px;
 }
 .repertoire-home .import h2 {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-weight: 300;
   font-size: 19px;
   letter-spacing: -0.01em;
@@ -1267,7 +1269,7 @@
 .repertoire-home .fav-btn[aria-pressed="true"] { color: var(--accent); }
 
 /* título e invariantes */
-.repertoire-home .row-title { font-family: var(--serif); font-size: 18px; line-height: 1.25; }
+.repertoire-home .row-title { font-family: var(--display); font-size: 18px; line-height: 1.25; }
 .repertoire-home .row-title a { color: var(--ink); text-decoration: none; }
 .repertoire-home .row-title a:hover { color: var(--accent); }
 .repertoire-home .row-invariants { font-size: 12px; color: var(--muted); margin-top: 3px; }
@@ -1460,7 +1462,7 @@
   min-width: 0;
 }
 .repertoire-home .wb-title a {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-size: 16px;
   color: var(--ink);
   text-decoration: none;

@@ -18,7 +18,7 @@ export default function About() {
       <div>
         <h2 class="text-xl font-semibold text-gray-100">About</h2>
         <p class="text-sm text-gray-400">
-          TradTracker — Irish traditional music practice manager.
+          Tuneshed — Irish traditional music practice manager.
         </p>
       </div>
 
