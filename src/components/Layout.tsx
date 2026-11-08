@@ -3,6 +3,7 @@ import { A, Navigate, useLocation } from '@solidjs/router';
 import { useSession } from '../lib/session';
 import { supabaseConfigError } from '../lib/supabase';
 import { PlayerDock } from './PlayerDock';
+import { BrandMark } from './BrandMark';
 
 /**
  * Armazón de la app y guard de rutas (issue #6): sin sesión no se ve dato alguno,
@@ -37,9 +38,12 @@ export const Layout: ParentComponent = (props) => {
 
       <header class="bg-gray-800 border-b border-gray-700 px-6 py-4">
         <div class="max-w-7xl mx-auto flex items-center justify-between gap-4">
-          <div>
-            <h1 class="text-2xl font-bold text-amber-400">🎵 TradTracker</h1>
-            <p class="text-xs text-gray-400 mt-1">Irish Traditional Music Practice Manager</p>
+          <div class="flex items-center gap-3 text-[#8FB79A]">
+            <BrandMark class="h-10 w-auto shrink-0" />
+            <div>
+              <h1 class="text-2xl font-bold leading-none">tuneshed</h1>
+              <p class="text-xs text-gray-400 mt-1">Irish Traditional Music Practice Manager</p>
+            </div>
           </div>
 
           <Show when={session.session()}>
