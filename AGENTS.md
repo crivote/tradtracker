@@ -2,7 +2,9 @@
 
 Instrucciones para agentes de IA (OpenCode, Claude Code, etc.) operando en este repo.
 
-**Última revisión: 2026-10-28.** Antes de esta fecha este fichero describía un proyecto que aún no existía. Si algo aquí contradice la spec, manda la spec.
+**Última revisión: 2026-11-10.** Si algo aquí contradice la spec, manda la spec; si contradice al código, este
+fichero se ha quedado atrás y se corrige en el mismo corte. Las reglas de producto y las trampas medidas viven en
+la skill `tradtracker`; aquí está lo que un agente necesita para no romper nada.
 
 ## Repositorio
 
@@ -17,14 +19,41 @@ git commit -F <fichero>     # nunca -m con backticks/acentos: el shell los rompe
 git push forgejo main
 ```
 
+**Solo el push a `main` publica**: Forgejo espeja a GitHub y Netlify construye desde ahí. Una rama pusheada no
+despliega nada, y el espejo no siempre cruza solo — compruébalo en el destino (`DEPLOY.md`).
+
 ## Documento canónico
 
-`/home/victor/docs-central/plans/tradtracker-especificacion-y-roadmap.md` (**v0.2.1**), en el repo `docs-central`, no en este. Este repo implementa; no decide producto.
+`/home/victor/docs-central/plans/tradtracker-especificacion-y-roadmap.md` (**v0.3**), en el repo `docs-central`.
+Este repo implementa; no decide producto.
 
 ## Stack
 
-SolidJS + Vite + Tailwind + TypeScript · Supabase (auth, Postgres, Storage) · **Cloudflare** (Worker con assets estáticos, construido desde el espejo de GitHub — ver `DEPLOY.md`).
+SolidJS + Vite 5 + Tailwind + TypeScript · Supabase (auth, Postgres, Storage) · **Netlify** como frontal público
+(proyecto `tuneshed`, https://tuneshed.netlify.app), construido desde el espejo de GitHub — ver `DEPLOY.md`.
+El Worker de Cloudflare se retiró el 2026-11-08: el par anycast que la zona tenía asignado está bloqueado por los
+operadores españoles en cada ventana de partido. No lo reintroduzcas sin leer el porqué en la skill `tradtracker`.
+
 Dependencias ya elegidas en el andamio: `@sqlite.org/sqlite-wasm`, `abcjs`, `@supabase/supabase-js`, `@solidjs/router`, `lucide-solid`.
+
+## Pantallas
+
+Siete rutas; cinco se pintan sobre **papel** (`repertoire.css` declara `--paper`, `--ink`… en `.repertoire-home`, y
+`Layout` decide con `isPaper()` cuáles van a sangre). Una superficie nueva de papel se pinta con esas variables,
+nunca con la paleta oscura del detalle.
+
+| Ruta | Qué es |
+|---|---|
+| `/` | **Biblioteca**: cartas por banda (`shaky` → `mastered`), tres filas por banda, orden por abandono. Los recuentos de la cabecera son puertas. |
+| `/learning` | **Banco de trabajo**: lista con dwell, ensayos, disparador de reproducción por fila y las tres salidas; tope configurable (6 por defecto). |
+| `/level/:band` | **Listado**: tabla de consulta de un peldaño, del backlog (`to_learn`), del cajón (`shelved`) o de todo (`all`). Ahí vive el etiquetado en bloque. |
+| `/practice` | Lista de ensayo del día. |
+| `/search` | Búsqueda sobre el repertorio (cruza peldaños y aparcadas). |
+| `/repertoire/:id` | Detalle de la tune (paleta oscura, no papel). |
+| `/about` | Procedencia y tamaño del catálogo. |
+
+El alta de tunes es un **cajón lateral** (`src/components/AddTuneAside.tsx`) desde `/` y `/learning`: no empuja la
+pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The Session vive plegado dentro.
 
 ## Supabase
 
@@ -55,20 +84,33 @@ Dependencias ya elegidas en el andamio: `@sqlite.org/sqlite-wasm`, `abcjs`, `@su
 | D3 | Multiusuario público desde v1, RLS completa desde el primer esquema |
 | D4 | **Identidad propia**: `pr_tunes.id` uuid + `origin` + `origin_ref`. Sin esquema prefijado `ts:`/`loc:` |
 
-## Esquema (migraciones `001`–`003`)
+## Esquema (migraciones `001`–`015`)
 
-- **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `created_by`, `created_at`. Único `(origin, origin_ref)`.
+- **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `composer` (010), `created_by`, `created_at`. Único `(origin, origin_ref)`.
   RLS: lectura para autenticados; alta/edición/borrado solo del creador.
-- **`pr_repertoire`** — lo personal. `user_id`, `tune_id → pr_tunes`, overrides (`custom_title/rhythm/key/abc`), `status` (`nueva|aprendiendo|media|afianzada|aparcada`), `rating` 1–5, `image_path`, `notes`, marcas de tiempo. Único `(user_id, tune_id)`.
+- **`pr_repertoire`** — lo personal. `user_id`, `tune_id → pr_tunes`, overrides (`custom_title/rhythm/key/abc`), `status`, `rating`, `image_path`, `notes`, marcas de tiempo, `shelved` (006) y `favorite` (008). Único `(user_id, tune_id)`.
+  - **`status` es una escalera de cinco peldaños**, no el enum viejo: `to_learn` (backlog, el valor por defecto),
+    `learning`, `shaky` (011), `playing_along`, `solo_ready`, `mastered` (013). Lo impone el CHECK: `'aparcada'` y
+    el vocabulario anterior devuelven **400**.
+  - **`shelved` es una bandera transversal**, no un peldaño: una aparcada conserva su altura y sale de rotación.
+  - **Doce columnas de imagen** (005, con `artic` añadido en 015): fuente, id, URLs, autor, licencia, encuadre
+    (`focal_x`, `focal_y`, `zoom`) y fecha de elección.
   RLS: `for all` con `user_id = auth.uid()`.
-- Trigger `pr_repertoire_touch_trg`: actualiza `status_changed_at` cuando cambia `status`.
+- **`pr_repertoire_stats`** (007) — vista con `practice_count` y `avg_quality` por fila de repertorio, con
+  `security_invoker = true`: sin esa opción la vista se salta la RLS y devuelve las filas de todos.
+- **Sesiones** (004): `pr_sessions` y `pr_session_tunes` (`quality` opcional). La función `pr_recompute_last_practiced`
+  (009) mantiene `last_practiced_at`, y el trigger `pr_session_tunes_touch_trg` la dispara.
+- **Etiquetas** (012): `pr_tag_facets`, `pr_tags` y `pr_user_tune_tags`, más `pr_tag_with_ancestors` para aplicar una
+  faceta con sus hijos.
+- Trigger `pr_repertoire_touch_trg`: mueve `status_changed_at` cuando cambia `status` — y **no** al aparcar.
 - **`002_repertoire_user_default.sql`** — `user_id` con `default auth.uid()`: el cliente inserta solo
   `tune_id` y la base decide el dueño (la RLS lo vuelve a comprobar). Sin esto el front tendría que enviar
   su propio uuid, que es un dato de confianza del navegador.
 - **`003_seed_catalogue.sql`** — 12 tunes reales de TheSession (`origin_ref` = `tune_id` del catálogo),
   idempotente. Es semilla, no catálogo: el catálogo completo es el artefacto SQLite (issue #4).
 
-Las tablas de sesiones, sets, links, settings y favoritos **no existen todavía**: llegan con sus fases (#10, #13, #14, #15).
+**Sets, links y settings no existen todavía** (fases #13/#14/#15): donde la UI los nombre, van deshabilitados con el
+motivo escrito, nunca con una pantalla a medias.
 
 ### Cómo se aplican las migraciones
 
@@ -77,6 +119,9 @@ No hay `psql` ni CLI de Supabase instalados en el host. Dos vías, ambas válida
 1. **API de gestión** (la usada el 2026-10-28): `POST https://api.supabase.com/v1/projects/<ref>/database/query` con `{"query": "<sql>"}` y `Authorization: Bearer $SUPABASE_PAT`. Una sentencia por llamada; los bloques `$$` hay que partirlos con cuidado.
 2. Instalar el CLI (`supabase db push`) cuando convenga; requiere `supabase link` con el proyecto.
 
+Trampa medida: el endpoint devuelve **`201` con cuerpo `[]`** en DDL, así que comparar contra `200` da un falso
+negativo; y comprueba el cambio con un `select` al catálogo (`pg_get_constraintdef`), no con el código de estado.
+
 Las migraciones se escriben **idempotentes** (`if not exists`, `drop policy if exists`): se han de poder reaplicar sobre un proyecto a medias sin romper nada.
 
 **Trampa medida (2026-10-28):** el endpoint acepta **una sentencia por llamada**, y hay que partir el
@@ -84,12 +129,20 @@ fichero por `;`. Quita los comentarios **antes** de partir: un `;` dentro de un 
 sentencia en dos y el resto del comentario se envía como SQL (`ERROR: 42601` señalando una línea que
 parece válida). Los bloques `$$` también hay que respetarlos.
 
-## Estado del código (2026-10-28)
+## Estado del código (2026-11-10)
 
-- `src/lib/` — cliente Supabase, sesión, acceso a datos del repertorio y modelo puro de presentación; `catalogue.ts` (consulta FTS5 y orden) y `catalogue-db.ts` (apertura del artefacto con SQLite WASM).
-- `src/routes/` — `Login`, `Repertoire` (colección, alta desde el catálogo local, baja) y `About` (procedencia y tamaño del catálogo).
-- `src/components/Layout.tsx` — cabecera y guard de rutas.
-- Pruebas: `npm run test:run` (Vitest). Typecheck: `npx tsc --noEmit -p tsconfig.json`.
+- `src/lib/` — cliente Supabase y sesión (`supabase.ts`, `session.tsx`); repertorio (`repertoire.ts` con el acceso a
+  datos, `repertoire-model.ts` con el modelo **puro** —comparadores, bandas, escalera— y `repertoire-store.ts`, el
+  estado compartido por las tres pantallas del repertorio); catálogo (`catalogue.ts` con la consulta FTS5 y el orden,
+  `catalogue-db.ts` con la apertura del artefacto por SQLite WASM); práctica (`practice*.ts`); imágenes
+  (`image-sources.ts` puro, `image-search.ts` de red); etiquetas (`tags.ts`, `tags-db.ts`); reproductor
+  (`player-*.ts`, `abc*.ts`).
+- `src/routes/` — `Repertoire` (biblioteca), `Learning` (banco de trabajo), `LevelList` (listado de un peldaño),
+  `Practice`, `Search`, `TuneDetail`, `Login` y `About`.
+- `src/components/` — `Layout` (armazón y guard de rutas), `TuneCard`, `PlayTrigger`, `PlayerDock`, `AddTuneAside`,
+  `BackgroundPicker`, `PracticeLog`, `TagPicker`, `ImportFromSession`, `BrandMark`.
+- Pruebas: `npm run test:run` (Vitest). Typecheck: `npx tsc --noEmit -p tsconfig.json`. Build: `npm run build`.
+  **Mide la línea base antes de tu corte y verifica por la diferencia**: un recuento escrito aquí caduca.
 - `catalogue-sql.test.ts` ejecuta las sentencias reales contra `public/thesession.db` con el SQLite nativo de Node (`node:sqlite`, cargado por `createRequire` porque Vite 5 no lo lista como builtin): es la suite que prueba los alias. Lo que no cruza es el transporte wasm, que se verifica en el navegador.
 
 ## Trampas conocidas de TradTube (medidas, no supuestas)
@@ -109,9 +162,9 @@ GET https://kshrrvowxibjqhsvijgh.supabase.co/rest/v1/tune_media_entries
 
 ## Catálogo de tunes
 
-Artefacto SQLite client-side (`public/thesession.db`, 4,48 MB, **22.775 tunes**, FTS5 sobre `tunes_search`). Se copia del repo de TradTube; **no se edita aquí**. Columnas: `tune_id, name, type, meter, composer, tunebooks, popularity_score`. **No contiene ABC ni tonalidad** — ver decisión abierta A7 de la spec.
+Artefacto SQLite client-side (`public/thesession.db`, 4,9 MB, **23.448 tunes**, FTS5 sobre `tunes_search`). Se copia del repo de TradTube; **no se edita aquí**. Columnas: `tune_id, name, type, meter, composer, tunebooks, popularity_score`. **No contiene ABC ni tonalidad** — ver decisión abierta A7 de la spec.
 
-- **El `.db` SÍ se versiona** (excepción a la regla de ficheros grandes, abajo): el build de Cloudflare no tiene acceso a TradTube y el navegador lo descarga tal cual. 4,48 MB frente al límite de 25 MiB por asset de Workers.
+- **El `.db` SÍ se versiona** (excepción a la regla de ficheros grandes, abajo): el build de Netlify no tiene acceso a TradTube y el navegador lo descarga tal cual. 4,9 MB, y se sirve con la caché larga de `public/_headers`.
 - **Se regenera con `node scripts/fetch-catalogue.mjs [--source <ruta>]`** (por defecto lee `~/Proyectos/tradtube/public/thesession.db`): copia, mide e inspecciona el artefacto y escribe `public/thesession.meta.json` con fecha de copia, commit de TradTube, sha256 y recuentos. Ese sidecar es lo que muestra la vista «About»; **la cabecera de SQLite no tiene hueco de texto** para meterlo, y el catálogo no se edita.
 - **Búsqueda (issue #4):** `src/lib/catalogue.ts` construye la expresión FTS5 y ordena; `src/lib/catalogue-db.ts` abre el artefacto con `sqlite3_deserialize` (sin OPFS ni COOP/COEP). Cada token se busca en `name` **y** en `aliases`, así que un título alternativo devuelve el `tune_id` correcto.
 - **Alta desde el catálogo:** `ensureTune()` resuelve la fila de `pr_tunes` por `(origin='thesession', origin_ref=tune_id)` y solo la crea si no existe (23505 → relectura). El uuid de `pr_tunes` es interno; el id de TheSession vive en `origin_ref`.
@@ -121,5 +174,5 @@ Artefacto SQLite client-side (`public/thesession.db`, 4,48 MB, **22.775 tunes**,
 - Commits en español, concisos, uno por unidad lógica. Mensajes multi-línea siempre con `git commit -F`.
 - **Nunca** commitear `.env`, `.env.local`, claves ni cadenas de conexión. `.gitignore` ya los cubre; verificar con `git status --porcelain` antes de `git add -A`.
 - **La UI va en inglés** (producto público para la comunidad trad); código, comentarios y commits en español.
-- No añadir ficheros grandes (`node_modules`, `dist`, capturas) al repo. **Única excepción: `public/thesession.db`**, el artefacto del catálogo (4,48 MB), porque el build no puede reconstruirlo y el navegador lo necesita (issue #4).
+- No añadir ficheros grandes (`node_modules`, `dist`, capturas) al repo. **Única excepción: `public/thesession.db`**, el artefacto del catálogo (4,9 MB), porque el build no puede reconstruirlo y el navegador lo necesita (issue #4).
 - Un frente por sesión: la fase se cierra y se valida antes de abrir la siguiente.

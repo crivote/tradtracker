@@ -117,11 +117,11 @@ regla de no meter artefactos grandes (issue #4).
 H=https://tuneshed.netlify.app
 curl -sI $H/thesession.db | head -5                     # 200, octet-stream, ~4,9 MB
 curl -s  $H/ | grep -oE 'assets/index-[^"]+\.js'        # hash del bundle servido
-curl -s -o /dev/null -w '%{http_code}\n' $H/tune/1234    # 200 (fallback SPA)
+curl -s -o /dev/null -w '%{http_code}\n' $H/level/solo_ready   # 200 (fallback SPA, ruta profunda)
 curl -s -o /dev/null -w '%{http_code}\n' $H/assets/inventado.js   # 404 seco, no 200 text/html
 ```
 
-Y en la app: «Add tunes» debe decir «22.775 tunes from a local database» sin esperas, y «About» debe
+Y en la app: el cajón de «Add a tune» debe decir «23.448 tunes from a local database» sin esperas, y «About» debe
 mostrar la fecha de copia y el commit de origen.
 
 ## Dominio
