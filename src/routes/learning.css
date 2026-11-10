@@ -1,0 +1,147 @@
+/*
+ * Banco de trabajo (`/learning`).
+ *
+ * Papel, no paleta oscura: el div raíz lleva `repertoire-home learning`, así que
+ * las variables (`--paper`, `--ink`, `--muted`, `--faint`, `--line`, `--accent`,
+ * `--display`, `--sans`) vienen declaradas de `repertoire.css` y aquí no se
+ * redeclaran. Todas las reglas de este fichero viven bajo `.learning`.
+ *
+ * `learning` no se mira como la biblioteca: lo que decide es el **dwell** —días
+ * en el peldaño— y el historial, así que la fila es de una sola línea, con el
+ * disparador del reproductor delante del título y las salidas como botones de
+ * texto: promocionar a shaky o devolver al backlog.
+ */
+
+.learning .page-head {
+  margin-bottom: 18px;
+}
+
+/* El tope del taller, en la cabecera: donde el número se entiende sin
+   explicación. En `/practice` sería un segundo número suelto al lado del
+   objetivo diario. */
+.learning .wb-slots {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.learning .wb-slots .count {
+  font-size: 10.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.learning .wb-slots .count--over {
+  color: var(--accent);
+}
+.learning .wb-slots button {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.learning .wb-slots button:hover,
+.learning .wb-slots button:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.learning .workbench {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.learning .workbench li {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.learning .workbench li:first-child {
+  border-top: 1px solid var(--line);
+}
+
+/* Título con su disparador: el botón no compite con el título —va antes, a la
+   izquierda, donde el ojo entra— y el nombre con sus invariantes se apila. */
+.learning .wb-title {
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.learning .wb-name {
+  min-width: 0;
+}
+.learning .wb-title a {
+  font-family: var(--display);
+  font-size: 16px;
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.learning .wb-title a:hover,
+.learning .wb-title a:focus-visible {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.learning .wb-title small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+}
+
+.learning .wb-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 84px;
+}
+.learning .wb-cell b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.learning .wb-cell small {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.learning .wb-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.learning .wb-actions button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0 0 1px;
+  cursor: pointer;
+}
+.learning .wb-actions button:hover,
+.learning .wb-actions button:focus-visible {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.learning .wb-actions button:disabled {
+  color: var(--faint);
+  border-bottom-color: transparent;
+  cursor: default;
+}

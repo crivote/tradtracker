@@ -406,6 +406,18 @@ export const BACKLOG_BAND: BandDefinition = {
 export const RUNG_BARS = [1, 2, 3, 4, 5] as const;
 
 /**
+ * Las bandas de la **biblioteca**: las que se miran como «qué puedo tocar esta
+ * noche». `learning` queda fuera porque tiene pantalla propia (`/learning`): es
+ * un banco de trabajo con su reloj —el dwell— y su tope, no una estantería más.
+ *
+ * La home itera esta lista, no `BANDS`: si alguien devuelve `learning` a las
+ * bandas, volvería a competir con las cartas de los otros niveles.
+ */
+export const LIBRARY_BANDS: readonly BandDefinition[] = BANDS.filter(
+  (band) => band.status !== 'learning'
+);
+
+/**
  * Lo que se puede elegir en un selector de nivel: el backlog primero (para
  * volver a él y para enseñar el estado actual de una pieza sin empezar) y
  * después los cinco peldaños.
@@ -432,14 +444,15 @@ export type RepertoireScope = TuneStatus | 'shelved';
 export const SHELVED_SCOPE = 'shelved' as const;
 
 /**
- * El backlog como ámbito: `?band=to_learn`. No es una banda (#50), pero se puede
- * mirar entero y su listado es la puerta a «Start learning».
+ * El backlog como ámbito: `/level/to_learn`. No es una banda (#50), pero se
+ * puede mirar entero y su listado es la puerta a «Start learning».
  */
 export const BACKLOG_SCOPE = 'to_learn' as const;
 
 /**
- * El ámbito que llega por la URL (`?band=`), validado. Un valor desconocido o
- * ausente no rompe la pantalla: devuelve null y se ve la home entera.
+ * El ámbito que llega por el camino de la URL (`/level/:band`), validado. Un
+ * valor desconocido no rompe la pantalla: devuelve null y el listado redirige a
+ * la home.
  */
 export function parseScope(raw: unknown): RepertoireScope | null {
   if (typeof raw !== 'string') return null;
@@ -827,20 +840,6 @@ export function sortRepertoire(
   });
 }
 
-/** Modo de presentación del repertorio: la tabla clásica o las tarjetas. */
-export type ViewMode = 'table' | 'grid';
-
-/** Clave en `sessionStorage`: vive en la pestaña, sin tocar la base de datos. */
-export const VIEW_MODE_KEY = 'tradtracker.repertoire-view';
-
-/**
- * Tolerante a basura en el almacenamiento: solo «table» opta por la tabla. La
- * vista por defecto es el grid de tarjetas, como pide la issue #7.
- */
-export function parseViewMode(raw: string | null): ViewMode {
-  return raw === 'table' ? 'table' : 'grid';
-}
-
 /* ────────────────────────────────────────────────────────────────
  * Home del repertorio (#29): staleness, medidor, bandas y topes.
  * Todo puro y con el instante inyectado: el navegador no calcula
@@ -994,15 +993,23 @@ export interface BandGroup {
 }
 
 /**
- * Las cinco bandas en orden de escalera, cada una ordenada por staleness.
+ * Las bandas en orden de escalera, cada una ordenada por staleness.
+ *
+ * `bands` deja elegir el juego: la home pasa `LIBRARY_BANDS` —sin `learning`,
+ * que tiene pantalla propia— y el resto de llamadas se quedan con la escalera
+ * entera.
  *
  * Las aparcadas quedan fuera de las bandas: una tune en el cajón no está
  * en rotación y encabezar «To learn» por no haberla tocado nunca es justo el
  * defecto que corrige #11. Conservan su peldaño y se pintan en su propia
  * sección al final de la home (`visibleShelved`).
  */
-export function groupIntoBands(rows: readonly RepertoireRow[], now: number): BandGroup[] {
-  return BANDS.map((band) => ({
+export function groupIntoBands(
+  rows: readonly RepertoireRow[],
+  now: number,
+  bands: readonly BandDefinition[] = BANDS
+): BandGroup[] {
+  return bands.map((band) => ({
     band,
     rows: rows
       .filter((row) => !row.shelved && row.status === band.status)

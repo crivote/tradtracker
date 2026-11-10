@@ -190,10 +190,20 @@ export async function ensureTune(tune: CatalogueTune): Promise<string> {
   return data.id;
 }
 
-/** Alta desde el catálogo: resuelve (o crea) el tune y lo mete en el repertorio. */
-export async function addCatalogueTune(tune: CatalogueTune): Promise<string> {
+/**
+ * Alta desde el catálogo: resuelve (o crea) el tune y lo mete en el repertorio.
+ *
+ * El peldaño entra por parámetro (`to_learn` por defecto, el mismo que la
+ * columna): el buscador deja elegirlo antes de añadir, porque una tune que se
+ * añade para trabajarla no debería aterrizar en el backlog y exigir un segundo
+ * gesto para empezar.
+ */
+export async function addCatalogueTune(
+  tune: CatalogueTune,
+  status: TuneStatus = 'to_learn'
+): Promise<string> {
   const tuneId = await ensureTune(tune);
-  await addToRepertoire(tuneId);
+  await addToRepertoire(tuneId, status);
   return tuneId;
 }
 
@@ -201,8 +211,11 @@ export async function addCatalogueTune(tune: CatalogueTune): Promise<string> {
  * No se envía user_id: la columna tiene `default auth.uid()` (migración 002) y la
  * RLS lo vuelve a comprobar. El dueño lo decide la base, no el navegador.
  */
-export async function addToRepertoire(tuneId: string): Promise<void> {
-  const { error } = await supabase.from('pr_repertoire').insert({ tune_id: tuneId });
+export async function addToRepertoire(
+  tuneId: string,
+  status: TuneStatus = 'to_learn'
+): Promise<void> {
+  const { error } = await supabase.from('pr_repertoire').insert({ tune_id: tuneId, status });
   if (error) {
     if (error.code === '23505') throw new Error('That tune is already in your repertoire.');
     throw new Error(`Could not add the tune: ${error.message}`);

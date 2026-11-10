@@ -1,154 +1,75 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
-import { A, useNavigate, useSearchParams } from '@solidjs/router';
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
+import { A } from '@solidjs/router';
 import {
   BACKLOG_SCOPE,
-  BANDS,
-  LEVEL_OPTIONS,
+  LIBRARY_BANDS,
   RUNG_BARS,
   SHELVED_SCOPE,
-  SORT_DEFAULT_DIRECTION,
-  SORT_LABELS,
-  STATUS_LABELS,
-  addCatalogueTune,
-  addedAge,
   backlogCount,
-  bandFor,
   capForColumns,
   capRows,
-  displayTitle,
-  dwellDays,
-  fetchRepertoire,
   groupIntoBands,
-  invariantsText,
   learningSlots,
-  levelText,
-  parseScope,
-  parseViewMode,
-  rowInvariants,
-  rungOf,
-  saveFavorite,
-  saveStatus,
   shelvedCount,
-  sortRepertoire,
-  stalenessColor,
-  stalenessDays,
-  stalenessTag,
-  stalenessTitle,
   statusCounts,
-  workbenchRows,
-  VIEW_MODE_KEY,
   type BandGroup,
-  type LearningSlots,
   type RepertoireRow,
-  type RepertoireScope,
-  type SortDirection,
-  type SortKey,
-  type TuneStatus,
-  type ViewMode,
 } from '../lib/repertoire';
-import {
-  aliasExcerpt,
-  matchedViaAlias,
-  tokenizeQuery,
-  type CatalogueEntry,
-} from '../lib/catalogue';
-import {
-  preloadCatalogue,
-  searchCatalogue,
-  getCatalogueStats,
-  lookupCatalogueMeta,
-} from '../lib/catalogue-db';
-import { normalizeTitle } from '../lib/format';
-import { logPractice } from '../lib/practice';
-import { readPrefs, writePrefs, LEARNING_SLOTS_MAX, LEARNING_SLOTS_MIN } from '../lib/practice-storage';
-import { facetTree } from '../lib/tags';
-import { addTuneTags, loadVocabulary, type TagVocabulary } from '../lib/tags-db';
+import { readPrefs } from '../lib/practice-storage';
+import { createRepertoireStore } from '../lib/repertoire-store';
+import { preloadCatalogue } from '../lib/catalogue-db';
 import TuneCard from '../components/TuneCard';
-import PlayTrigger from '../components/PlayTrigger';
-import TagPicker from '../components/TagPicker';
-import ImportFromSession from '../components/ImportFromSession';
+import AddTuneAside from '../components/AddTuneAside';
 import './repertoire.css';
 
 /**
- * Home del repertorio (#29).
+ * La home del repertorio: **la biblioteca** —qué puedo tocar esta noche—.
  *
- * La pantalla ya no es una lista ordenada sino cinco bandas en orden de
- * escalera (to_learn → learning → shaky → playing_along → solo_ready), cada una con su
- * definición escrita y su recuento, y **una sola carta** para todas las filas.
+ * Hasta el corte de pantallas esta vista hacía cuatro trabajos a la vez: la
+ * escalera de cartas, el banco de trabajo de `learning`, la tabla del listado
+ * (con su conmutador) y el alta en línea. Cada uno tiene ahora su sitio:
  *
- * Cuatro reglas mandan sobre el resto:
- *   · Dentro de cada banda, orden por staleness: nunca tocada primero, después
- *     días descendentes. El orden es del modelo puro (`groupIntoBands`), no del
- *     JSX ni de la base.
- *   · La home enseña **tres filas por banda y nada más** (12 cartas con cuatro
- *     columnas, #46). El tope se mide sobre las columnas reales de la rejilla y se
- *     recalcula al cambiar el ancho; no es un número fijo. Así el máximo de la
- *     pantalla son 60 cartas y la página no crece con el repertorio.
- *   · El listado completo de un peldaño **es una lista**, no una rejilla: el
- *     título de la banda y «See all N as list» abren esa sola banda en la tabla,
- *     con su orden elegido a mano. De ahí se vuelve con «Back to all».
- *   · Las aparcadas **no se ven en la home**: solo su recuento, en la cabecera,
- *     que es la puerta a su listado. Aparcar no cambia el peldaño, así que no
- *     son una banda más.
+ *   · `learning` → `/learning`, con su lista, su reloj (el dwell) y su tope.
+ *   · el listado de un peldaño → `/level/:band`, que es una tabla de consulta.
+ *   · el alta → un cajón lateral (`AddTuneAside`) que no mueve la pantalla.
  *
- * El listado de un peldaño —y el cajón de aparcadas— es la **tabla del boceto
- * 014-b** (#42): se recorre entera y se ordena por las cabeceras; en la fila
- * solo se toca la favorita y el peldaño, y el borrado vive en la ficha.
+ * Lo que queda es una sola pregunta, y las reglas que la sostienen no cambian:
+ *   · Una sola carta para todas las filas, orden por abandono dentro de cada
+ *     banda: nunca tocada primero y después la más fría.
+ *   · **Tres filas por banda y nada más**: el tope se mide sobre las columnas
+ *     reales de la rejilla, así que la página no crece con el repertorio. Lo que
+ *     no cabe no se despliega aquí: se mira en el listado del peldaño, que es la
+ *     superficie hecha para muchas filas.
+ *   · El backlog y las aparcadas no se pintan: solo sus recuentos, y esos
+ *     recuentos son puertas.
  */
-
-/**
- * La preferencia de vista se lee al montar y se escribe al cambiar. Si el
- * navegador la bloquea (modo privado) se degrada al grid por defecto, que es la
- * vista principal del repertorio.
- */
-function loadViewMode(): ViewMode {
-  try {
-    return parseViewMode(sessionStorage.getItem(VIEW_MODE_KEY));
-  } catch {
-    return 'grid';
-  }
-}
-
-function rememberViewMode(mode: ViewMode): void {
-  try {
-    sessionStorage.setItem(VIEW_MODE_KEY, mode);
-  } catch {
-    /* sin almacenamiento disponible: la preferencia solo vive en memoria */
-  }
-}
-
-/** «1 tune» / «12 tunes», con el número ya formateado por quien llama. */
 function tuneCountLabel(count: number): string {
   return `${count} ${count === 1 ? 'tune' : 'tunes'}`;
 }
 
 /**
- * La banda de la home: dos filas de cartas, su recuento y la puerta al listado.
+ * El listado de un peldaño es la otra pantalla: la banda enlaza a él y, cuando
+ * las cartas se cortan, la puerta aparece también al pie de la rejilla.
+ */
+function listingHref(status: string): string {
+  return `/level/${status}`;
+}
+
+/**
+ * Una banda de la biblioteca: su cabecera, sus cartas y la puerta al listado.
  *
  * No hay carga progresiva: la home no recorre una banda entera. Lo que no cabe
- * en las dos filas no se despliega en la rejilla — se mira en la lista, que es
- * la superficie que sí está hecha para muchas filas.
+ * en las tres filas no se despliega — se mira en la lista, que es la superficie
+ * que sí está hecha para muchas filas.
  */
 function BandView(props: {
   group: BandGroup;
   now: number;
-  /** Esta banda es la única en pantalla (?band=…). */
-  scoped: boolean;
-  /** Aísla esta banda en la rejilla (solo queda ella en pantalla). */
-  onShowOnly: () => void;
-  /** Abre el listado completo de esta banda, en la tabla. */
-  onSeeList: () => void;
   onPractise: (row: RepertoireRow) => void | Promise<void>;
-  /** Tope del taller (#52). Solo viaja en la banda de `learning`; en las demás, `null`. */
-  slots: LearningSlots | null;
-  /** Mueve una fila de peldaño desde el taller: promocionar a `shaky` o devolver al backlog. */
-  onMove: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
-  /** Sube o baja el tope del taller; lo persiste la pantalla, no la banda. */
-  onShiftSlots: (delta: number) => void;
 }) {
   let grid: HTMLDivElement | undefined;
 
-  // Columnas reales de la rejilla: es lo que decide el tope de dos filas.
+  // Columnas reales de la rejilla: es lo que decide el tope de tres filas.
   const [columns, setColumns] = createSignal(4);
 
   const measure = () => {
@@ -164,7 +85,7 @@ function BandView(props: {
     window.addEventListener('resize', onResize);
 
     // El ancho de la rejilla también cambia sin que cambie la ventana (barra de
-    // scroll, panel del catálogo); el observador cubre los dos casos.
+    // scroll, cajón del alta); el observador cubre los dos casos.
     let observer: ResizeObserver | undefined;
     if (typeof ResizeObserver !== 'undefined' && grid) {
       observer = new ResizeObserver(() => measure());
@@ -180,1097 +101,82 @@ function BandView(props: {
   const cap = createMemo(() => capForColumns(columns()));
   const rows = createMemo(() => capRows(props.group.rows, cap()));
   const total = createMemo(() => props.group.rows.length);
-  /** Hay más de las que caben, o la banda está aislada y se quiere entera. */
-  const offersList = createMemo(() => props.scoped || total() > cap());
-
-  /**
-   * `learning` no se pinta como las demás (#52): es el **banco de trabajo**, no
-   * una banda de biblioteca. Aquí no se mira «qué puedo tocar esta noche» sino
-   * «qué se ha movido», así que el orden es el dwell —la más atascada primero— y
-   * la lista lleva lo que sirve para decidir, no una foto.
-   */
-  const isWorkbench = createMemo(() => props.group.band.status === 'learning');
-  const bench = createMemo(() => workbenchRows(props.group.rows, props.now));
-
-  /** Días en el peldaño, en palabras. Sin fecha no se inventa un cero. */
-  const dwellText = (row: RepertoireRow): string => {
-    const days = dwellDays(row, props.now);
-    if (days === null) return '—';
-    if (days === 0) return 'today';
-    return days === 1 ? '1 day' : `${days} days`;
-  };
 
   return (
-    <section class="band" data-band={props.group.band.status} aria-labelledby={`band-${props.group.band.status}`}>
+    <section
+      class="band"
+      data-band={props.group.band.status}
+      aria-labelledby={`band-${props.group.band.status}`}
+    >
       <div class="band-head">
         <span class="rungs" aria-hidden="true">
           <For each={RUNG_BARS}>
             {(rung) => <i classList={{ on: rung <= props.group.band.rung }} />}
           </For>
         </span>
-        {/*
-          Atajo al filtro por peldaño (#11): el filtro ya existe por construcción
-          (las bandas son los peldaños) y esto solo lo alcanza con el teclado y
-          con un clic. Una banda ya aislada no vuelve a ofrecer el atajo.
-        */}
         <h2 id={`band-${props.group.band.status}`}>
-          <Show
-            when={!props.scoped}
-            fallback={props.group.band.label}
-          >
-            <button
-              type="button"
-              aria-label={`Show only ${props.group.band.label}`}
-              onClick={props.onShowOnly}
-            >
-              {props.group.band.label}
-            </button>
-          </Show>
+          <A class="band-link" href={listingHref(props.group.band.status)}>
+            {props.group.band.label}
+          </A>
         </h2>
         <span class="def">{props.group.band.definition}</span>
-        {/* En el taller el recuento no es «cuántas hay» sino «cuánto ocupa del
-            tope»: un número sin límite al lado no dice nada. Y el tope se ajusta
-            aquí mismo (#52), donde el número se entiende sin explicación: en
-            `/practice` sería un segundo número suelto al lado del objetivo diario. */}
-        <Show
-          when={isWorkbench() && props.slots}
-          fallback={<span class="count">{tuneCountLabel(total())}</span>}
-        >
-          <span class="wb-slots" role="group" aria-label="Workbench cap for learning">
-            <button
-              type="button"
-              aria-label="Fewer learning slots"
-              onClick={() => props.onShiftSlots(-1)}
-            >
-              −
-            </button>
-            <span class="count" classList={{ 'count--over': props.slots!.over > 0 }}>
-              {props.slots!.used} of {props.slots!.limit} slots
-              <Show when={props.slots!.over > 0}> · over by {props.slots!.over}</Show>
-            </span>
-            <button
-              type="button"
-              aria-label="More learning slots"
-              onClick={() => props.onShiftSlots(1)}
-            >
-              +
-            </button>
-          </span>
-        </Show>
+        <span class="count">{tuneCountLabel(total())}</span>
       </div>
 
-      {/* El banco de trabajo (#52): lista, no rejilla. La foto es una mnemotecnia
-          para recordar en la sesión, y una tune que no se pasa entera no se toca
-          en sesión: se trabaja. Aquí lo que decide es el dwell y el historial, y
-          las salidas son explícitas —promocionar, devolver al backlog—, porque el
-          tope solo sirve si sacar una cuesta un clic. */}
-      <Show when={isWorkbench()}>
-        <Show
-          when={bench().length > 0}
-          fallback={
-            <p class="band-empty">
-              Nothing in the workbench. Pick one from the backlog to start learning it.
-            </p>
-          }
-        >
-          <ul class="workbench">
-            <For each={bench()}>
-              {(row) => (
-                <li>
-                  <div class="wb-title">
-                    <A href={`/repertoire/${row.id}`}>{displayTitle(row)}</A>
-                    <Show when={invariantsText(row)}>
-                      <small>{invariantsText(row)}</small>
-                    </Show>
-                  </div>
-                  <span class="wb-cell">
-                    <b>{dwellText(row)}</b>
-                    <small>in learning</small>
-                  </span>
-                  <span class="wb-cell">
-                    <b>{row.practice_count ?? 0}</b>
-                    <small>{(row.practice_count ?? 0) === 1 ? 'practice' : 'practices'}</small>
-                  </span>
-                  <span class="wb-actions">
-                    <button type="button" onClick={() => void props.onPractise(row)}>
-                      Practise
-                    </button>
-                    <button type="button" onClick={() => void props.onMove(row, 'shaky')}>
-                      To shaky
-                    </button>
-                    <button type="button" onClick={() => void props.onMove(row, 'to_learn')}>
-                      Back to backlog
-                    </button>
-                  </span>
-                </li>
-              )}
-            </For>
-          </ul>
-        </Show>
-      </Show>
-
       <Show
-        when={!isWorkbench() && total() > 0}
-        fallback={
-          <Show when={!isWorkbench()}>
-            <p class="band-empty">Nothing at this level yet.</p>
-          </Show>
-        }
+        when={total() > 0}
+        fallback={<p class="band-empty">Nothing at this level yet.</p>}
       >
         <div class="grid-4" ref={grid}>
           <For each={rows()}>
-            {(row) => (
-              <TuneCard
-                row={row}
-                now={props.now}
-                onPractise={props.onPractise}
-              />
-            )}
+            {(row) => <TuneCard row={row} now={props.now} onPractise={props.onPractise} />}
           </For>
         </div>
 
-        {/* El listado completo de un peldaño es una lista, no una rejilla: no
-            hay «desplegar» que valga. La búsqueda de la home ya no existe (#9);
-            lo que casa con un título se mira en /search, que cruza peldaños. */}
-        <Show when={offersList()}>
-          <button type="button" class="more" onClick={props.onSeeList}>
-            See all {total()} as list
-          </button>
+        <Show when={total() > cap()}>
+          <A class="more" href={listingHref(props.group.band.status)}>
+            All {total()} as list
+          </A>
         </Show>
       </Show>
     </section>
   );
 }
 
-/**
- * Un solo menú abierto a la vez en toda la tabla, compartido por todas las
- * filas: abrir uno cierra el anterior sin que la pantalla lleve la cuenta. Es
- * el mecanismo de `TuneCard` (#29), no un segundo invento.
- */
-let activeRowMenu: (() => void) | null = null;
-
-/**
- * La fila del listado (#42): ocho columnas —corazón, Tune, Level, Practices,
- * Last played, Average, Added y el menú—.
- *
- * Lo que la fila NO es: una ficha. Dice los invariantes de la pieza bajo el
- * título y los metadatos del dueño en columnas, y solo se toca en dos sitios
- * —la favorita y el peldaño—; el resto de acciones están en el menú y el
- * borrado, en la ficha.
- */
-function RepertoireRowView(props: {
-  row: RepertoireRow;
-  now: number;
-  /** La fila está marcada para etiquetar en bloque (#48). */
-  selected: boolean;
-  onToggleSelect: (row: RepertoireRow, next: boolean) => void;
-  onToggleFavorite: (row: RepertoireRow) => void | Promise<void>;
-  onPractise: (row: RepertoireRow) => void | Promise<void>;
-  onStatusChange: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
-  /** El taller está lleno (#52): «Start learning» queda cerrado hasta que salga una. */
-  learningFull: boolean;
-}) {
-  const [menuOpen, setMenuOpen] = createSignal(false);
-  const [subOpen, setSubOpen] = createSignal(false);
-  const [menuUp, setMenuUp] = createSignal(false);
-  let menuEl: HTMLDivElement | undefined;
-
-  const title = createMemo(() => displayTitle(props.row));
-  const invariants = createMemo(() => rowInvariants(props.row));
-  const days = createMemo(() => stalenessDays(props.row, props.now));
-  const tag = createMemo(() => stalenessTag(days()));
-  const colour = createMemo(() => stalenessColor(days()));
-  const level = createMemo(() => levelText(props.row));
-
-  const closeMenu = () => {
-    setSubOpen(false);
-    setMenuOpen(false);
-    if (activeRowMenu === closeMenu) activeRowMenu = null;
-  };
-
-  /**
-   * El menú tiene trece renglones con las definiciones dentro: pegado al pie de
-   * la ventana gira hacia arriba (`.menu--row.up`) en vez de salirse.
-   */
-  const toggleMenu = () => {
-    if (menuOpen()) {
-      closeMenu();
-      return;
-    }
-    if (activeRowMenu) activeRowMenu();
-    setMenuOpen(true);
-    activeRowMenu = closeMenu;
-    const rect = menuEl?.getBoundingClientRect();
-    setMenuUp(Boolean(rect && rect.bottom > window.innerHeight - 8));
-  };
-
-  /**
-   * Escape cierra **primero el submenú y después el menú**: son dos niveles y
-   * salir de los dos de un golpe deja al lector sin saber dónde estaba. Clic
-   * fuera cierra todo; los clics de dentro se ignoran aquí porque el disparador
-   * y el submenú viven dentro de `.row-actions` y el navegador ya entregó el
-   * evento antes de que el menú pudiera pararlo.
-   */
-  createEffect(() => {
-    if (!menuOpen()) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (subOpen()) {
-        setSubOpen(false);
-        return;
-      }
-      closeMenu();
-    };
-    const onClickAway = (event: MouseEvent) => {
-      const target = event.target;
-      if (target instanceof Node && menuEl?.parentElement?.contains(target)) return;
-      closeMenu();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('click', onClickAway);
-    onCleanup(() => {
-      document.removeEventListener('keydown', onKeyDown);
-      document.removeEventListener('click', onClickAway);
-    });
-  });
-
-  onCleanup(() => {
-    if (activeRowMenu === closeMenu) activeRowMenu = null;
-  });
-
-  return (
-    <tr>
-      {/* Selección para etiquetar en bloque (#48): la casilla abre la fila y su
-          nombre accesible es el título mostrado, para no tener que adivinar cuál
-          es «la tercera». Marcar no ordena, no filtra y no recarga nada. */}
-      <td class="pick">
-        <input
-          type="checkbox"
-          aria-label={title()}
-          checked={props.selected}
-          onChange={(event) => props.onToggleSelect(props.row, event.currentTarget.checked)}
-        />
-      </td>
-      <td class="fav">
-        <button
-          type="button"
-          class="fav-btn"
-          aria-pressed={props.row.favorite ? 'true' : 'false'}
-          aria-label={`Favourite: ${title()}`}
-          onClick={() => void props.onToggleFavorite(props.row)}
-        >
-          {props.row.favorite ? '♥' : '♡'}
-        </button>
-      </td>
-      <td>
-        <div class="row-title">
-          {/* El disparador va aquí, **fuera** del enlace: un botón dentro de un
-              `<a>` es marcado inválido y el clic acabaría navegando (#29). */}
-          <PlayTrigger row={props.row} />
-          <A href={`/repertoire/${props.row.id}`}>{title()}</A>
-        </div>
-        {/* Los invariantes de la pieza. Lo que falte se omite: ni «trad.» ni un
-            guion, porque un guion aquí se lee como un dato. */}
-        <div class="row-invariants">
-          <Show when={invariants().rhythm}>{invariants().rhythm}</Show>
-          <Show when={invariants().meter}>
-            <Show when={invariants().rhythm}>
-              <span class="sep">·</span>
-            </Show>
-            {invariants().meter}
-          </Show>
-          <Show when={invariants().composer}>
-            <Show when={invariants().rhythm || invariants().meter}>
-              <span class="sep">·</span>
-            </Show>
-            <i>{invariants().composer}</i>
-          </Show>
-        </div>
-      </td>
-      <td>
-        {/* El `title` no es un nombre accesible: el icono lleva `role="img"` y
-            `aria-label`, y los dos se pintan del mismo texto para que cambiar
-            de peldaño los mueva a la vez. */}
-        <span class="rung" role="img" aria-label={`Level: ${level()}`} title={level()}>
-          <For each={RUNG_BARS}>
-            {(rung) => <span classList={{ on: rung <= rungOf(props.row) }} />}
-          </For>
-        </span>
-      </td>
-      <td class="num">{props.row.practice_count ?? 0}</td>
-      <td class="num">
-        <span
-          class="tag tag--row"
-          classList={{ 'is-never': days() === null }}
-          title={stalenessTitle(tag())}
-          style={
-            days() === null
-              ? undefined
-              : { background: colour().background, color: colour().foreground }
-          }
-        >
-          <Show when={tag().unit} fallback={tag().value}>
-            <b>{tag().value}</b> {tag().unit}
-          </Show>
-        </span>
-      </td>
-      <td class="num">
-        <Show when={props.row.avg_quality !== null} fallback={<span class="nodata">—</span>}>
-          {props.row.avg_quality!.toFixed(1)}
-        </Show>
-      </td>
-      <td class="num c-added" title={new Date(props.row.added_at).toLocaleDateString()}>
-        {addedAge(props.row.added_at, props.now)}
-      </td>
-      <td style={{ 'text-align': 'right' }}>
-        <span class="row-actions">
-          <button
-            type="button"
-            class="kebab kebab--row"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen()}
-            aria-label={`Actions for ${title()}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              toggleMenu();
-            }}
-          >
-            <span />
-            <span />
-            <span />
-          </button>
-          <div
-            class="menu menu--row"
-            classList={{ open: menuOpen(), up: menuUp() }}
-            role="menu"
-            aria-label={`Actions for ${title()}`}
-            ref={menuEl}
-            onClick={(event) => event.stopPropagation()}
-          >
-            {/* El gesto que saca una pieza del backlog (#50): una acción, no un
-                submenú. Solo aparece cuando de verdad no se ha empezado.
-
-                Y desde #52 la puerta tiene tope: `learning` es un banco de
-                trabajo, no un almacén. Lleno, el renglón se queda pero no se
-                puede pulsar, y dice por qué y dónde se libera: esconderlo haría
-                creer que la acción no existe. */}
-            <Show when={props.row.status === 'to_learn'}>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={props.learningFull}
-                onClick={() => {
-                  closeMenu();
-                  void props.onStatusChange(props.row, 'learning');
-                }}
-              >
-                <span>
-                  Start learning
-                  <small>
-                    {props.learningFull
-                      ? 'The workbench is full — free a slot before starting another'
-                      : 'Move it out of the backlog and into the rotation'}
-                  </small>
-                </span>
-              </button>
-            </Show>
-
-            {/* El peldaño vive en un submenú de segundo nivel: desplegado en el
-                menú principal lo estiraba hasta necesitar un techo de altura, y
-                ese techo recortaba el submenú. El menú padre no lleva `overflow`. */}
-            <div class="has-sub">
-              <button
-                type="button"
-                aria-haspopup="menu"
-                aria-expanded={subOpen()}
-                onClick={() => setSubOpen((open) => !open)}
-              >
-                <span>
-                  Level
-                  <span class="current">{STATUS_LABELS[props.row.status]}</span>
-                </span>
-                <span aria-hidden="true">▸</span>
-              </button>
-              <div class="submenu" hidden={!subOpen()} role="menu" aria-label="Level">
-                <For each={LEVEL_OPTIONS}>
-                  {(band) => (
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={props.row.status === band.status ? 'true' : 'false'}
-                      onClick={() => {
-                        closeMenu();
-                        void props.onStatusChange(props.row, band.status);
-                      }}
-                    >
-                      {/* Un solo bloque dentro del botón: `.menu button` es una
-                          fila flex (viene de la carta) y así la etiqueta, el ✓ y
-                          la definición —que es un `small` de bloque— se apilan
-                          sin pelearse por la misma línea. */}
-                      <span>
-                        {band.label}
-                        <Show when={props.row.status === band.status}>
-                          <span class="check" aria-hidden="true">✓</span>
-                        </Show>
-                        <small>{band.definition}</small>
-                      </span>
-                    </button>
-                  )}
-                </For>
-              </div>
-            </div>
-            <div class="sep" />
-            <A role="menuitem" href={`/repertoire/${props.row.id}`} onClick={closeMenu}>
-              View details
-            </A>
-            <A role="menuitem" href={`/repertoire/${props.row.id}`} onClick={closeMenu}>
-              Edit details
-            </A>
-            {/* «Add to set» no tiene destino todavía: los sets llegan en F7. Se
-                queda deshabilitado y con el motivo, no con una pantalla a medias. */}
-            <button type="button" role="menuitem" disabled title="Sets are not built yet">
-              Add to set
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              class="primary"
-              onClick={() => {
-                closeMenu();
-                void props.onPractise(props.row);
-              }}
-            >
-              Practise
-            </button>
-          </div>
-        </span>
-      </td>
-    </tr>
-  );
-}
-
-/**
- * La cabecera ordenable de una columna: el `th` lleva `aria-sort` cuando es la
- * columna activa y entonces se enciende la flecha (`.arrow`), que en el resto
- * de columnas ocupa su sitio apagada para que la cabecera no baile al ordenar.
- */
-function SortHeader(props: {
-  label: string;
-  sortKey: SortKey;
-  active: SortKey;
-  direction: SortDirection;
-  numeric?: boolean;
-  extra?: string;
-  onSort: (key: SortKey) => void;
-}) {
-  const sorted = () => props.active === props.sortKey;
-  return (
-    <th
-      class={[props.numeric ? 'num' : '', props.extra ?? ''].filter(Boolean).join(' ') || undefined}
-      aria-sort={
-        sorted() ? (props.direction === 'asc' ? 'ascending' : 'descending') : undefined
-      }
-    >
-      <button type="button" onClick={() => props.onSort(props.sortKey)}>
-        {props.label}{' '}
-        <span class="arrow" aria-hidden="true">
-          {props.direction === 'asc' ? '▲' : '▼'}
-        </span>
-      </button>
-    </th>
-  );
-}
-
-/**
- * La tabla del listado (#42, boceto 014-b): la superficie donde se **mira** un
- * peldaño entero y se ordena por los metadatos del dueño.
- *
- * Ocho columnas: corazón, Tune con los invariantes debajo, Level como icono de
- * cinco barras, Practices, Last played, Average, Added y el menú. Fuera la
- * columna `Key` —nula en toda la tabla—, el `#origin_ref` como segunda línea y
- * el botón «Remove», que es acción de la ficha (#45).
- *
- * La tabla no lleva tarjeta contenedora: sobre papel, la línea de la cabecera y
- * la de cada fila son toda la caja.
- */
-function RepertoireTable(props: {
-  rows: RepertoireRow[];
-  now: number;
-  sortKey: SortKey;
-  sortDirection: SortDirection;
-  /** Ids de fila (`pr_repertoire`) marcados para etiquetar en bloque (#48). */
-  selected: readonly string[];
-  onToggleRow: (row: RepertoireRow, next: boolean) => void;
-  onToggleAll: (next: boolean) => void;
-  onSort: (key: SortKey) => void;
-  onPractise: (row: RepertoireRow) => void | Promise<void>;
-  onToggleFavorite: (row: RepertoireRow) => void | Promise<void>;
-  onStatusChange: (row: RepertoireRow, status: TuneStatus) => void | Promise<void>;
-  /** El taller está lleno (#52): la puerta del backlog lo dice al abrirse. */
-  learningFull: boolean;
-}) {
-  const allSelected = () =>
-    props.rows.length > 0 && props.rows.every((row) => props.selected.includes(row.id));
-  const someSelected = () => props.rows.some((row) => props.selected.includes(row.id));
-
-  /**
-   * «Parcialmente marcada» no es expresable en HTML: el estado intermedio del
-   * «select all» se pinta por propiedad (`indeterminate`), no por atributo. Sin
-   * esto, tres filas marcadas de siete se leen como «ninguna».
-   */
-  let selectAllBox: HTMLInputElement | undefined;
-  createEffect(() => {
-    if (selectAllBox) selectAllBox.indeterminate = someSelected() && !allSelected();
-  });
-
-  return (
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th class="pick">
-              {/* Marca lo que se está pintando —el ámbito actual—, no el
-                  repertorio entero: marcar filas que no se ven es una trampa. */}
-              <input
-                ref={selectAllBox}
-                type="checkbox"
-                aria-label="Select all listed tunes"
-                checked={allSelected()}
-                onChange={(event) => props.onToggleAll(event.currentTarget.checked)}
-              />
-            </th>
-            <SortHeader
-              label="Tune"
-              sortKey="alphabetical"
-              active={props.sortKey}
-              direction={props.sortDirection}
-              onSort={props.onSort}
-            />
-            <SortHeader
-              label="Level"
-              sortKey="level"
-              active={props.sortKey}
-              direction={props.sortDirection}
-              onSort={props.onSort}
-            />
-            <SortHeader
-              label="Practices"
-              sortKey="practices"
-              active={props.sortKey}
-              direction={props.sortDirection}
-              numeric
-              onSort={props.onSort}
-            />
-            <SortHeader
-              label="Last played"
-              sortKey="urgency"
-              active={props.sortKey}
-              direction={props.sortDirection}
-              numeric
-              onSort={props.onSort}
-            />
-            <SortHeader
-              label="Average"
-              sortKey="quality"
-              active={props.sortKey}
-              direction={props.sortDirection}
-              numeric
-              onSort={props.onSort}
-            />
-            <SortHeader
-              label="Added"
-              sortKey="added"
-              active={props.sortKey}
-              direction={props.sortDirection}
-              numeric
-              extra="c-added"
-              onSort={props.onSort}
-            />
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          <For each={props.rows}>
-            {(row) => (
-              <RepertoireRowView
-                row={row}
-                now={props.now}
-                selected={props.selected.includes(row.id)}
-                onToggleSelect={props.onToggleRow}
-                onPractise={props.onPractise}
-                onToggleFavorite={props.onToggleFavorite}
-                onStatusChange={props.onStatusChange}
-                learningFull={props.learningFull}
-              />
-            )}
-          </For>
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 export default function Repertoire() {
-  // El instante de la vista: el tag de todas las cartas habla del mismo «hoy».
-  // Se refresca al recargar (tras apuntar un ensayo) para que «today» sea hoy.
-  const [now, setNow] = createSignal(Date.now());
+  const store = createRepertoireStore();
+  const [addOpen, setAddOpen] = createSignal(false);
 
-  const [rows, setRows] = createSignal<RepertoireRow[]>([]);
-  const [loading, setLoading] = createSignal(true);
-  const [error, setError] = createSignal<string | null>(null);
-  const [busyId, setBusyId] = createSignal<string | number | null>(null);
-  const [showCatalogue, setShowCatalogue] = createSignal(false);
-  // El import de The Session (#32) se abre en el mismo sitio que el catálogo:
-  // un panel en línea, no un modal. Los dos pueden estar abiertos a la vez.
-  const [showImport, setShowImport] = createSignal(false);
-
-  const navigate = useNavigate();
-
-  const [query, setQuery] = createSignal('');
-  const [results, setResults] = createSignal<CatalogueEntry[]>([]);
-  const [searching, setSearching] = createSignal(false);
-  const [searchMs, setSearchMs] = createSignal<number | null>(null);
-  const [catalogueError, setCatalogueError] = createSignal<string | null>(null);
-  const [catalogueReady, setCatalogueReady] = createSignal(false);
-  const [tuneCount, setTuneCount] = createSignal<number | null>(null);
-
-  const [viewMode, setViewMode] = createSignal<ViewMode>(loadViewMode());
-  /**
-   * El orden del listado: la columna y su sentido. Por defecto **urgencia
-   * descendente** —nunca ensayada primero, después la más abandonada—, que es
-   * el orden que la tabla tiene desde #7. Las cabeceras y el selector de la
-   * barra mueven las mismas dos señales.
-   */
-  const [sortKey, setSortKey] = createSignal<SortKey>('urgency');
-  const [sortDirection, setSortDirection] = createSignal<SortDirection>(
-    SORT_DEFAULT_DIRECTION.urgency
+  const counts = createMemo(() => statusCounts(store.rows()));
+  const backlogTotal = createMemo(() => backlogCount(store.rows()));
+  const shelvedTotal = createMemo(() => shelvedCount(store.rows()));
+  const slots = createMemo(() =>
+    learningSlots(store.rows(), readPrefs(window.localStorage).learningSlots)
   );
 
-  /** Clic en una cabecera: la misma columna invierte; una nueva entra por su
-   *  sentido natural (números descendente, título ascendente). */
-  const chooseSort = (key: SortKey) => {
-    if (sortKey() === key) {
-      setSortDirection((direction) => (direction === 'asc' ? 'desc' : 'asc'));
-      return;
-    }
-    setSortKey(key);
-    setSortDirection(SORT_DEFAULT_DIRECTION[key]);
-  };
-
-  // Lo que se está mirando vive en la URL (§2.7): recargar mantiene la vista.
-  // `?band=` acepta los cinco peldaños, el backlog (`to_learn`) y `shelved`.
-  const [params, setParams] = useSearchParams<{ band?: string }>();
-  const scope = createMemo<RepertoireScope | null>(() => parseScope(params.band));
-  /** El ámbito es un peldaño (ni el cajón ni el backlog): lo que aísla una banda. */
-  const scopedBand = createMemo<TuneStatus | null>(() => {
-    const current = scope();
-    return current !== null && current !== SHELVED_SCOPE && current !== BACKLOG_SCOPE
-      ? current
-      : null;
-  });
   /**
-   * Ni el cajón ni el backlog se pintan en rejilla: sus tunes se miran en lista,
-   * que es la única superficie de la app hecha para muchas filas. Así no hay un
-   * estado muerto en el que el conmutador Table/Cards no signifique nada.
+   * Las bandas de la **biblioteca**: `learning` no está —tiene pantalla propia— y
+   * el backlog tampoco, porque no es un peldaño. Ver `LIBRARY_BANDS`.
    */
-  const effectiveMode = createMemo<ViewMode>(() =>
-    scope() === SHELVED_SCOPE || scope() === BACKLOG_SCOPE ? 'table' : viewMode()
-  );
+  const groups = createMemo(() => groupIntoBands(store.rows(), store.now(), LIBRARY_BANDS));
 
-  const chooseView = (mode: ViewMode) => {
-    setViewMode(mode);
-    rememberViewMode(mode);
-  };
-
-  const tokens = createMemo(() => tokenizeQuery(query()));
-  const counts = createMemo(() => statusCounts(rows()));
-  /**
-   * El tope del banco de trabajo (#52) es configuración del usuario
-   * (`PracticePrefs.learningSlots`, en `localStorage`), no una constante: se
-   * ajusta sin desplegar y vive donde ya vive el objetivo diario.
-   */
-  const [limit, setLimit] = createSignal(readPrefs(window.localStorage).learningSlots);
-  /** Cuánto ocupa `learning` contra su tope: cabecera del taller y puerta del backlog. */
-  const slots = createMemo(() => learningSlots(rows(), limit()));
-
-  /**
-   * El tope se ajusta en la propia banda del taller. Bajar el tope por debajo de
-   * lo que ya hay **no mueve filas**: la cabecera avisa de cuánto sobra y el
-   * dueño decide cuál sale. Persistir aquí es deliberado —la banda no escribe en
-   * la base, y esto no es la base: es la misma configuración del navegador donde
-   * vive el objetivo diario—.
-   */
-  const shiftLearningSlots = (delta: number) => {
-    const next = Math.min(LEARNING_SLOTS_MAX, Math.max(LEARNING_SLOTS_MIN, limit() + delta));
-    if (next === limit()) return;
-    setLimit(next);
-    try {
-      writePrefs(window.localStorage, { ...readPrefs(window.localStorage), learningSlots: next });
-    } catch {
-      /* almacenamiento bloqueado: el cambio vale para esta visita */
-    }
-  };
-  /** Las del backlog, para la puerta de la cabecera (#50). */
-  const backlogTotal = createMemo(() => backlogCount(rows()));
-  /** Las del cajón, para que la cabecera sume: bandas + backlog + aparcadas = repertorio. */
-  const shelvedTotal = createMemo(() => shelvedCount(rows()));
-
-  /** Las cinco bandas, cada una ordenada por staleness. */
-  const groups = createMemo(() => groupIntoBands(rows(), now()));
-
-  /**
-   * Lo que se pinta: las cinco bandas, vacías incluidas, porque la pantalla es
-   * la escalera. Con una banda aislada (`?band=`), esa sola.
-   *
-   * La home ya no filtra por título (#9): el texto se busca en /search, que
-   * cruza los peldaños y las aparcadas. `?band=` sigue filtrando por ámbito y
-   * eso no se toca.
-   */
-  const visibleGroups = createMemo(() => {
-    const open = scopedBand();
-    if (!open) return groups();
-    const group = groups().find((candidate) => candidate.band.status === open);
-    return group ? [group] : [];
-  });
-
-  /**
-   * La tabla consume las filas de su ámbito y el orden elegido a mano. Un
-   * peldaño excluye las aparcadas —aparcar no cambia el peldaño, pero las
-   * aparcadas fuera de rotación—, así que la lista de una banda cuadra con su
-   * recuento; el cajón hace lo contrario y solo trae las aparcadas.
-   */
-  const tableRows = createMemo(() => {
-    const current = scope();
-    let pool = rows();
-    if (current === SHELVED_SCOPE) pool = pool.filter((row) => row.shelved);
-    else if (current !== null) pool = pool.filter((row) => row.status === current && !row.shelved);
-    return sortRepertoire(pool, sortKey(), sortDirection());
-  });
-
-  /**
-   * Etiquetado en bloque (#48). La selección guarda ids de **fila**
-   * (`pr_repertoire`), que es lo que la tabla pinta; a la RPC se le pasan los
-   * ids de **tune** (`row.tune.id`). Confundirlos no falla al leer y sí al
-   * escribir (23503), así que la traducción se hace en un solo sitio —`applyTags`,
-   * más abajo— y nunca se pasa una fila al adaptador.
-   */
-  const [selectedIds, setSelectedIds] = createSignal<string[]>([]);
-  const [tagPanelOpen, setTagPanelOpen] = createSignal(false);
-  /** Borrador de etiquetas del panel: no escribe nada hasta «Apply». */
-  const [draftTags, setDraftTags] = createSignal<number[]>([]);
-  const [savingTags, setSavingTags] = createSignal(false);
-  const [tagError, setTagError] = createSignal<string | null>(null);
-  const [notice, setNotice] = createSignal<string | null>(null);
-  const [vocabulary, setVocabulary] = createSignal<TagVocabulary | null>(null);
-
-  /**
-   * La selección que cuenta es la que **se está pintando**: si el ámbito cambia
-   * con filas marcadas, las que ya no se ven no viajan al «Apply» ni suman en
-   * «N selected». Sin esto, el recuento de la barra no cuadraría con las filas.
-   */
-  const listedSelection = createMemo(() => {
-    const listed = new Set(tableRows().map((row) => row.id));
-    return selectedIds().filter((id) => listed.has(id));
-  });
-
-  /** El árbol de casillas, o `null` sin vocabulario: no se pinta un panel vacío. */
-  const tagGroups = createMemo(() => {
-    const loaded = vocabulary();
-    if (!loaded || loaded.facets.length === 0 || loaded.tags.length === 0) return null;
-    const groups = facetTree(loaded.facets, loaded.tags);
-    return groups.some((group) => group.nodes.length > 0) ? groups : null;
-  });
-
-  const toggleRowSelection = (row: RepertoireRow, next: boolean) => {
-    setNotice(null);
-    setSelectedIds((previous) =>
-      next
-        ? previous.includes(row.id)
-          ? previous
-          : [...previous, row.id]
-        : previous.filter((id) => id !== row.id)
-    );
-  };
-
-  /** «Select all» del ámbito: marca lo listado y desmarca lo listado. */
-  const toggleAllListed = (next: boolean) => {
-    setNotice(null);
-    const listed = tableRows().map((row) => row.id);
-    setSelectedIds((previous) =>
-      next
-        ? [...new Set([...previous, ...listed])]
-        : previous.filter((id) => !listed.includes(id))
-    );
-  };
-
-  const clearSelection = () => {
-    setSelectedIds([]);
-    setDraftTags([]);
-    setTagPanelOpen(false);
-    setTagError(null);
-  };
-
-  const toggleDraftTag = (tagId: number, next: boolean) => {
-    setDraftTags((previous) =>
-      next
-        ? previous.includes(tagId)
-          ? previous
-          : [...previous, tagId]
-        : previous.filter((id) => id !== tagId)
-    );
-  };
-
-  /**
-   * Una sola llamada para N tunes × M etiquetas. Primero se traducen las filas
-   * marcadas a `tune.id`; el adaptador nunca ve un id de repertorio. Si falla, la
-   * selección **no** se limpia: el lector reintenta sin volver a marcar.
-   */
-  const applyTags = async () => {
-    if (draftTags().length === 0) return;
-    const marked = new Set(listedSelection());
-    const tuneIds = rows()
-      .filter((row) => marked.has(row.id))
-      .map((row) => row.tune.id);
-    if (tuneIds.length === 0) return;
-
-    setSavingTags(true);
-    setTagError(null);
-    setNotice(null);
-    try {
-      await addTuneTags(tuneIds, draftTags());
-      setNotice(`${tuneIds.length} ${tuneIds.length === 1 ? 'tune' : 'tunes'} tagged`);
-      setSelectedIds([]);
-      setDraftTags([]);
-      setTagPanelOpen(false);
-    } catch (cause) {
-      setTagError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSavingTags(false);
-    }
-  };
-
-  /** Título del ámbito para la barra: el peldaño, el cajón o el backlog. */
-  const scopeLabel = createMemo(() => {
-    const current = scope();
-    if (current === null) return null;
-    if (current === SHELVED_SCOPE) return 'Shelved';
-    if (current === BACKLOG_SCOPE) return 'Backlog';
-    return bandFor(current).label;
-  });
-
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setRows(await fetchRepertoire());
-      setNow(Date.now());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * Recarga silenciosa tras apuntar un ensayo: no vuelve a poner `loading` para
-   * que la rejilla no parpadee con el menú recién cerrado.
-   */
-  const reload = async () => {
-    try {
-      setRows(await fetchRepertoire());
-      setNow(Date.now());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-
-  onMount(() => {
-    void load();
-    // El vocabulario es común y lo cachea el adaptador por sesión de navegador;
-    // pedirlo al montar deja el panel de etiquetas listo sin esperar a abrirlo.
-    void loadVocabulary().then((loaded) => setVocabulary(loaded));
-    // Descarga del artefacto en segundo plano: al abrir el buscador ya está.
-    void preloadCatalogue().then(
-      async () => {
-        setCatalogueReady(true);
-        try {
-          setTuneCount((await getCatalogueStats()).tunes);
-        } catch {
-          /* el recuento es informativo: si falla, el buscador sigue */
-        }
-      },
-      (cause) => {
-        setCatalogueError(cause instanceof Error ? cause.message : String(cause));
-        setCatalogueReady(true);
-      }
-    );
-  });
-
-  createEffect(() => {
-    const term = query();
-    if (term.trim().length === 0) {
-      setResults([]);
-      setSearchMs(null);
-      setSearching(false);
-      return;
-    }
-
-    let cancelled = false;
-    setSearching(true);
-    const started = performance.now();
-
-    void searchCatalogue(term)
-      .then((found) => {
-        if (cancelled) return;
-        setResults(found);
-        setSearchMs(performance.now() - started);
-        setCatalogueError(null);
-      })
-      .catch((cause) => {
-        if (cancelled) return;
-        setResults([]);
-        setCatalogueError(cause instanceof Error ? cause.message : String(cause));
-      })
-      .finally(() => {
-        if (!cancelled) setSearching(false);
-      });
-
-    onCleanup(() => {
-      cancelled = true;
-    });
-  });
-
-  /**
-   * Los tunes que ya están en el repertorio se reconocen por `origin_ref`: el
-   * catálogo solo conoce el id de TheSession, no el uuid de `pr_tunes`.
-   */
+  /** Los tunes que ya están en el repertorio, por `origin_ref` (ids de TheSession). */
   const ownedRefs = createMemo(
     () =>
       new Set(
-        rows()
+        store
+          .rows()
           .filter((row) => row.tune.origin === 'thesession' && row.tune.origin_ref)
           .map((row) => row.tune.origin_ref!)
       )
   );
 
-  const add = async (entry: CatalogueEntry) => {
-    setBusyId(entry.tuneId);
-    setError(null);
-    try {
-      // El autor no viaja en el resultado del buscador; sí en la consulta por
-      // id del catálogo (#44). Sin este viaje la tune nace sin autor y el
-      // subtexto de la fila —tipo · compás · autor— queda cojo hasta el
-      // próximo relleno.
-      const meta = await lookupCatalogueMeta([entry.tuneId]);
-      await addCatalogueTune({
-        tuneId: entry.tuneId,
-        name: entry.name,
-        rhythm: entry.type,
-        meter: entry.meter,
-        composer: meta.get(entry.tuneId)?.composer ?? null,
-      });
-      await reload();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  /**
-   * La favorita de la fila, optimista y con reversión: el corazón responde al
-   * toque y, si el guardado falla, se deshace y se dice. Una favorita fantasma
-   * envenenaría el ×1,4 del generador de la lista de hoy. Mismo patrón que
-   * `/practice`.
-   */
-  const toggleFavorite = async (row: RepertoireRow) => {
-    const before = row.favorite;
-    const next = !before;
-    const paint = (value: boolean) =>
-      setRows((previous) =>
-        previous.map((candidate) =>
-          candidate.id === row.id ? { ...candidate, favorite: value } : candidate
-        )
-      );
-
-    paint(next);
-    setError(null);
-    try {
-      await saveFavorite(row.id, next);
-    } catch (cause) {
-      paint(before);
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-
-  /**
-   * El peldaño desde el submenú del menú. Optimista por la misma razón que el
-   * corazón: el icono, su `title` y su `aria-label` se pintan del mismo dato y
-   * cambian juntos en cuanto se elige. Si el guardado falla, la fila vuelve a su
-   * peldaño y se dice.
-   */
-  const changeStatus = async (row: RepertoireRow, status: TuneStatus) => {
-    const before = row.status;
-    if (before === status) return;
-    const paint = (value: TuneStatus) =>
-      setRows((previous) =>
-        previous.map((candidate) =>
-          candidate.id === row.id ? { ...candidate, status: value } : candidate
-        )
-      );
-
-    paint(status);
-    setError(null);
-    try {
-      await saveStatus(row.id, status);
-    } catch (cause) {
-      paint(before);
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-
-  /**
-   * «Practise» del menú: apunta el ensayo de un clic, sin puntuarlo. La calidad
-   * es opcional por diseño (#10) y se puntúa en el detalle; obligar a pasar por
-   * un formulario para apuntar que has tocado una tune mataría el gesto.
-   */
-  const practise = async (row: RepertoireRow) => {
-    setBusyId(row.id);
-    setError(null);
-    try {
-      await logPractice(row.id, { quality: null, comment: null });
-      await reload();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  /** Aísla una banda en la rejilla: solo queda ella en pantalla. */
-  const showOnly = (status: TuneStatus) => setParams({ band: status });
-  /** Abre el listado completo: la banda (o el cajón) en la tabla, sin cartas. */
-  const seeList = (target: RepertoireScope) => {
-    setParams({ band: target });
-    chooseView('table');
-  };
-  /** La puerta de las aparcadas: su recuento en la cabecera lleva a su listado. */
-  const seeShelved = () => seeList(SHELVED_SCOPE);
-  /** La puerta del backlog: lo que se quiere aprender y aún no se ha empezado. */
-  const seeBacklog = () => seeList(BACKLOG_SCOPE);
-  /**
-   * «Back to all». Desde el cajón —o desde el backlog— se vuelve a la **home**
-   * —las cinco bandas—, que es lo que se estaba mirando antes de entrar. Desde un
-   * peldaño solo se limpia el ámbito, sin cambiar el modo de vista.
-   */
-  const backToAll = () => {
-    if (scope() === SHELVED_SCOPE || scope() === BACKLOG_SCOPE) {
-      navigate('/');
-      chooseView('grid');
-      return;
-    }
-    setParams({ band: undefined });
-  };
+  onMount(() => {
+    void store.load();
+    // El artefacto del catálogo se descarga en segundo plano: cuando se abre el
+    // cajón del alta, el buscador ya está listo.
+    void preloadCatalogue();
+  });
 
   return (
     <div class="repertoire-home">
@@ -1278,373 +184,90 @@ export default function Repertoire() {
         <div>
           <h1>Repertoire</h1>
           <p class="sub">
-            <Show when={!loading()} fallback="Loading…">
-              <b>{tuneCountLabel(rows().length)}</b>
+            <Show when={!store.loading()} fallback="Loading…">
+              <b>{tuneCountLabel(store.rows().length)}</b>
               {' · '}
-              {/* El backlog no es un peldaño (#50): se nombra para que el total
-                  cuadre, y su recuento es la puerta a su listado —igual que el
-                  de las aparcadas—. */}
-              <button type="button" class="shelved-link" onClick={seeBacklog}>
+              {/* Cada cifra que no es una banda de esta pantalla es su puerta: el
+                  backlog y las aparcadas no se pintan aquí, y `learning` tiene
+                  pantalla propia. Si no fueran puertas, los números sobrarían. */}
+              <A class="shelved-link" href={listingHref(BACKLOG_SCOPE)}>
                 {backlogTotal()} to learn
-              </button>
+              </A>
               {' · '}
-              {counts().learning} learning · {counts().shaky} shaky ·{' '}
-              {counts().playing_along} playing along · {counts().solo_ready} solo-ready ·{' '}
-              {counts().mastered} mastered
-              {/* Las aparcadas no se pintan en la home, solo su recuento —y ese
-                  recuento es la puerta a su listado, que si no no habría dónde
-                  mirarlas—. Se nombran para que el total cuadre: bandas, backlog
-                  y aparcadas son el repertorio entero. */}
+              <A class="shelved-link" href="/learning">
+                {counts().learning} learning
+              </A>
+              {' · '}
+              {counts().shaky} shaky · {counts().playing_along} playing along ·{' '}
+              {counts().solo_ready} solo-ready · {counts().mastered} mastered
               <Show when={shelvedTotal() > 0}>
                 {' · '}
-                <button type="button" class="shelved-link" onClick={seeShelved}>
+                <A class="shelved-link" href={listingHref(SHELVED_SCOPE)}>
                   {shelvedTotal()} shelved
-                </button>
+                </A>
               </Show>
             </Show>
           </p>
         </div>
         <div class="head-tools">
-          {/*
-            Puerta a la búsqueda (#9). La home ya no busca: dos buscadores con
-            comportamientos distintos en la misma pantalla es justo lo que hay
-            que evitar, y el filtro por bandas se saltaba el tope de ocho cartas
-            que la home acaba de fijar. La búsqueda vive en /search, cruza todos
-            los peldaños —aparcadas incluidas— y filtra además por ritmo.
-          */}
-          <button
-            type="button"
-            class="search search--door"
-            onClick={() => navigate('/search')}
-          >
+          {/* La búsqueda vive en /search: cruza todos los peldaños y filtra por
+              ritmo. La home no busca — dos buscadores con reglas distintas en la
+              misma app es justo lo que hay que evitar. */}
+          <A class="search search--door" href="/search">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="11" cy="11" r="7" />
               <path d="M20 20l-3.5-3.5" />
             </svg>
             Search tunes
-          </button>
-          {/* El conmutador no se ofrece mirando el cajón: sus tunes no se pintan
-              en rejilla, así que «Cards» no tendría efecto. */}
-          <Show when={scope() !== SHELVED_SCOPE}>
-            <div class="viewswitch" role="group" aria-label="Repertoire view">
-              <button
-                type="button"
-                aria-pressed={effectiveMode() === 'table'}
-                onClick={() => chooseView('table')}
-              >
-                Table
-              </button>
-              <button
-                type="button"
-                aria-pressed={effectiveMode() === 'grid'}
-                onClick={() => chooseView('grid')}
-              >
-                Cards
-              </button>
-            </div>
-          </Show>
-          <button type="button" class="add" onClick={() => setShowCatalogue((open) => !open)}>
-            {showCatalogue() ? 'Close catalogue' : 'Add a tune'}
-          </button>
-          <button
-            type="button"
-            class="add add--quiet"
-            aria-expanded={showImport()}
-            onClick={() => setShowImport((open) => !open)}
-          >
-            {showImport() ? 'Close import' : 'Import from The Session'}
+          </A>
+          <button type="button" class="add" onClick={() => setAddOpen(true)}>
+            Add a tune
           </button>
         </div>
       </header>
 
-      <Show when={error()}>
+      <Show when={store.error()}>
         <p class="notice notice-error" role="alert">
-          {error()}
+          {store.error()}
         </p>
       </Show>
 
-      {/* Import del tunebook (#32): mismo sitio y misma forma que el catálogo,
-          porque es la otra puerta de entrada al repertorio. */}
-      <Show when={showImport()}>
-        <ImportFromSession
-          existingRefs={ownedRefs()}
-          onImported={() => void reload()}
-          onClose={() => setShowImport(false)}
-        />
-      </Show>
-
-      <Show when={showCatalogue()}>
-        <section class="catalogue">
-          <label for="catalogue-search">Search the tune catalogue</label>
-          <input
-            id="catalogue-search"
-            type="search"
-            autocomplete="off"
-            placeholder="Name or any alternative title — e.g. butterfly, red admiral…"
-            value={query()}
-            onInput={(event) => setQuery(event.currentTarget.value)}
-          />
-          <p class="hint">
-            <Show
-              when={catalogueError()}
-              fallback={
-                <Show
-                  when={searchMs() !== null}
-                  fallback={
-                    tuneCount() === null
-                      ? 'Searches run on this device — no network per keystroke.'
-                      : `${tuneCount()!.toLocaleString()} tunes from a local database — no network per keystroke.`
-                  }
-                >
-                  {results().length} {results().length === 1 ? 'match' : 'matches'} ·{' '}
-                  {(searchMs() ?? 0).toFixed(1)} ms · searched on this device
-                </Show>
-              }
-            >
-              <span>{catalogueError()}</span>
-            </Show>
-          </p>
-
-          <Show when={!catalogueReady()}>
-            <p class="hint">Loading the catalogue (4.5 MB, downloaded once)…</p>
-          </Show>
-
-          <Show when={catalogueReady() && query().trim().length > 0}>
-            <Show
-              when={results().length > 0}
-              fallback={
-                <p class="hint">{searching() ? 'Searching…' : 'No tune matches that search.'}</p>
-              }
-            >
-              <ul>
-                <For each={results()}>
-                  {(entry) => {
-                    const alias = aliasExcerpt(entry, tokens());
-                    const viaAlias = matchedViaAlias(entry, tokens());
-                    const owned = () => ownedRefs().has(String(entry.tuneId));
-                    return (
-                      <li>
-                        <div>
-                          <p class="cat-title">{normalizeTitle(entry.name)}</p>
-                          <p class="cat-meta">
-                            {entry.type ?? '—'}
-                            {entry.meter ? ` · ${entry.meter}` : ''}
-                            <span> · thesession #{entry.tuneId}</span>
-                          </p>
-                          <Show when={viaAlias && alias}>
-                            <p class="cat-meta">
-                              Also known as <b>{alias}</b>
-                            </p>
-                          </Show>
-                        </div>
-                        <button
-                          type="button"
-                          class="cat-add"
-                          disabled={busyId() === entry.tuneId || owned()}
-                          onClick={() => void add(entry)}
-                        >
-                          {owned()
-                            ? 'In repertoire'
-                            : busyId() === entry.tuneId
-                              ? 'Adding…'
-                              : 'Add'}
-                        </button>
-                      </li>
-                    );
-                  }}
-                </For>
-              </ul>
-            </Show>
-          </Show>
-
-          <Show when={catalogueReady() && query().trim().length === 0}>
-            <p class="hint">
-              Type a name — or an alternative one. The search looks at titles and at every
-              alternative title in the catalogue.
-            </p>
-          </Show>
-        </section>
-      </Show>
-
-      {/* Con una banda aislada (?band=…) se oculta el resto de bandas, no la
-          barra: sigue diciendo qué se está mirando. */}
-      <Show when={effectiveMode() === 'grid'}>
-        <div class="sortbar">
-          <Show
-            when={scopeLabel()}
-            fallback={
-              <>
-                <span class="lbl">Within each level</span>
-                <span>Staleness — longest untouched first</span>
-              </>
-            }
-          >
-            <span class="lbl">Showing</span>
-            <span>{scopeLabel()}</span>
-            <button type="button" class="back-to-all" onClick={backToAll}>
-              Back to all
-            </button>
-          </Show>
-          <span class="spacer" />
-          <span class="heat">
-            <i />
-            going cold
-          </span>
-        </div>
-      </Show>
-
-      <Show when={effectiveMode() === 'table'}>
-        <div class="sortbar">
-          <span class="lbl">Sort by</span>
-          {/* El selector y las cabeceras mueven las mismas dos señales: aquí se
-              elige columna (con su sentido natural) y en la tabla se invierte
-              con un segundo clic. */}
-          <select
-            aria-label="Sort by"
-            value={sortKey()}
-            onChange={(event) => {
-              const key = event.currentTarget.value as SortKey;
-              setSortKey(key);
-              setSortDirection(SORT_DEFAULT_DIRECTION[key]);
-            }}
-          >
-            {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
-              <option value={key}>{SORT_LABELS[key]}</option>
-            ))}
-          </select>
-          {/* Una lista acotada dice de qué es; sin ámbito, es todo el repertorio. */}
-          <Show when={scopeLabel()}>
-            <span class="lbl">Showing</span>
-            <span>{scopeLabel()}</span>
-            <button type="button" class="back-to-all" onClick={backToAll}>
-              Back to all
-            </button>
-          </Show>
-          <span class="spacer" />
-        </div>
-      </Show>
-
-      {/* Etiquetar en bloque (#48). La barra solo existe con algo marcado —un
-          «N selected» sin selección sería un control muerto— y el panel abre un
-          **borrador** de etiquetas que no escribe nada hasta «Apply». */}
-      <Show when={effectiveMode() === 'table' && listedSelection().length > 0}>
-        <div class="selection-bar">
-          <span class="count">{listedSelection().length} selected</span>
-          {/* Sin vocabulario no hay botón: un panel vacío promete algo que no hay. */}
-          <Show when={tagGroups()}>
-            <button
-              type="button"
-              class="tag-toggle"
-              aria-expanded={tagPanelOpen()}
-              aria-controls="bulk-tag-panel"
-              onClick={() => setTagPanelOpen((open) => !open)}
-            >
-              Tag selection
-            </button>
-          </Show>
-          <button type="button" class="tag-clear" onClick={clearSelection}>
-            Clear
-          </button>
-        </div>
-      </Show>
-
-      <Show when={tagPanelOpen() && listedSelection().length > 0 && tagGroups()}>
-        {(groups) => (
-          <div class="tag-panel" id="bulk-tag-panel">
-            {/* El mismo árbol que el detalle: una sola verdad del marcado. */}
-            <TagPicker
-              groups={groups()}
-              selected={draftTags()}
-              disabled={savingTags()}
-              idPrefix="bulk-tags"
-              onToggle={toggleDraftTag}
-            />
-            <div class="tag-actions">
-              {/* Sin etiquetas no hay nada que escribir: «Apply» se apaga. */}
-              <button
-                type="button"
-                class="tag-apply"
-                disabled={draftTags().length === 0 || savingTags()}
-                onClick={() => void applyTags()}
-              >
-                {savingTags() ? 'Applying…' : 'Apply'}
-              </button>
-              <button
-                type="button"
-                class="tag-clear"
-                onClick={() => {
-                  setDraftTags([]);
-                  setTagPanelOpen(false);
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-      </Show>
-
-      {/* Un fallo al escribir no limpia la selección: se dice y se puede reintentar. */}
-      <Show when={tagError()}>
-        <p class="notice notice-error" role="alert">
-          {tagError()}
-        </p>
-      </Show>
-      <Show when={notice()}>
-        <p class="notice" role="status">
-          {notice()}
-        </p>
-      </Show>
+      <div class="sortbar">
+        <span class="lbl">Within each level</span>
+        <span>Staleness — longest untouched first</span>
+        <span class="spacer" />
+        <span class="heat">
+          <i />
+          going cold
+        </span>
+      </div>
 
       <Show
-        when={!loading()}
+        when={!store.loading()}
         fallback={<p class="notice">Loading your repertoire…</p>}
       >
         <Show
-          when={rows().length > 0}
+          when={store.rows().length > 0}
           fallback={
             <div class="empty">
               <p>Your repertoire is empty.</p>
-              <p>Open the catalogue and add the first tune you want to keep track of.</p>
+              <p>Add the first tune you want to keep track of, and give it a level.</p>
             </div>
           }
         >
-          <Show
-            when={effectiveMode() === 'grid'}
-            fallback={
-              <RepertoireTable
-                rows={tableRows()}
-                now={now()}
-                sortKey={sortKey()}
-                sortDirection={sortDirection()}
-                selected={listedSelection()}
-                onToggleRow={toggleRowSelection}
-                onToggleAll={toggleAllListed}
-                onSort={chooseSort}
-                onPractise={practise}
-                onToggleFavorite={toggleFavorite}
-                onStatusChange={changeStatus}
-                learningFull={slots().free === 0}
-              />
-            }
-          >
-            <For each={visibleGroups()}>
-              {(group) => (
-                <BandView
-                  group={group}
-                  now={now()}
-                  scoped={scopedBand() === group.band.status}
-                  onShowOnly={() => showOnly(group.band.status)}
-                  onSeeList={() => seeList(group.band.status)}
-                  onPractise={practise}
-                  slots={group.band.status === 'learning' ? slots() : null}
-                  onMove={changeStatus}
-                  onShiftSlots={shiftLearningSlots}
-                />
-              )}
-            </For>
-          </Show>
+          <For each={groups()}>
+            {(group) => <BandView group={group} now={store.now()} onPractise={store.practise} />}
+          </For>
         </Show>
+      </Show>
+
+      <Show when={addOpen()}>
+        <AddTuneAside
+          existingRefs={ownedRefs()}
+          slots={slots()}
+          onAdded={store.reload}
+          onClose={() => setAddOpen(false)}
+        />
       </Show>
     </div>
   );

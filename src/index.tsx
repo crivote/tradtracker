@@ -5,6 +5,8 @@ import { SessionProvider } from './lib/session';
 import { Layout } from './components/Layout';
 import Login from './routes/Login';
 import Repertoire from './routes/Repertoire';
+import Learning from './routes/Learning';
+import LevelList from './routes/LevelList';
 import Practice from './routes/Practice';
 import Search from './routes/Search';
 import TuneDetail from './routes/TuneDetail';
@@ -29,6 +31,8 @@ render(
       <Router root={Layout}>
         <Route path="/login" component={Login} />
         <Route path="/" component={Repertoire} />
+        <Route path="/learning" component={Learning} />
+        <Route path="/level/:band" component={LevelList} />
         <Route path="/practice" component={Practice} />
         <Route path="/search" component={Search} />
         <Route path="/repertoire/:id" component={TuneDetail} />

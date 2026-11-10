@@ -22,16 +22,31 @@ export const Layout: ParentComponent = (props) => {
     return null;
   };
 
+  /**
+   * Las pantallas de papel —la home, el banco de trabajo, el listado de un
+   * peldaño, el ensayo y la búsqueda— miden su propio marco y ya reservan su
+   * fondo. Se declara una vez: la lista creció con `/learning` y `/level/:band`,
+   * y repetirla en tres sitios es la forma de que una ruta nueva se quede sin
+   * papel sin que nadie lo note.
+   */
+  const isPaper = (): boolean => {
+    const path = location.pathname;
+    return (
+      path === '/' ||
+      path === '/practice' ||
+      path === '/search' ||
+      path === '/learning' ||
+      path.startsWith('/level/')
+    );
+  };
+
   return (
     <div
       class="app-shell min-h-screen bg-gray-900 text-gray-100"
       classList={{
-        // Las tres pantallas de papel miden su propio marco y ya reservan su
-        // fondo: la reserva del dock se ajusta a eso (ver player-dock.css).
-        'is-paper':
-          location.pathname === '/' ||
-          location.pathname === '/practice' ||
-          location.pathname === '/search',
+        // Las pantallas de papel miden su propio fondo y su propio marco: la
+        // reserva del dock se ajusta a eso (ver player-dock.css).
+        'is-paper': isPaper(),
       }}
     >
       <Show when={redirectTo()}>{(target) => <Navigate href={target()} />}</Show>
@@ -47,9 +62,14 @@ export const Layout: ParentComponent = (props) => {
           </div>
 
           <Show when={session.session()}>
-            <div class="flex items-center gap-4 text-sm">
+            {/* Con cinco puertas y el correo, la fila no cabe en una pantalla de
+                780 px: envuelve en vez de empujar el ancho del documento. */}
+            <div class="flex flex-wrap items-center justify-end gap-x-4 gap-y-1 text-sm">
               <A href="/" class="text-gray-300 hover:text-amber-300" end>
                 Repertoire
+              </A>
+              <A href="/learning" class="text-gray-300 hover:text-amber-300">
+                Learning
               </A>
               <A href="/practice" class="text-gray-300 hover:text-amber-300">
                 Practice
@@ -82,27 +102,18 @@ export const Layout: ParentComponent = (props) => {
       </Show>
 
       {/*
-        La home del repertorio (#29) mide su propio marco: el contrato del
-        boceto fija `padding: 52px clamp(18px, 4vw, 58px) 90px` en la pantalla y
-        una carta de 282 px a 1280 px. Si el `main` añadiera sus 24 px de
-        padding, la rejilla se quedaría 20 px corta; por eso esta ruta va a
-        sangre y las demás conservan el contenedor de siempre.
+        Las pantallas de papel miden su propio marco: el contrato del boceto fija
+        `padding: 52px clamp(18px, 4vw, 58px) 90px` en la pantalla y una carta de
+        282 px a 1280 px. Si el `main` añadiera sus 24 px de padding, la rejilla se
+        quedaría 20 px corta; por eso estas rutas van a sangre y las demás
+        conservan el contenedor de siempre.
 
-        La búsqueda (#9) se pinta sobre el mismo papel y con el mismo marco, así
-        que va a sangre igual que la home. La lista de ensayo (#36) es la tercera
-        pantalla de papel y mide su propio marco por la misma razón.
+        Son cinco desde el corte de pantallas: la home del repertorio (#29), la
+        búsqueda (#9), la lista de ensayo (#36), el banco de trabajo (`/learning`,
+        #52) y el listado de un peldaño (`/level/:band`, #42). Las tres últimas
+        comparten el marco de papel y no lo redeclaran.
       */}
-      <main
-        class={
-          location.pathname === '/' ||
-          location.pathname === '/practice' ||
-          location.pathname === '/search'
-            ? ''
-            : 'max-w-7xl mx-auto px-6 py-8'
-        }
-      >
-        {props.children}
-      </main>
+      <main class={isPaper() ? '' : 'max-w-7xl mx-auto px-6 py-8'}>{props.children}</main>
 
       {/*
         Un solo reproductor para toda la app (#49). Vive aquí, en el armazón, y

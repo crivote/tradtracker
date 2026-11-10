@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 /**
- * La home nunca se había ejecutado: #29 la verificó con tests del modelo puro y
- * mediciones en el navegador. El corte de #11 le añade dos reglas que solo se
- * ven montando el componente —las aparcadas fuera de las bandas y el cajón del
- * final— y una que ya existía y conviene no romper, el aislamiento por `?band=`.
+ * Las tres pantallas de papel del repertorio: la home de la biblioteca (`/`), el
+ * listado de un peldaño (`/level/:band`) y el banco de trabajo (`/learning`).
+ *
+ * Antes eran una sola vista con conmutador y un ámbito en `?band=`; el corte de
+ * pantallas las separó, así que este fichero monta las tres rutas y cada
+ * `describe` entra por la suya. Se prueban juntas porque comparten fixtures,
+ * mocks y el cajón del alta —que se abre desde la home y desde el taller—;
+ * separarlas habría triplicado el andamio para no ganar nada.
  *
  * El acceso a Supabase y el catálogo van simulados: lo que se prueba aquí es el
  * cableado de la vista, no el adaptador (ese se ejercita contra la base real).
@@ -46,13 +50,7 @@ vi.mock('../lib/tags-db', async (importOriginal) => {
   };
 });
 
-import {
-  VIEW_MODE_KEY,
-  addCatalogueTune,
-  fetchRepertoire,
-  saveFavorite,
-  saveStatus,
-} from '../lib/repertoire';
+import { addCatalogueTune, fetchRepertoire, saveFavorite, saveStatus } from '../lib/repertoire';
 import { lookupCatalogueMeta, searchCatalogue } from '../lib/catalogue-db';
 import {
   addTuneTags,
@@ -63,6 +61,8 @@ import {
 } from '../lib/tags-db';
 import { readPrefs } from '../lib/practice-storage';
 import Repertoire from './Repertoire';
+import Learning from './Learning';
+import LevelList from './LevelList';
 
 const mockedFetch = vi.mocked(fetchRepertoire);
 const mockedSaveFavorite = vi.mocked(saveFavorite);
@@ -107,6 +107,7 @@ function row(overrides: Record<string, any> = {}) {
     custom_key: null,
     notes: null,
     added_at: '2026-10-01T10:00:00Z',
+    status_changed_at: '2026-10-01T10:00:00Z',
     last_practiced_at: null,
     tune: {
       id: 'tune-a',
@@ -184,21 +185,30 @@ const TABLE_ROWS = [
   }),
 ];
 
-function renderHome(path = '/') {
+/**
+ * Las tres rutas a la vez: el corte de pantallas se apoya en que las puertas de
+ * una lleven a otra (el recuento de aparcadas, «All tunes», «Back to…»), y eso
+ * solo se prueba dejando que el router navegue de verdad.
+ */
+function renderApp(path = '/') {
   const history = createMemoryHistory();
   history.set({ value: path });
   const view = render(() => (
     <MemoryRouter history={history}>
       <Route path="/" component={Repertoire} />
+      <Route path="/learning" component={Learning} />
+      <Route path="/level/:band" component={LevelList} />
     </MemoryRouter>
   ));
   return { history, ...view };
 }
 
-/** La tabla es una preferencia de pestaña: se enciende por el almacén, no a clics. */
-function renderTable() {
-  sessionStorage.setItem(VIEW_MODE_KEY, 'table');
-  return renderHome();
+function renderHome() {
+  return renderApp('/');
+}
+
+function renderLevel(band: string) {
+  return renderApp(`/level/${band}`);
 }
 
 /** Los títulos de las filas, en el orden en que están pintadas. */
@@ -224,6 +234,12 @@ beforeEach(() => {
   mockedSaveFavorite.mockResolvedValue(undefined);
   mockedSaveStatus.mockReset();
   mockedSaveStatus.mockResolvedValue(undefined);
+  mockedAddCatalogueTune.mockReset();
+  mockedAddCatalogueTune.mockResolvedValue('t-new');
+  mockedSearchCatalogue.mockReset();
+  mockedSearchCatalogue.mockResolvedValue([]);
+  mockedLookupMeta.mockReset();
+  mockedLookupMeta.mockResolvedValue(new Map());
   // Etiquetas (#48): el vocabulario llega resuelto y las escrituras no cruzan.
   mockedLoadVocabulary.mockReset();
   mockedLoadVocabulary.mockResolvedValue(VOCABULARY as any);
@@ -235,9 +251,6 @@ beforeEach(() => {
   mockedAddTuneTags.mockResolvedValue(2);
   mockedRemoveTuneTag.mockReset();
   mockedRemoveTuneTag.mockResolvedValue(undefined);
-  // La preferencia de vista vive en `sessionStorage`: sin limpiar, la prueba que
-  // abre la lista dejaría «table» puesto para la siguiente.
-  sessionStorage.clear();
   // El tope del taller vive en `localStorage` (#52): una prueba que lo sube
   // dejaría el valor puesto para la siguiente, que espera el de fábrica.
   localStorage.removeItem('tt-practice-prefs');
@@ -245,15 +258,15 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-describe('home del repertorio con peldaños (#11, #29)', () => {
-  it('la cabecera cuadra: las aparcadas se nombran aparte de las cinco bandas', async () => {
+describe('home: la biblioteca (#29)', () => {
+  it('la cabecera cuadra: bandas, backlog, learning y aparcadas suman el repertorio', async () => {
     renderHome();
 
     await waitFor(() => expect(screen.getByText('Repertoire')).toBeTruthy());
     await waitFor(() => expect(screen.getByText(/1 shelved/)).toBeTruthy());
 
     const sub = document.querySelector('.page-head .sub')!.textContent!.replace(/\s+/g, ' ');
-    // El total es el repertorio entero y las partes lo suman: 3 en bandas + 1 aparcada.
+    // El total es el repertorio entero y las partes lo suman: 3 en rotación + 1 aparcada.
     expect(sub).toContain('4 tunes');
     expect(sub).toContain('1 to learn');
     expect(sub).toContain('1 learning');
@@ -263,7 +276,7 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
     expect(sub).toContain('1 shelved');
   });
 
-  it('la aparcada no pisa su banda y en la home solo queda su recuento', async () => {
+  it('la aparcada no pisa su banda y su recuento es la puerta a su listado', async () => {
     renderHome();
 
     const playingAlong = await waitFor(() => {
@@ -276,23 +289,21 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
     expect(playingAlong.textContent).toContain('Nothing at this level yet.');
     expect(playingAlong.textContent).not.toContain('Sligo Creek');
 
-    // Y no aparece en ninguna otra banda ni en un cajón: en la home no se pinta.
+    // Y no aparece en ninguna otra banda ni en un cajón.
     expect(screen.queryByText('Sligo Creek')).toBeNull();
     expect(document.querySelector('.band--shelved')).toBeNull();
 
-    // El recuento de la cabecera es la puerta: lleva a su listado.
-    fireEvent.click(screen.getByRole('button', { name: /1 shelved/ }));
+    // El recuento de la cabecera es la puerta: abre el listado de aparcadas.
+    fireEvent.click(screen.getByRole('link', { name: /1 shelved/ }));
 
     await waitFor(() => expect(screen.getByText('Sligo Creek')).toBeTruthy());
-    // La lista dice de qué es y deja volver.
-    expect(screen.getByText(/Showing/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Back to all/ })).toBeTruthy();
+    expect(document.querySelector('.table-wrap')).toBeTruthy();
   });
 
   it('todas las cartas de la home son iguales: ni una sola en miniatura', async () => {
     renderHome();
 
-    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Drowsy Maggie')).toBeTruthy());
     const cards = document.querySelectorAll('.repertoire-home .card');
     expect(cards.length).toBeGreaterThan(0);
     for (const card of Array.from(cards)) {
@@ -302,22 +313,23 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
     }
   });
 
-  it('la home pinta las cinco bandas de la escalera y ninguna de backlog (#50)', async () => {
+  it('la home pinta la biblioteca: las cuatro bandas de la escalera, sin learning ni backlog', async () => {
     renderHome();
 
-    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
-    const bands = Array.from(document.querySelectorAll('.repertoire-home .band')).map(
-      (node) => node.getAttribute('data-band')
+    await waitFor(() => expect(screen.getByText('Drowsy Maggie')).toBeTruthy());
+    const bands = Array.from(document.querySelectorAll('.repertoire-home .band')).map((node) =>
+      node.getAttribute('data-band')
     );
-    expect(bands).toEqual(['learning', 'shaky', 'playing_along', 'solo_ready', 'mastered']);
-    // El backlog no es una banda: su pieza no se pinta en la home.
+    // `learning` tiene pantalla propia (#52 + corte de pantallas): no es una banda
+    // más de la biblioteca, y el backlog nunca lo fue (#50).
+    expect(bands).toEqual(['shaky', 'playing_along', 'solo_ready', 'mastered']);
+    expect(document.querySelector('[data-band="learning"]')).toBeNull();
     expect(document.querySelector('[data-band="to_learn"]')).toBeNull();
     expect(screen.queryByText('Morning Dew')).toBeNull();
   });
 
   it('el tope son tres filas: 12 cartas por banda, y el resto va al listado (#46)', async () => {
     // 14 en el mismo peldaño con la rejilla de cuatro columnas: caben 12 (3 × 4).
-    // Se prueban sobre `solo_ready`: el taller (`learning`) ya no es una rejilla (#52).
     const bulk = Array.from({ length: 14 }, (_, index) =>
       row({
         id: `bulk-${index}`,
@@ -358,39 +370,31 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
       const painted = bulk.filter((_, index) => screen.queryByText(`Bulk Tune ${index}`) !== null);
       expect(painted.length).toBe(12);
       // Y la banda avisa de que hay más, con la puerta a la lista completa.
-      expect(screen.getByRole('button', { name: /See all 14 as list/ })).toBeTruthy();
+      expect(screen.getByRole('link', { name: /All 14 as list/ })).toBeTruthy();
     } finally {
       computed.mockRestore();
     }
   });
 
-  it('el título de la banda la aísla en la rejilla y ofrece su listado', async () => {
+  it('el nombre de la banda abre su listado, y «All N as list» lleva al mismo sitio', async () => {
     renderHome();
 
-    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Drowsy Maggie')).toBeTruthy());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show only Solo-ready' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Solo-ready' }));
 
-    await waitFor(() => expect(screen.queryByText('Cooley’s Reel')).toBeNull());
-    expect(screen.getByText('Drowsy Maggie')).toBeTruthy();
-    // La barra dice qué se está viendo, con la vuelta disponible.
-    expect(screen.getByText(/Showing/)).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Back to all/ })).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('.table-wrap')).toBeTruthy());
+    expect(rowTitles()).toEqual(['Drowsy Maggie']);
 
-    // El listado completo de un peldaño es una lista: la puerta está en la banda.
-    fireEvent.click(screen.getByRole('button', { name: /See all 1 as list/ }));
-
-    await waitFor(() => {
-      expect(document.querySelector('.repertoire-home table')).toBeTruthy();
-    });
-    expect(screen.getByText('Drowsy Maggie')).toBeTruthy();
-    expect(screen.queryByText('Morning Dew')).toBeNull();
+    // Las otras bandas no vienen: el ámbito es el de la URL, no el de la home.
+    expect(screen.queryByText('Cooley’s Reel')).toBeNull();
+    expect(document.querySelector('.level-list h1')!.textContent).toBe('Solo-ready');
   });
 
-  it('la carta de la home no enseña el peldaño: eso es de la búsqueda (#9)', async () => {
+  it('la carta de la home no enseña el peldaño y la búsqueda es una puerta (#9)', async () => {
     renderHome();
 
-    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Drowsy Maggie')).toBeTruthy());
 
     const metas = Array.from(
       document.querySelectorAll<HTMLElement>('.repertoire-home .card .tune-meta')
@@ -400,17 +404,136 @@ describe('home del repertorio con peldaños (#11, #29)', () => {
       expect(meta.textContent).not.toMatch(/To learn|Learning|Playing along|Solo-ready|Shelved/);
     }
 
-    // Y la home ya no tiene campo de búsqueda: su hueco es la puerta a /search.
+    // La home no tiene campo de búsqueda: su hueco es la puerta a /search.
     expect(screen.queryByRole('searchbox')).toBeNull();
-    expect(screen.getByRole('button', { name: /Search tunes/ })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Search tunes/ })).toBeTruthy();
   });
 });
 
 /**
- * La tabla del listado (#42, boceto 014-b). Estas pruebas montan la vista en
- * modo tabla y miran el DOM: el orden de las filas, las cabeceras ordenables, el
- * subtexto de los invariantes, el icono del peldaño, el menú de dos niveles, el
- * corazón y la ausencia de «Remove».
+ * El cajón del alta: la pantalla no se mueve y el peldaño de lo que se añade se
+ * elige antes de añadirlo. Es lo que el corte viene a arreglar, así que se
+ * prueba el camino entero —abrir, elegir nivel, buscar, añadir— y no la pieza.
+ */
+describe('cajón del alta (Add a tune)', () => {
+  it('se abre al margen sin mover la pantalla y el nivel elegido viaja al alta', async () => {
+    mockedSearchCatalogue.mockResolvedValue([
+      { tuneId: 1234, name: 'Christmas Eve', type: 'reel', meter: null, popularity: 3, aliases: null },
+    ]);
+    mockedLookupMeta.mockResolvedValue(new Map([[1234, { meter: '4/4', composer: 'Tommy Coen' }]]));
+
+    renderHome();
+    await waitFor(() => expect(screen.getByText('Drowsy Maggie')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a tune' }));
+
+    const drawer = await screen.findByRole('dialog', { name: 'Add tunes' });
+    // El cajón convive con la pantalla: las bandas siguen montadas detrás.
+    expect(document.querySelectorAll('.repertoire-home .band').length).toBe(4);
+
+    // El peldaño se elige aquí, con su definición escrita al lado.
+    const levelPick = within(drawer).getByLabelText('Add as') as HTMLSelectElement;
+    expect(levelPick.value).toBe('to_learn');
+    fireEvent.change(levelPick, { target: { value: 'learning' } });
+    expect(drawer.textContent).toContain('Know the parts, but can’t get through it end to end.');
+
+    fireEvent.input(within(drawer).getByLabelText('Search the tune catalogue'), {
+      target: { value: 'christmas' },
+    });
+    fireEvent.click(await within(drawer).findByRole('button', { name: 'Add' }));
+
+    await waitFor(() => expect(mockedAddCatalogueTune).toHaveBeenCalled());
+    // El peldaño va como segundo argumento: el alta ya no nace siempre en el backlog.
+    expect(mockedAddCatalogueTune).toHaveBeenCalledWith(
+      {
+        tuneId: 1234,
+        name: 'Christmas Eve',
+        rhythm: 'reel',
+        meter: null,
+        composer: 'Tommy Coen',
+      },
+      'learning'
+    );
+
+    // Y se dice dónde ha caído, con la puerta a esa pantalla.
+    await waitFor(() => expect(within(drawer).getByText(/added as Learning/)).toBeTruthy());
+    expect(within(drawer).getByRole('link', { name: /See learning/ }).getAttribute('href')).toBe(
+      '/learning'
+    );
+  });
+
+  it('sin tocar el nivel, el alta sigue cayendo en el backlog', async () => {
+    mockedSearchCatalogue.mockResolvedValue([
+      { tuneId: 7, name: 'The Butterfly', type: 'jig', meter: '6/8', popularity: 9, aliases: null },
+    ]);
+
+    renderHome();
+    await waitFor(() => expect(screen.getByText('Drowsy Maggie')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Add a tune' }));
+
+    const drawer = await screen.findByRole('dialog', { name: 'Add tunes' });
+    fireEvent.input(within(drawer).getByLabelText('Search the tune catalogue'), {
+      target: { value: 'butterfly' },
+    });
+    fireEvent.click(await within(drawer).findByRole('button', { name: 'Add' }));
+
+    await waitFor(() =>
+      expect(mockedAddCatalogueTune).toHaveBeenCalledWith(
+        expect.objectContaining({ tuneId: 7 }),
+        'to_learn'
+      )
+    );
+  });
+
+  it('al elegir learning avisa del tope del banco de trabajo, sin bloquear', async () => {
+    const bench = Array.from({ length: 8 }, (_, index) =>
+      row({
+        id: `wb-${index}`,
+        status: 'learning',
+        tune: { ...row().tune, id: `t-wb-${index}`, name: `Bench Tune ${index}` },
+      })
+    );
+    mockedFetch.mockResolvedValue(bench as any);
+
+    renderHome();
+    // La home no pinta `learning` (#52 + corte de pantallas): la señal de que las
+    // ocho filas están cargadas es su recuento en la cabecera.
+    await waitFor(() => expect(screen.getByText('8 learning')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Add a tune' }));
+
+    const drawer = await screen.findByRole('dialog', { name: 'Add tunes' });
+    fireEvent.change(within(drawer).getByLabelText('Add as'), { target: { value: 'learning' } });
+
+    await waitFor(() => expect(drawer.textContent).toContain('8 of 6 slots'));
+    expect(drawer.textContent).toContain('over by 2');
+  });
+
+  it('Escape y el botón de cerrar lo cierran', async () => {
+    renderHome();
+    await waitFor(() => expect(screen.getByText('Drowsy Maggie')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a tune' }));
+    await screen.findByRole('dialog', { name: 'Add tunes' });
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a tune' }));
+    const drawer2 = await screen.findByRole('dialog', { name: 'Add tunes' });
+
+    // El cajón lleva su ✕ en la cabecera y el panel del import su «Close» al
+    // pie: se pulsa el de la cabecera, que es el de la superficie.
+    const head = drawer2.querySelector('.drawer-head') as HTMLElement;
+    fireEvent.click(within(head).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+});
+
+/**
+ * La tabla del listado (#42, boceto 014-b) en su pantalla propia. Estas pruebas
+ * miran el DOM: el orden de las filas, las cabeceras ordenables, el subtexto de
+ * los invariantes, el icono del peldaño, el menú de dos niveles, el corazón y la
+ * ausencia de «Remove».
  */
 describe('tabla del listado (#42)', () => {
   beforeEach(() => {
@@ -422,16 +545,12 @@ describe('tabla del listado (#42)', () => {
   }
 
   it('ordena por urgencia por defecto: la nunca ensayada primero y después la más abandonada', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     // «Drowsy Maggie» no se ha ensayado nunca; de las otras dos, la de
     // diciembre lleva más tiempo sin tocarse que la de octubre.
-    expect(rowTitles()).toEqual([
-      'Drowsy Maggie',
-      'Cooley’s Reel',
-      'The Cameron Highlanders',
-    ]);
+    expect(rowTitles()).toEqual(['Drowsy Maggie', 'Cooley’s Reel', 'The Cameron Highlanders']);
 
     // Y la cabecera de Last played es la que lo dice, con la flecha puesta.
     const sorted = document.querySelector('.table-wrap th[aria-sort]')!;
@@ -440,17 +559,13 @@ describe('tabla del listado (#42)', () => {
   });
 
   it('la cabecera Practices ordena por ensayos de más a menos y deja el th con aria-sort y su flecha', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     fireEvent.click(screen.getByRole('button', { name: 'Practices' }));
 
     await waitFor(() =>
-      expect(rowTitles()).toEqual([
-        'The Cameron Highlanders',
-        'Cooley’s Reel',
-        'Drowsy Maggie',
-      ])
+      expect(rowTitles()).toEqual(['The Cameron Highlanders', 'Cooley’s Reel', 'Drowsy Maggie'])
     );
 
     const th = document.querySelector('.table-wrap th[aria-sort]')!;
@@ -462,7 +577,7 @@ describe('tabla del listado (#42)', () => {
   });
 
   it('el segundo clic invierte la columna y el clic en Tune ordena alfabético ascendente', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     fireEvent.click(screen.getByRole('button', { name: 'Practices' }));
@@ -470,11 +585,7 @@ describe('tabla del listado (#42)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Practices' }));
 
     await waitFor(() =>
-      expect(rowTitles()).toEqual([
-        'Drowsy Maggie',
-        'Cooley’s Reel',
-        'The Cameron Highlanders',
-      ])
+      expect(rowTitles()).toEqual(['Drowsy Maggie', 'Cooley’s Reel', 'The Cameron Highlanders'])
     );
     const inverted = document.querySelector('.table-wrap th[aria-sort]')!;
     expect(inverted.textContent).toContain('Practices');
@@ -486,11 +597,7 @@ describe('tabla del listado (#42)', () => {
     // Alfabético ascendente: «Cooley» va antes que «Drowsy», que es justo lo
     // que el orden por ensayos ascendente NO daba.
     await waitFor(() =>
-      expect(rowTitles()).toEqual([
-        'Cooley’s Reel',
-        'Drowsy Maggie',
-        'The Cameron Highlanders',
-      ])
+      expect(rowTitles()).toEqual(['Cooley’s Reel', 'Drowsy Maggie', 'The Cameron Highlanders'])
     );
     const byTitle = document.querySelector('.table-wrap th[aria-sort]')!;
     expect(byTitle.textContent).toContain('Tune');
@@ -498,7 +605,7 @@ describe('tabla del listado (#42)', () => {
   });
 
   it('bajo el título van los invariantes, con el autor cuando lo hay y sin él cuando falta', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     const invariants = (title: string) =>
@@ -521,7 +628,7 @@ describe('tabla del listado (#42)', () => {
   });
 
   it('el peldaño se pinta como cinco barras con su aria-label', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     const icon = rowOf('Cooley’s Reel').querySelector('.rung')!;
@@ -539,7 +646,7 @@ describe('tabla del listado (#42)', () => {
   });
 
   it('el menú abre el submenú del peldaño; elegir guarda y mueve icono, title y aria-label a la vez', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     const row = rowOf('The Cameron Highlanders');
@@ -548,7 +655,7 @@ describe('tabla del listado (#42)', () => {
     );
 
     // Segundo nivel: el menú principal dice el peldaño actual y el submenú trae
-    // las cinco opciones, con la actual marcada.
+    // las seis opciones —backlog y cinco peldaños—, con la actual marcada.
     fireEvent.click(within(row).getByRole('button', { name: /^Level/ }));
 
     const options = within(row).getAllByRole('menuitemradio');
@@ -564,9 +671,7 @@ describe('tabla del listado (#42)', () => {
 
     fireEvent.click(within(row).getByRole('menuitemradio', { name: /^Solo-ready/ }));
 
-    await waitFor(() =>
-      expect(mockedSaveStatus).toHaveBeenCalledWith('row-cameron', 'solo_ready')
-    );
+    await waitFor(() => expect(mockedSaveStatus).toHaveBeenCalledWith('row-cameron', 'solo_ready'));
 
     // El icono cambia de barras y su nombre accesible con él: tocar solo el
     // `title` dejaría el nombre viejo (trampa medida del boceto).
@@ -578,7 +683,7 @@ describe('tabla del listado (#42)', () => {
   });
 
   it('un solo menú abierto a la vez, y Escape cierra antes el submenú que el menú', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     const cameron = rowOf('The Cameron Highlanders');
@@ -607,7 +712,7 @@ describe('tabla del listado (#42)', () => {
   });
 
   it('el corazón guarda el valor contrario y alterna aria-pressed', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     const heart = within(rowOf('Drowsy Maggie')).getByRole('button', {
@@ -628,7 +733,7 @@ describe('tabla del listado (#42)', () => {
   });
 
   it('no hay ningún «Remove» en la tabla: el borrado vive en la ficha (#45)', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     const table = document.querySelector('.table-wrap')!;
@@ -637,70 +742,44 @@ describe('tabla del listado (#42)', () => {
     expect(screen.queryByRole('button', { name: /Remove/ })).toBeNull();
   });
 
-  it('«Back to all» desde el cajón vuelve a la home, no a la lista completa', async () => {
+  it('desde el cajón de aparcadas se vuelve al repertorio, no a la lista entera', async () => {
     // El cajón tiene su propia fila: las de la tabla no están aparcadas.
     mockedFetch.mockResolvedValue(ROWS as any);
-    sessionStorage.setItem(VIEW_MODE_KEY, 'table');
-    const { history } = renderHome('/?band=shelved');
+    renderLevel('shelved');
 
     await waitFor(() => expect(screen.getByText('Sligo Creek')).toBeTruthy());
 
-    fireEvent.click(screen.getByRole('button', { name: /Back to all/ }));
+    fireEvent.click(screen.getByRole('link', { name: 'Repertoire' }));
 
-    await waitFor(() => expect(history.get()).toBe('/'));
     // Y lo que se ve es la home —las bandas—, no la lista de todo el repertorio.
     await waitFor(() => expect(document.querySelector('.band')).toBeTruthy());
     expect(document.querySelector('.repertoire-home table')).toBeNull();
   });
 
   it('el backlog tiene puerta propia y su listado trae «Start learning» (#50)', async () => {
+    mockedFetch.mockResolvedValue(ROWS as any);
     renderHome();
-    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Drowsy Maggie')).toBeTruthy());
 
     // La cabecera lo nombra y es la puerta: la home no tiene banda de backlog.
-    // En la tabla del listado, la pieza del backlog es Drowsy Maggie.
-    fireEvent.click(screen.getByRole('button', { name: /1 to learn/ }));
+    fireEvent.click(screen.getByRole('link', { name: /1 to learn/ }));
     await waitFor(() => expect(document.querySelector('.repertoire-home table')).toBeTruthy());
-    expect(screen.getByText('Drowsy Maggie')).toBeTruthy();
-    expect(document.body.textContent).toContain('Backlog');
+    expect(document.querySelector('.level-list h1')!.textContent).toBe('To learn');
+    expect(screen.getByText('Morning Dew')).toBeTruthy();
 
     // La acción que saca la pieza del backlog guarda el salto a `learning`.
-    fireEvent.click(screen.getByRole('button', { name: 'Actions for Drowsy Maggie' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Morning Dew' }));
     fireEvent.click(screen.getByRole('menuitem', { name: /Start learning/ }));
 
-    await waitFor(() => expect(mockedSaveStatus).toHaveBeenCalledWith('row-drowsy', 'learning'));
+    await waitFor(() => expect(mockedSaveStatus).toHaveBeenCalledWith('row-learn', 'learning'));
   });
 
-  /**
-   * El hueco que dejó #44: el buscador del catálogo no devuelve el autor, así
-   * que el alta tiene que recogerlo del catálogo antes de crear el tune, o cada
-   * fila nueva nace sin autor y el subtexto que esta tabla estrena queda cojo.
-   */
-  it('el alta desde la búsqueda arrastra el autor hasta ensureTune', async () => {
-    mockedFetch.mockResolvedValue(ROWS as any);
-    mockedSearchCatalogue.mockResolvedValue([
-      { tuneId: 1234, name: 'Christmas Eve', type: 'reel', meter: null, popularity: 3, aliases: null },
-    ]);
-    mockedLookupMeta.mockResolvedValue(new Map([[1234, { meter: '4/4', composer: 'Tommy Coen' }]]));
+  it('el peldaño `learning` no tiene listado: su URL redirige al banco de trabajo', async () => {
+    renderLevel('learning');
 
-    renderHome();
-    await waitFor(() => expect(screen.getByText('Cooley’s Reel')).toBeTruthy());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Add a tune' }));
-    fireEvent.input(screen.getByLabelText('Search the tune catalogue'), {
-      target: { value: 'christmas' },
-    });
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Add' }));
-
-    await waitFor(() => expect(mockedAddCatalogueTune).toHaveBeenCalled());
-    expect(mockedAddCatalogueTune).toHaveBeenCalledWith({
-      tuneId: 1234,
-      name: 'Christmas Eve',
-      rhythm: 'reel',
-      meter: null,
-      composer: 'Tommy Coen',
-    });
+    await waitFor(() => expect(document.querySelector('.learning')).toBeTruthy());
+    expect(document.querySelector('.table-wrap')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Learning', level: 1 })).toBeTruthy();
   });
 });
 
@@ -720,7 +799,7 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
   }
 
   it('marca dos filas y aplica una etiqueta en UNA llamada, con los ids de tune', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
@@ -729,11 +808,7 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
     expect(screen.getByText('2 selected')).toBeTruthy();
     // Marcar no reordena ni recarga: la tabla sigue en el orden de urgencia y
     // `fetchRepertoire` se pidió una sola vez al montar.
-    expect(rowTitles()).toEqual([
-      'Drowsy Maggie',
-      'Cooley’s Reel',
-      'The Cameron Highlanders',
-    ]);
+    expect(rowTitles()).toEqual(['Drowsy Maggie', 'Cooley’s Reel', 'The Cameron Highlanders']);
     expect(mockedFetch).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Tag selection' }));
@@ -757,7 +832,7 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
   });
 
   it('«Apply» sin etiquetas está deshabilitado y no escribe; «Cancel» cierra sin escribir', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
@@ -779,7 +854,7 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
   });
 
   it('«Clear» vacía la selección y la barra desaparece', async () => {
-    renderTable();
+    renderLevel('all');
     await ready();
 
     fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
@@ -796,18 +871,15 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
   });
 
   it('«select all» marca solo lo listado: el ámbito de un peldaño, no el repertorio entero', async () => {
-    sessionStorage.setItem(VIEW_MODE_KEY, 'table');
-    renderHome('/?band=learning');
+    renderLevel('to_learn');
 
     // El peldaño deja una sola fila pintada de las tres del repertorio.
-    await waitFor(() => expect(rowTitles()).toEqual(['The Cameron Highlanders']));
+    await waitFor(() => expect(rowTitles()).toEqual(['Drowsy Maggie']));
 
     fireEvent.click(screen.getByLabelText('Select all listed tunes'));
 
     expect(screen.getByText('1 selected')).toBeTruthy();
-    expect((screen.getByLabelText('The Cameron Highlanders') as HTMLInputElement).checked).toBe(
-      true
-    );
+    expect((screen.getByLabelText('Drowsy Maggie') as HTMLInputElement).checked).toBe(true);
     expect(document.querySelectorAll('.table-wrap tbody .pick input:checked').length).toBe(1);
 
     // Y lo marcado es lo que viaja: solo esa tune, con su id de tune.
@@ -815,23 +887,23 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
     fireEvent.click(await screen.findByLabelText('Donegal'));
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
-    await waitFor(() =>
-      expect(mockedAddTuneTags).toHaveBeenCalledWith(['t-cameron'], [3])
-    );
+    await waitFor(() => expect(mockedAddTuneTags).toHaveBeenCalledWith(['t-drowsy'], [3]));
     await waitFor(() => expect(screen.getByText('1 tune tagged')).toBeTruthy());
+  });
 
-    // Sin ámbito, el «select all» marca las tres listadas y el recuento cuadra.
-    fireEvent.click(screen.getByRole('button', { name: /Back to all/ }));
-    await waitFor(() => expect(rowTitles().length).toBe(TABLE_ROWS.length));
+  it('sin ámbito, el «select all» marca las tres listadas y el recuento cuadra', async () => {
+    renderLevel('all');
+    await ready();
 
     fireEvent.click(screen.getByLabelText('Select all listed tunes'));
+
     expect(screen.getByText('3 selected')).toBeTruthy();
     expect(document.querySelectorAll('.table-wrap tbody .pick input:checked').length).toBe(3);
   });
 
   it('si la escritura falla, el error va en role="alert" y la selección sigue en pie', async () => {
     mockedAddTuneTags.mockRejectedValue(new Error('Could not add the tags: boom'));
-    renderTable();
+    renderLevel('all');
     await ready();
 
     fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
@@ -854,38 +926,38 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
   });
 
   /**
-   * La selección se acota a lo que está listado. Sin esa poda, marcar una fila y
-   * cambiar de ámbito dejaría «1 selected» sobre una tune que ya no se ve —y el
-   * Apply la etiquetaría igual—: un recuento que no cuadra con la pantalla.
+   * La selección se acota a lo que está listado. El caso vivo ya no es cambiar
+   * de ámbito —cada ámbito es una pantalla y una navegación—, sino mover una
+   * fila marcada fuera del peldaño que se está mirando: la fila deja de estar
+   * listada y el «N selected» no puede seguir contándola ni el Apply llevarla.
    */
-  it('una fila marcada que deja de estar listada no cuenta ni viaja al Apply', async () => {
-    renderTable();
-    await ready();
+  it('una fila marcada que deja el peldaño no cuenta ni viaja al Apply', async () => {
+    renderLevel('to_learn');
+    await waitFor(() => expect(rowTitles()).toEqual(['Drowsy Maggie']));
 
-    // Cooley's es `solo_ready`: se marca en la tabla sin ámbito.
-    fireEvent.click(screen.getByLabelText('Cooley’s Reel'));
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
     expect(screen.getByText('1 selected')).toBeTruthy();
 
-    // Se pasa a rejilla para poder aislar un peldaño, y se aísla Learning, donde
-    // Cooley's no está. Al volver a la tabla, la fila marcada ya no se lista.
-    fireEvent.click(screen.getByRole('button', { name: 'Cards' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Show only Learning' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Table' }));
+    // Se mueve de peldaño desde el menú: sale de «To learn» y de la tabla. Se
+    // acota a la fila porque «Level» también es una cabecera ordenable.
+    const drowsy = rowOf('Drowsy Maggie');
+    fireEvent.click(within(drowsy).getByRole('button', { name: 'Actions for Drowsy Maggie' }));
+    fireEvent.click(within(drowsy).getByRole('button', { name: /^Level/ }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /^Solo-ready/ }));
 
-    await waitFor(() => expect(screen.queryByText('Cooley’s Reel')).toBeNull());
+    await waitFor(() => expect(mockedSaveStatus).toHaveBeenCalledWith('row-drowsy', 'solo_ready'));
+    await waitFor(() => expect(screen.queryByText('Drowsy Maggie')).toBeNull());
     expect(screen.queryByText('1 selected')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Tag selection' })).toBeNull();
-    // Y la fila del ámbito sí está, para no confundir «vacío» con «acotado».
-    expect(screen.getByText('The Cameron Highlanders')).toBeTruthy();
   });
 });
 
 /**
- * Banco de trabajo (#52): `learning` deja de ser una banda de biblioteca.
- *
- * Aquí se prueba lo que solo se ve montando la pantalla —la lista en vez de
- * cartas, el orden por dwell, el tope en la cabecera y su efecto en la puerta del
- * backlog—; la aritmética vive en `repertoire-model.test.ts`.
+ * Banco de trabajo (#52): `learning` deja de ser una banda de biblioteca y pasa
+ * a tener pantalla propia. Aquí se prueba lo que solo se ve montando la
+ * pantalla —la lista en vez de cartas, el orden por dwell, el tope en la
+ * cabecera, su efecto en la puerta del backlog y el disparador de cada fila—; la
+ * aritmética vive en `repertoire-model.test.ts`.
  */
 describe('banco de trabajo (#52)', () => {
   const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
@@ -900,7 +972,7 @@ describe('banco de trabajo (#52)', () => {
     });
   }
 
-  it('learning se pinta como lista de trabajo, con el dwell delante y sin cartas', async () => {
+  it('se pinta como lista de trabajo, con el dwell delante y sin cartas', async () => {
     mockedFetch.mockResolvedValue([
       learningRow('wb-new', 'Brand New Tune', 2, 0),
       learningRow('wb-stuck', 'Stuck Tune', 40, 3),
@@ -911,46 +983,70 @@ describe('banco de trabajo (#52)', () => {
       }),
     ] as any);
 
-    renderHome('/?band=learning');
+    renderApp('/learning');
     await waitFor(() => expect(screen.getByText('Stuck Tune')).toBeTruthy());
 
-    const band = document.querySelector('[data-band="learning"]') as HTMLElement;
     // Ni una carta: en el taller la foto no sirve, la tune no se toca en sesión.
-    expect(band.querySelectorAll('.card').length).toBe(0);
+    expect(document.querySelectorAll('.learning .card').length).toBe(0);
     // El orden es el dwell, no el abandono: la más atascada primero.
-    const titles = Array.from(band.querySelectorAll('.wb-title a')).map((node) => node.textContent);
+    const titles = Array.from(document.querySelectorAll('.learning .wb-title a')).map(
+      (node) => node.textContent
+    );
     expect(titles).toEqual(['Stuck Tune', 'Brand New Tune']);
     // Y la fila dice lo que sirve para decidir.
-    const stuck = band.querySelectorAll('.workbench li')[0] as HTMLElement;
+    const stuck = document.querySelectorAll('.learning .workbench li')[0] as HTMLElement;
     expect(stuck.textContent).toContain('40 days');
     expect(stuck.textContent).toContain('3');
     expect(stuck.textContent).toContain('practices');
+    // Las otras bandas no se pintan aquí: la pantalla es una sola pregunta.
+    expect(document.querySelector('[data-band]')).toBeNull();
   });
 
-  it('la cabecera del taller dice cuánto ocupa del tope y cuánto sobra', async () => {
+  it('cada fila lleva su disparador de reproducción (#49)', async () => {
+    mockedFetch.mockResolvedValue([
+      learningRow('wb-new', 'Brand New Tune', 2, 0),
+      learningRow('wb-stuck', 'Stuck Tune', 40, 3),
+    ] as any);
+
+    renderApp('/learning');
+    await waitFor(() => expect(screen.getByText('Stuck Tune')).toBeTruthy());
+
+    const rows = Array.from(document.querySelectorAll('.learning .workbench li'));
+    expect(rows.length).toBe(2);
+    for (const item of rows) {
+      const play = within(item as HTMLElement).getByRole('button', { name: /^Play / });
+      expect(play.getAttribute('aria-pressed')).toBe('false');
+      // Va antes del título: el ojo entra por él.
+      expect(play.compareDocumentPosition(item.querySelector('.wb-title a')!)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    }
+    expect(screen.getByRole('button', { name: 'Play Stuck Tune' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Play Brand New Tune' })).toBeTruthy();
+  });
+
+  it('la cabecera dice cuánto ocupa del tope y cuánto sobra', async () => {
     const bulk = Array.from({ length: 8 }, (_, index) =>
       learningRow(`wb-${index}`, `Bench Tune ${index}`, index, 0)
     );
     mockedFetch.mockResolvedValue(bulk as any);
 
-    renderHome();
-    const band = await waitFor(() => {
-      const node = document.querySelector('[data-band="learning"]') as HTMLElement | null;
-      expect(node).toBeTruthy();
-      return node as HTMLElement;
-    });
+    renderApp('/learning');
+    await waitFor(() => expect(screen.getByText('Bench Tune 0')).toBeTruthy());
+
+    const head = document.querySelector('.page-head') as HTMLElement;
     // Seis por defecto: ocho en el taller son dos de más.
-    await waitFor(() => expect(band.textContent).toContain('8 of 6 slots'));
-    expect(band.textContent).toContain('over by 2');
+    await waitFor(() => expect(head.textContent).toContain('8 of 6 slots'));
+    expect(head.textContent).toContain('over by 2');
   });
 
-  it('el tope se ajusta en la propia banda y queda guardado', async () => {
+  it('el tope se ajusta en la propia pantalla y queda guardado', async () => {
     mockedFetch.mockResolvedValue([
       learningRow('wb-a', 'Bench Tune A', 3, 1),
       learningRow('wb-b', 'Bench Tune B', 9, 0),
     ] as any);
 
-    renderHome();
+    renderApp('/learning');
     await waitFor(() => expect(screen.getByText('Bench Tune A')).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: 'More learning slots' }));
@@ -972,11 +1068,11 @@ describe('banco de trabajo (#52)', () => {
     ];
     mockedFetch.mockResolvedValue(bulk as any);
 
-    renderHome();
+    renderApp('/learning');
     await waitFor(() => expect(screen.getByText('Bench Tune 0')).toBeTruthy());
 
-    // La puerta del backlog está en la cabecera; su listado trae el menú.
-    fireEvent.click(screen.getByRole('button', { name: /1 to learn/ }));
+    // La puerta del backlog está en la cabecera del taller; su listado trae el menú.
+    fireEvent.click(screen.getByRole('link', { name: /1 to learn/ }));
     await waitFor(() => expect(document.querySelector('.repertoire-home table')).toBeTruthy());
 
     fireEvent.click(screen.getByRole('button', { name: 'Actions for Morning Dew' }));

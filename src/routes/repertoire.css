@@ -72,6 +72,27 @@
   color: var(--ink);
   font-weight: 600;
 }
+/* Separador de las líneas de cabecera: un punto medio que no se lee como texto
+   de la frase. Y la segunda línea de puertas del listado, más pequeña. */
+.repertoire-home .sub .sub-sep {
+  color: var(--faint);
+  padding: 0 2px;
+}
+.repertoire-home .sub--doors {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.repertoire-home .sub--doors a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.repertoire-home .sub--doors a:hover,
+.repertoire-home .sub--doors a:focus-visible {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
 .repertoire-home .head-tools {
   display: flex;
   align-items: flex-end;
@@ -142,6 +163,9 @@
  * el mismo subrayado de la herramienta que sustituye.
  */
 .repertoire-home .search--door {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font: inherit;
   font-size: 13px;
   color: var(--muted);
@@ -151,6 +175,7 @@
   cursor: pointer;
   padding: 6px 0 5px;
   text-align: left;
+  text-decoration: none;
 }
 .repertoire-home .search--door:hover {
   color: var(--accent);
@@ -459,6 +484,18 @@
   letter-spacing: -0.01em;
   color: var(--ink);
   margin: 0;
+}
+/* El nombre de la banda es la puerta a su listado (`/level/:band`): se hereda
+   el aspecto del `h2` y se subraya solo al pasar, como las demás puertas. */
+.repertoire-home .band-head h2 a.band-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.repertoire-home .band-head h2 a.band-link:hover,
+.repertoire-home .band-head h2 a.band-link:focus-visible {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 .repertoire-home .band-head .def {
   font-family: var(--display);
@@ -899,8 +936,9 @@
   border-radius: 2px;
 }
 
-/* ── tope de dos filas y la puerta al listado ─────────────────── */
+/* ── tope de tres filas y la puerta al listado ─────────────────── */
 .repertoire-home .more {
+  display: inline-block;
   margin-top: 14px;
   font: inherit;
   font-size: 12.5px;
@@ -910,6 +948,7 @@
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 6px 14px;
+  text-decoration: none;
 }
 .repertoire-home .more:hover {
   border-color: var(--accent);
@@ -957,24 +996,103 @@
   color: var(--muted);
 }
 
-/* ── panel del catálogo: papel, no la paleta oscura del resto ─── */
-.repertoire-home .catalogue {
-  max-width: 1260px;
-  margin: 0 auto 22px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.45);
-  padding: 16px;
+/* ── cajón del alta (Add a tune): papel sobre velo, a la derecha ──
+   El alta dejó de ser un panel en línea: empujaba la escalera hacia abajo y
+   competía con la pantalla que se estaba mirando, y añadir una tune es una
+   gestión, no el contenido del repertorio. Se pinta dentro del ámbito de papel
+   de la pantalla que lo abre —`.repertoire-home`—, así que hereda sus variables
+   y no la paleta oscura del detalle. */
+.repertoire-home .drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
 }
-.repertoire-home .catalogue label {
+.repertoire-home .drawer-veil {
+  position: absolute;
+  inset: 0;
+  background: rgba(36, 31, 24, 0.36);
+}
+.repertoire-home .drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border-left: 1px solid var(--line);
+  box-shadow: -18px 0 44px rgba(36, 31, 24, 0.18);
+  color: var(--ink);
+  animation: tt-drawer-in 0.18s ease-out;
+}
+@keyframes tt-drawer-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .repertoire-home .drawer {
+    animation: none;
+  }
+}
+.repertoire-home .drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 13px;
+  border-bottom: 1px solid var(--line);
+}
+.repertoire-home .drawer-head h2 {
+  font-family: var(--display);
+  font-weight: 300;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.repertoire-home .drawer-close {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.repertoire-home .drawer-close:hover,
+.repertoire-home .drawer-close:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.repertoire-home .drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 28px;
+}
+.repertoire-home .drawer-body label {
   display: block;
   font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--faint);
-  margin-bottom: 6px;
+  margin: 14px 0 6px;
 }
-.repertoire-home .catalogue input[type="search"] {
+.repertoire-home .drawer-body > label:first-child {
+  margin-top: 0;
+}
+.repertoire-home .drawer-body select,
+.repertoire-home .drawer-body input[type="search"] {
   width: 100%;
   font: inherit;
   font-size: 13.5px;
@@ -985,36 +1103,58 @@
   padding: 8px 10px;
   outline: none;
 }
-.repertoire-home .catalogue input[type="search"]:focus {
+.repertoire-home .drawer-body select:focus,
+.repertoire-home .drawer-body input[type="search"]:focus {
   border-color: var(--accent);
 }
-.repertoire-home .catalogue .hint {
+.repertoire-home .drawer .rung-def {
+  margin: 6px 0 0;
+  font-family: var(--display);
+  font-style: italic;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.repertoire-home .drawer .hint {
   margin-top: 6px;
   font-size: 11.5px;
   color: var(--faint);
 }
-.repertoire-home .catalogue ul {
+/* El único aviso que se pinta en rojo: añadir a un banco de trabajo ya lleno. */
+.repertoire-home .drawer .hint--over {
+  color: var(--accent);
+}
+.repertoire-home .drawer-added {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+.repertoire-home .drawer-added a {
+  color: var(--accent);
+}
+.repertoire-home .cat-list {
   list-style: none;
   margin: 10px 0 0;
   padding: 0;
 }
-.repertoire-home .catalogue li {
+.repertoire-home .cat-list li {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 0;
+  padding: 9px 0;
   border-top: 1px solid var(--line);
 }
-.repertoire-home .catalogue .cat-title {
+.repertoire-home .cat-title {
   color: var(--ink);
   font-size: 13.5px;
 }
-.repertoire-home .catalogue .cat-meta {
+.repertoire-home .cat-meta {
   font-size: 11px;
   color: var(--faint);
 }
-.repertoire-home .catalogue .cat-add {
+.repertoire-home .cat-add {
   flex-shrink: 0;
   font: inherit;
   font-size: 12px;
@@ -1025,13 +1165,38 @@
   padding: 4px 12px;
   cursor: pointer;
 }
-.repertoire-home .catalogue .cat-add:hover {
+.repertoire-home .cat-add:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
-.repertoire-home .catalogue .cat-add:disabled {
+.repertoire-home .cat-add:disabled {
   opacity: 0.55;
   cursor: default;
+}
+
+/* La importación del tunebook vive plegada dentro del cajón: era la otra puerta
+   de entrada al repertorio y gastaba su propio botón en la cabecera. */
+.repertoire-home .drawer-import {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.repertoire-home .drawer-import summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+}
+.repertoire-home .drawer-import summary:hover {
+  color: var(--accent);
+}
+/* Dentro del cajón el panel del import pierde su caja: ya la pone el cajón. */
+.repertoire-home .drawer-import .import {
+  max-width: none;
+  margin: 12px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 0;
 }
 
 /*
@@ -1402,118 +1567,4 @@
   .repertoire-home .search input {
     width: 100%;
   }
-}
-
-/* ── banco de trabajo (#52): lista, no rejilla ─────────────────────────
-   `learning` no se mira como la biblioteca: aquí lo que decide es el dwell
-   —días en el peldaño— y el historial, así que la fila es de una sola línea y
-   las salidas son botones de texto: promocionar a shaky o devolver al backlog.
-   El tope se ajusta en la propia cabecera, donde el número se entiende solo. */
-.repertoire-home .wb-slots {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.repertoire-home .wb-slots .count {
-  margin-left: 0;
-}
-.repertoire-home .wb-slots button {
-  font: inherit;
-  font-size: 13px;
-  line-height: 1;
-  width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  cursor: pointer;
-}
-.repertoire-home .wb-slots button:hover,
-.repertoire-home .wb-slots button:focus-visible {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.repertoire-home .band-head .count--over {
-  color: var(--accent);
-}
-
-.repertoire-home .workbench {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.repertoire-home .workbench li {
-  display: flex;
-  align-items: baseline;
-  gap: 18px;
-  flex-wrap: wrap;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
-}
-.repertoire-home .workbench li:first-child {
-  border-top: 1px solid var(--line);
-}
-.repertoire-home .wb-title {
-  flex: 1 1 220px;
-  min-width: 0;
-}
-.repertoire-home .wb-title a {
-  font-family: var(--display);
-  font-size: 16px;
-  color: var(--ink);
-  text-decoration: none;
-  border-bottom: 1px solid transparent;
-}
-.repertoire-home .wb-title a:hover,
-.repertoire-home .wb-title a:focus-visible {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-.repertoire-home .wb-title small {
-  display: block;
-  margin-top: 2px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: var(--faint);
-}
-.repertoire-home .wb-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 84px;
-}
-.repertoire-home .wb-cell b {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-}
-.repertoire-home .wb-cell small {
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--faint);
-}
-.repertoire-home .wb-actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.repertoire-home .wb-actions button {
-  font: inherit;
-  font-size: 12px;
-  color: var(--ink);
-  background: none;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  padding: 0 0 1px;
-  cursor: pointer;
-}
-.repertoire-home .wb-actions button:hover,
-.repertoire-home .wb-actions button:focus-visible {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
 }

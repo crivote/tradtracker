@@ -25,7 +25,6 @@ import {
   normalizeOverride,
   overrideFields,
   parseScope,
-  parseViewMode,
   placeholderInitials,
   practiceRecency,
   practiceSummary,
@@ -407,15 +406,6 @@ describe('invariantes y peldaño de la fila (#42)', () => {
     // El backlog no enciende ninguna barra: no es un peldaño (#50).
     const learn = makeRow({ id: 'f', status: 'to_learn' });
     expect(rungOf(learn)).toBe(0);
-  });
-});
-
-describe('parseViewMode', () => {
-  it('defaults to the grid view; only an explicit «table» opts out', () => {
-    expect(parseViewMode('grid')).toBe('grid');
-    expect(parseViewMode('table')).toBe('table');
-    expect(parseViewMode('junk')).toBe('grid');
-    expect(parseViewMode(null)).toBe('grid');
   });
 });
 
