@@ -38,7 +38,7 @@ Dependencias ya elegidas en el andamio: `@sqlite.org/sqlite-wasm`, `abcjs`, `@su
 
 ## Pantallas
 
-Siete rutas; cinco se pintan sobre **papel** (`repertoire.css` declara `--paper`, `--ink`… en `.repertoire-home`, y
+Ocho rutas; seis se pintan sobre **papel** (`repertoire.css` declara `--paper`, `--ink`… en `.repertoire-home`, y
 `Layout` decide con `isPaper()` cuáles van a sangre). Una superficie nueva de papel se pinta con esas variables,
 nunca con la paleta oscura del detalle.
 
@@ -48,9 +48,16 @@ nunca con la paleta oscura del detalle.
 | `/learning` | **Banco de trabajo**: lista con dwell, ensayos, disparador de reproducción por fila y las tres salidas; tope configurable (6 por defecto). |
 | `/level/:band` | **Listado**: tabla de consulta de un peldaño, del backlog (`to_learn`), del cajón (`shelved`) o de todo (`all`). Ahí vive el etiquetado en bloque. |
 | `/practice` | Lista de ensayo del día. |
+| `/history` | **Historial**: ensayos agrupados por día local, cifras del rango (7/30/90 días) y gráfica de barras con un carril por día. Solo lectura. |
 | `/search` | Búsqueda sobre el repertorio (cruza peldaños y aparcadas). |
 | `/repertoire/:id` | Detalle de la tune (paleta oscura, no papel). |
 | `/about` | Procedencia y tamaño del catálogo. |
+
+**Marcar un ensayo es un solo gesto en toda la app.** `PracticeMarkHost` (en `Layout`) monta un único popup en un
+portal del `body`, con valoración opcional 1–5 en estrellas y una nota. Los disparadores están en el menú de la carta,
+el botón del taller, el menú del listado, la ficha y el botón «Rate» de la lista del día. Los tres primeros pasan por
+`store.practise`, que **abre el popup y no escribe**: la escritura vive en `logPractice`. Abierto desde la lista del
+día, el popup lleva el `sessionId` de la lista y **actualiza** la línea de esa tune en vez de abrir otra sesión.
 
 El alta de tunes es un **cajón lateral** (`src/components/AddTuneAside.tsx`) desde `/` y `/learning`: no empuja la
 pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The Session vive plegado dentro.
@@ -138,9 +145,10 @@ parece válida). Los bloques `$$` también hay que respetarlos.
   (`image-sources.ts` puro, `image-search.ts` de red); etiquetas (`tags.ts`, `tags-db.ts`); reproductor
   (`player-*.ts`, `abc*.ts`).
 - `src/routes/` — `Repertoire` (biblioteca), `Learning` (banco de trabajo), `LevelList` (listado de un peldaño),
-  `Practice`, `Search`, `TuneDetail`, `Login` y `About`.
-- `src/components/` — `Layout` (armazón y guard de rutas), `TuneCard`, `PlayTrigger`, `PlayerDock`, `AddTuneAside`,
-  `BackgroundPicker`, `PracticeLog`, `TagPicker`, `ImportFromSession`, `BrandMark`.
+  `Practice` (lista del día), `History` (historial por días), `Search`, `TuneDetail`, `Login` y `About`.
+- `src/components/` — `Layout` (armazón, guard de rutas y popup de ensayo), `TuneCard`, `PlayTrigger`, `PlayerDock`,
+  `AddTuneAside`, `BackgroundPicker`, `PracticeMark` (popup de valoración), `PracticeChart` (barras del historial),
+  `TagPicker`, `ImportFromSession`, `BrandMark`.
 - Pruebas: `npm run test:run` (Vitest). Typecheck: `npx tsc --noEmit -p tsconfig.json`. Build: `npm run build`.
   **Mide la línea base antes de tu corte y verifica por la diferencia**: un recuento escrito aquí caduca.
 - `catalogue-sql.test.ts` ejecuta las sentencias reales contra `public/thesession.db` con el SQLite nativo de Node (`node:sqlite`, cargado por `createRequire` porque Vite 5 no lo lista como builtin): es la suite que prueba los alias. Lo que no cruza es el transporte wasm, que se verifica en el navegador.
