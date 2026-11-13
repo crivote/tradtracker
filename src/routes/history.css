@@ -1,0 +1,320 @@
+/*
+ * Historial de ensayos (`/history`).
+ *
+ * Pantalla de **papel**: hereda las variables y la tipografía de
+ * `.repertoire-home` (repertoire.css) y todo lo de aquí vive bajo `.history`, así
+ * que nada de esto puede teñir la home, el listado ni el detalle.
+ *
+ * La lectura es de diario: una fecha a la izquierda y lo que se tocó a la derecha,
+ * con una línea por ensayo. La gráfica va encima porque el ritmo se ve antes de
+ * leer el detalle; las cifras, entre las dos, para que la gráfica no sea lo único
+ * que responda «¿cuánto?».
+ */
+
+.history .page-head {
+  margin-bottom: 18px;
+}
+
+/* ── selector de rango ─────────────────────────────────────────── */
+.history .history-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.history .history-range button {
+  font: inherit;
+  font-family: var(--sans);
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 11px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.history .history-range button:hover {
+  color: var(--ink);
+  background: rgba(120, 104, 80, 0.09);
+}
+
+.history .history-range button.is-on {
+  color: #fff;
+  background: var(--accent);
+}
+
+.history .history-range button:focus-visible {
+  outline: 2px solid rgba(138, 53, 36, 0.35);
+  outline-offset: 2px;
+}
+
+/* ── cifras ────────────────────────────────────────────────────── */
+.history .history-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  max-width: 1260px;
+  margin: 0 auto 22px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.history .figure {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px 13px;
+  background: var(--paper);
+}
+
+.history .figure b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 24px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.history .figure small {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* ── gráfica ───────────────────────────────────────────────────── */
+.history .history-chart {
+  max-width: 1260px;
+  margin: 0 auto 26px;
+  padding: 14px 2px 0;
+}
+
+.history .chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 132px;
+  padding-bottom: 1px;
+  /* La línea de base es el cero: sin ella, las barras flotan. */
+  border-bottom: 1px solid var(--line);
+  background-image: linear-gradient(
+    to top,
+    rgba(120, 104, 80, 0.07) 0 1px,
+    transparent 1px
+  );
+  background-size: 100% 50%;
+  background-repeat: repeat-y;
+}
+
+.history .chart-bar {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 26px;
+  display: flex;
+  align-items: flex-end;
+  /* El día vacío conserva su carril: el hueco es el dato. */
+  margin: 0 auto;
+}
+
+.history .chart-bar__fill {
+  width: 100%;
+  height: 100%;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  opacity: 0.72;
+}
+
+.history .chart-bar.is-empty .chart-bar__fill {
+  background: var(--line);
+  opacity: 1;
+}
+
+.history .chart-bar.is-today .chart-bar__fill {
+  opacity: 1;
+  background: var(--ink);
+}
+
+.history .chart-bar:hover .chart-bar__fill {
+  opacity: 1;
+}
+
+.history .chart-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.history .chart-axis__mid {
+  color: var(--faint);
+}
+
+/* ── días ──────────────────────────────────────────────────────── */
+.history .history-days {
+  max-width: 1260px;
+  margin: 0 auto;
+}
+
+.history .history-day {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 18px;
+  padding: 16px 0 18px;
+  border-top: 1px solid var(--line);
+}
+
+.history .history-day > header h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 17px;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+.history .history-day > header p {
+  margin: 4px 0 0;
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.history .history-day > ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history .history-day > ul > li {
+  padding: 0 0 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(222, 214, 198, 0.7);
+}
+
+.history .history-day > ul > li:last-child {
+  padding-bottom: 0;
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+
+.history .history-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history .history-title {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 1.25;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.history .history-title:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.history .history-meta {
+  margin: 2px 0 0;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.history .history-comment {
+  margin: 5px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+/* ── valoración ────────────────────────────────────────────────── */
+.history .history-stars {
+  flex: none;
+  font-size: 13px;
+  letter-spacing: 1px;
+  line-height: 1;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.history .history-stars span.on {
+  color: var(--accent);
+}
+
+.history .history-unrated {
+  flex: none;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-style: italic;
+  color: var(--faint);
+}
+
+/* ── estados ───────────────────────────────────────────────────── */
+.history .history-empty {
+  max-width: 1260px;
+  margin: 20px auto;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.history .history-empty a {
+  color: var(--accent);
+}
+
+.history .history-retry {
+  font: inherit;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  margin: 0 0 18px;
+  padding: 6px 14px;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.history .history-retry:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@media (max-width: 720px) {
+  .history .history-day {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .history .chart-bars {
+    height: 104px;
+  }
+
+  .history .figure b {
+    font-size: 21px;
+  }
+}

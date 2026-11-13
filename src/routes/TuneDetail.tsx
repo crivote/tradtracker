@@ -38,7 +38,7 @@ import {
   removeTuneTag,
   type TagVocabulary,
 } from '../lib/tags-db';
-import PracticeLog from '../components/PracticeLog';
+import { PracticeMarkButton } from '../components/PracticeMark';
 import PlayTrigger from '../components/PlayTrigger';
 import TagPicker from '../components/TagPicker';
 import BackgroundPicker from '../components/BackgroundPicker';
@@ -822,9 +822,13 @@ export default function TuneDetail() {
                     Back to repertoire
                   </A>
                   <div class="flex flex-wrap items-center gap-3">
-                    <PracticeLog
-                      repertoireId={item().id}
+                    {/* El mismo popup de ensayo que la carta, el taller y la
+                        tabla: aquí se invocaba ya, pero en un panel en línea que
+                        empujaba el pie de la ficha. */}
+                    <PracticeMarkButton
+                      target={{ repertoireId: item().id, title: displayTitle(item()) }}
                       onLogged={() => reload(item().id)}
+                      class="rounded border border-gray-600 px-3 py-1.5 text-sm text-gray-300 hover:border-amber-500 hover:text-amber-300 disabled:opacity-60"
                     />
                     <button
                       type="button"

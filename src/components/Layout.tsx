@@ -3,6 +3,7 @@ import { A, Navigate, useLocation } from '@solidjs/router';
 import { useSession } from '../lib/session';
 import { supabaseConfigError } from '../lib/supabase';
 import { PlayerDock } from './PlayerDock';
+import { PracticeMarkHost } from './PracticeMark';
 import { BrandMark } from './BrandMark';
 
 /**
@@ -24,16 +25,17 @@ export const Layout: ParentComponent = (props) => {
 
   /**
    * Las pantallas de papel —la home, el banco de trabajo, el listado de un
-   * peldaño, el ensayo y la búsqueda— miden su propio marco y ya reservan su
-   * fondo. Se declara una vez: la lista creció con `/learning` y `/level/:band`,
-   * y repetirla en tres sitios es la forma de que una ruta nueva se quede sin
-   * papel sin que nadie lo note.
+   * peldaño, el ensayo, el historial y la búsqueda— miden su propio marco y ya
+   * reservan su fondo. Se declara una vez: la lista creció con `/learning`,
+   * `/level/:band` y `/history`, y repetirla en tres sitios es la forma de que
+   * una ruta nueva se quede sin papel sin que nadie lo note.
    */
   const isPaper = (): boolean => {
     const path = location.pathname;
     return (
       path === '/' ||
       path === '/practice' ||
+      path === '/history' ||
       path === '/search' ||
       path === '/learning' ||
       path.startsWith('/level/')
@@ -74,6 +76,9 @@ export const Layout: ParentComponent = (props) => {
               <A href="/practice" class="text-gray-300 hover:text-amber-300">
                 Practice
               </A>
+              <A href="/history" class="text-gray-300 hover:text-amber-300">
+                History
+              </A>
               <A href="/search" class="text-gray-300 hover:text-amber-300">
                 Search
               </A>
@@ -110,8 +115,8 @@ export const Layout: ParentComponent = (props) => {
 
         Son cinco desde el corte de pantallas: la home del repertorio (#29), la
         búsqueda (#9), la lista de ensayo (#36), el banco de trabajo (`/learning`,
-        #52) y el listado de un peldaño (`/level/:band`, #42). Las tres últimas
-        comparten el marco de papel y no lo redeclaran.
+        #52), el listado de un peldaño (`/level/:band`, #42) y el historial de
+        ensayos (`/history`). Comparten el marco de papel y no lo redeclaran.
       */}
       <main class={isPaper() ? '' : 'max-w-7xl mx-auto px-6 py-8'}>{props.children}</main>
 
@@ -121,6 +126,14 @@ export const Layout: ParentComponent = (props) => {
         y que ninguna pantalla instancie su propio transporte.
       */}
       <PlayerDock />
+
+      {/*
+        Un solo popup de ensayo para toda la app. Los disparadores están repartidos
+        (carta, taller, tabla, ficha, lista del día); el diálogo, aquí, para que
+        sea el mismo en todas partes y para que no lo recorte el `overflow` de una
+        carta o de la tabla.
+      */}
+      <PracticeMarkHost />
     </div>
   );
 };

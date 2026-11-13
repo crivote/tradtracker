@@ -1,0 +1,312 @@
+/*
+ * Popup de registro de ensayo.
+ *
+ * Se cuelga del `body` (portal), así que **no hereda nada**: ni las variables de
+ * `.repertoire-home` ni la paleta oscura del detalle. Las declara aquí con el
+ * prefijo `--pm-` y ese es el motivo de que el mismo diálogo se vea igual abierto
+ * desde la carta de papel, el taller, la tabla o la ficha oscura.
+ *
+ * Es papel claro con acento, no un panel oscuro: el velo ya separa del fondo, y
+ * un diálogo claro sobre la pantalla oscura del detalle mantiene la identidad de
+ * la marca en vez de imitar la superficie que hay detrás.
+ *
+ * Todo vive bajo `.pm-veil` / `.pm-dialog`; nada de este fichero puede teñir la
+ * aplicación.
+ */
+
+.pm-veil {
+  --pm-paper: #f2ede2;
+  --pm-ink: #241f18;
+  --pm-muted: #6b6154;
+  --pm-faint: #9c9282;
+  --pm-line: #ded6c6;
+  --pm-accent: #8a3524;
+  --pm-display: 'Raleway', Georgia, 'Times New Roman', serif;
+  --pm-sans: 'Raleway', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+
+  position: fixed;
+  inset: 0;
+  /* Por encima del dock del reproductor (60) y del menú de fila (50). */
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(24, 20, 14, 0.46);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: pm-veil-in 120ms ease-out;
+}
+
+.pm-dialog {
+  width: min(360px, 100%);
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border: 1px solid var(--pm-line);
+  border-radius: 12px;
+  background-color: var(--pm-paper);
+  background-image: radial-gradient(
+    420px 220px at 12% -10%,
+    rgba(255, 255, 255, 0.6),
+    transparent 70%
+  );
+  box-shadow:
+    0 30px 60px -18px rgba(20, 16, 10, 0.55),
+    0 2px 0 rgba(255, 255, 255, 0.5) inset;
+  color: var(--pm-ink);
+  font-family: var(--pm-sans);
+  line-height: 1.4;
+  animation: pm-dialog-in 140ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.pm-dialog:focus {
+  outline: none;
+}
+
+/* ── encabezado ─────────────────────────────────────────────────── */
+.pm-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pm-kicker {
+  margin: 0;
+  font-family: var(--pm-sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--pm-accent);
+}
+
+.pm-dialog h2 {
+  margin: 0;
+  font-family: var(--pm-display);
+  font-weight: 400;
+  font-size: 23px;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  color: var(--pm-ink);
+  overflow-wrap: anywhere;
+}
+
+/* ── estrellas ──────────────────────────────────────────────────── */
+.pm-stars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pm-star {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--pm-faint);
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.12s ease, transform 0.12s ease;
+}
+
+.pm-star.is-on {
+  color: var(--pm-accent);
+}
+
+.pm-star:hover:not(:disabled),
+.pm-star:focus-visible {
+  transform: translateY(-1px);
+  outline: none;
+  color: var(--pm-accent);
+}
+
+.pm-star:focus-visible {
+  box-shadow: 0 0 0 2px rgba(138, 53, 36, 0.28);
+}
+
+.pm-star:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* La palabra de la escala ocupa sitio siempre: si apareciera solo al puntuar,
+   las estrellas se moverían bajo el dedo. */
+.pm-scale {
+  margin-left: 6px;
+  min-width: 74px;
+  font-size: 12px;
+  color: var(--pm-muted);
+}
+
+/* ── nota y ayuda ───────────────────────────────────────────────── */
+.pm-note {
+  width: 100%;
+  resize: vertical;
+  min-height: 52px;
+  padding: 8px 10px;
+  font-family: var(--pm-sans);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--pm-ink);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--pm-line);
+  border-radius: 8px;
+}
+
+.pm-note::placeholder {
+  color: var(--pm-faint);
+}
+
+.pm-note:focus {
+  outline: none;
+  border-color: var(--pm-accent);
+  box-shadow: 0 0 0 2px rgba(138, 53, 36, 0.14);
+}
+
+.pm-note:disabled {
+  opacity: 0.65;
+}
+
+.pm-hint {
+  margin: -4px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--pm-faint);
+}
+
+.pm-error {
+  margin: 0;
+  padding: 7px 9px;
+  font-size: 12px;
+  color: #7c2317;
+  background: rgba(138, 53, 36, 0.09);
+  border-left: 2px solid var(--pm-accent);
+  border-radius: 4px;
+}
+
+/* ── acciones ───────────────────────────────────────────────────── */
+.pm-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.pm-cancel,
+.pm-save {
+  font-family: var(--pm-sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: filter 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.pm-cancel {
+  color: var(--pm-muted);
+  background: transparent;
+  border: 1px solid var(--pm-line);
+}
+
+.pm-cancel:hover:not(:disabled) {
+  border-color: var(--pm-muted);
+  color: var(--pm-ink);
+}
+
+.pm-save {
+  color: #fff;
+  background: var(--pm-accent);
+  border: 1px solid var(--pm-accent);
+}
+
+.pm-save:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.pm-cancel:disabled,
+.pm-save:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pm-cancel:focus-visible,
+.pm-save:focus-visible {
+  outline: 2px solid rgba(138, 53, 36, 0.35);
+  outline-offset: 2px;
+}
+
+/*
+ * Disparador por defecto, para superficies de papel que no tienen un `.add`
+ * propio. La ficha del tune es oscura: allí se pasa la clase que ya usa.
+ */
+.pm-trigger {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 7px 14px;
+  color: var(--pm-ink, #241f18);
+  background: transparent;
+  border: 1px solid var(--pm-line, #ded6c6);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.pm-trigger:hover:not(:disabled) {
+  border-color: #8a3524;
+  color: #8a3524;
+}
+
+@media (max-width: 420px) {
+  .pm-veil {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  /* En móvil el diálogo sube desde el borde inferior, donde llega el pulgar. */
+  .pm-dialog {
+    width: 100%;
+    max-height: 86vh;
+    border-radius: 14px 14px 0 0;
+    padding: 16px 16px 18px;
+    animation: pm-sheet-in 160ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  }
+}
+
+@keyframes pm-veil-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pm-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+@keyframes pm-sheet-in {
+  from {
+    transform: translateY(14px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pm-veil,
+  .pm-dialog {
+    animation: none;
+  }
+}

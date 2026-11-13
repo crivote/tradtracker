@@ -20,6 +20,10 @@ const h = vi.hoisted(() => ({
   lineResult: { error: null } as any,
   /** Respuesta de `fetchSessionMarks`: líneas de una sesión concreta. */
   marksResult: { data: null, error: null } as any,
+  /** Respuesta del `update` de una línea dentro de una sesión abierta. */
+  updateResult: { data: [{ repertoire_id: 'row-a' }], error: null } as any,
+  updateBodies: [] as any[],
+  updateFilters: [] as any[],
   deleteResult: { error: null } as any,
   rpcResult: { error: null } as any,
   sessionBodies: [] as any[],
@@ -102,6 +106,10 @@ vi.mock('./supabase', () => {
               if (h.lineResults.length > 0) return h.lineResults.shift();
               return h.lineResult;
             },
+            update: (body: any) => {
+              h.updateBodies.push(body);
+              return chain(h.updateResult, (call) => h.updateFilters.push(call));
+            },
             select: (columns: string) => {
               h.marksSelect = columns;
               return chain(h.marksResult, (call) => h.marksFilters.push(call));
@@ -151,6 +159,9 @@ beforeEach(() => {
   h.lineResults = [];
   h.lineResult = { error: null };
   h.marksResult = { data: null, error: null };
+  h.updateResult = { data: [{ repertoire_id: 'row-a' }], error: null };
+  h.updateBodies = [];
+  h.updateFilters = [];
   h.deleteResult = { error: null };
   h.rpcResult = { error: null };
   h.sessionBodies = [];
@@ -204,6 +215,62 @@ describe('logPractice', () => {
 
     expect(h.lineBodies).toEqual([]);
     expect(h.deleted).toEqual([]);
+  });
+
+  it('devuelve el id de la sesión que abrió', async () => {
+    await expect(logPractice('row-a', { quality: 4, comment: null })).resolves.toBe('session-1');
+  });
+});
+
+describe('logPractice sobre la sesión abierta de la lista (#36)', () => {
+  it('actualiza la línea de esa tune y no abre otra sesión', async () => {
+    const sessionId = await logPractice(
+      'row-a',
+      { quality: 4, comment: '  bien  ' },
+      { sessionId: 'open-session' },
+    );
+
+    expect(sessionId).toBe('open-session');
+    expect(h.sessionBodies).toEqual([]);
+    expect(h.lineBodies).toEqual([]);
+    expect(h.updateBodies).toEqual([{ quality: 4, comment: 'bien' }]);
+    expect(h.updateFilters).toEqual([
+      { method: 'eq', col: 'session_id', val: 'open-session' },
+      { method: 'eq', col: 'repertoire_id', val: 'row-a' },
+    ]);
+  });
+
+  it('si la línea ya no está, la cuelga de la misma sesión con su posición', async () => {
+    h.updateResult = { data: [], error: null };
+
+    const sessionId = await logPractice(
+      'row-a',
+      { quality: null, comment: null },
+      { sessionId: 'open-session', position: 2 },
+    );
+
+    expect(sessionId).toBe('open-session');
+    // No se abre sesión nueva: la que estaba abierta es la del día.
+    expect(h.sessionBodies).toEqual([]);
+    expect(h.lineBodies).toEqual([
+      {
+        session_id: 'open-session',
+        repertoire_id: 'row-a',
+        quality: null,
+        comment: null,
+        position: 2,
+      },
+    ]);
+  });
+
+  it('un error del update se lanza y no cae al insert', async () => {
+    h.updateResult = { data: null, error: { message: 'denied' } };
+
+    await expect(
+      logPractice('row-a', { quality: 3, comment: null }, { sessionId: 'open-session' }),
+    ).rejects.toThrow('Could not save the practice: denied');
+
+    expect(h.lineBodies).toEqual([]);
   });
 });
 

@@ -14,13 +14,14 @@
  */
 import { createSignal, type Accessor } from 'solid-js';
 import {
+  displayTitle,
   fetchRepertoire,
   saveFavorite,
   saveStatus,
   type RepertoireRow,
   type TuneStatus,
 } from './repertoire';
-import { logPractice } from './practice';
+import { openPractice } from './practice-mark';
 
 export interface RepertoireStore {
   rows: Accessor<RepertoireRow[]>;
@@ -28,13 +29,18 @@ export interface RepertoireStore {
   error: Accessor<string | null>;
   /** Instante de la vista: los días de todas las filas hablan del mismo «hoy». */
   now: Accessor<number>;
-  /** Id de la fila que está escribiendo (alta, ensayo): deshabilita su control. */
+  /** Id de la fila que está escribiendo (alta, peldaño, favorita). */
   busyId: Accessor<string | number | null>;
   /** Carga con estado de carga: la pantalla enseña «Loading…», no una rejilla vacía. */
   load: () => Promise<void>;
   /** Recarga sin estado de carga: tras escribir, para que no parpadee la rejilla. */
   reload: () => Promise<void>;
-  practise: (row: RepertoireRow) => Promise<void>;
+  /**
+   * «Practise»: abre el popup de registro para esa fila. **No escribe** —quien
+   * escribe es el popup, con la valoración y la nota— y recarga la pantalla al
+   * guardar. Se conserva el nombre porque el gesto es el mismo de siempre.
+   */
+  practise: (row: RepertoireRow) => void;
   toggleFavorite: (row: RepertoireRow) => Promise<void>;
   changeStatus: (row: RepertoireRow, status: TuneStatus) => Promise<void>;
   setError: (message: string | null) => void;
@@ -78,21 +84,18 @@ export function createRepertoireStore(): RepertoireStore {
   };
 
   /**
-   * «Practise» apunta el ensayo de un clic, sin puntuarlo: la calidad es
-   * opcional por diseño (#10) y se puntúa en el detalle. Obligar a un formulario
-   * para apuntar que has tocado una tune mataría el gesto.
+   * «Practise» abre el popup de ensayo, el mismo en toda la aplicación.
+   *
+   * Antes escribía en silencio y la valoración solo se podía poner en la ficha:
+   * apuntar desde la carta o el taller era un clic a ciegas. El gesto no cambia
+   * de nombre porque no cambia de intención; lo que cambia es que ahora pregunta
+   * cómo fue antes de guardar. La recarga la dispara el popup al cerrar.
    */
-  const practise = async (row: RepertoireRow) => {
-    setBusyId(row.id);
-    setError(null);
-    try {
-      await logPractice(row.id, { quality: null, comment: null });
-      await reload();
-    } catch (cause) {
-      setError(message(cause));
-    } finally {
-      setBusyId(null);
-    }
+  const practise = (row: RepertoireRow) => {
+    openPractice(
+      { repertoireId: row.id, title: displayTitle(row) },
+      reload,
+    );
   };
 
   const toggleFavorite = async (row: RepertoireRow) => {

@@ -10,6 +10,18 @@ export interface PracticeEntry {
   comment: string | null;
 }
 
+/** Dónde cuelga el ensayo, cuando no es una sesión nueva. */
+export interface PracticeOptions {
+  /**
+   * Sesión ya abierta por la lista del día (#36). Con sesión, el ensayo
+   * **actualiza** la línea de esa tune; sin ella, se abre una sesión nueva de una
+   * sola línea.
+   */
+  sessionId?: string | null;
+  /** Posición de la fila en la lista del día; la base pone 0 si falta. */
+  position?: number;
+}
+
 /**
  * Comentario en blanco = sin comentario. Se recorta también lo que solo lleva
  * espacios para que la base no guarde cadenas que parecen datos y no lo son.
@@ -22,21 +34,39 @@ function normalizeComment(comment: string | null): string | null {
 /**
  * Apunta un ensayo de un tune del repertorio (#10, corte 1).
  *
- * Una sesión con un solo tune: la forma del dato es la misma que usará el
- * historial, así que no hay un camino corto con otra forma. La sesión se inserta
- * **sin cuerpo** — `user_id` y `started_at` los pone la base (`default
- * auth.uid()` / `default now()`) — y se pide el `id` de vuelta para colgar la
- * línea.
+ * Sin sesión en `options`, una sesión con un solo tune: la forma del dato es la
+ * misma que usará el historial, así que no hay un camino corto con otra forma. La
+ * sesión se inserta **sin cuerpo** — `user_id` y `started_at` los pone la base
+ * (`default auth.uid()` / `default now()`) — y se pide el `id` de vuelta para
+ * colgar la línea.
+ *
+ * **Con `sessionId`** (el popup abierto desde la lista del día) no se abre otra
+ * sesión: se actualiza la línea de esa tune en la sesión que ya está abierta. Un
+ * toque de «valorar» sobre una fila marcada no puede dejar dos ensayos del mismo
+ * momento en el historial. Si la línea ya no está —borrada en otra pestaña—, se
+ * vuelve a colgar de la misma sesión.
+ *
+ * Devuelve el `id` de la sesión usada, que es lo que la lista necesita para
+ * adoptarla cuando aún no tenía ninguna.
  *
  * Si la línea falla, la sesión recién creada se borra (mejor esfuerzo) y se
  * lanza el error original: una sesión vacía sería un ensayo fantasma en el
- * historial. `last_practiced_at` lo mueve el trigger de la base al insertar la
- * línea; el cliente nunca lo escribe.
+ * historial. `last_practiced_at` lo mueve el trigger de la base al insertar o
+ * actualizar la línea; el cliente nunca lo escribe.
  */
 export async function logPractice(
   repertoireId: string,
-  entry: PracticeEntry
-): Promise<void> {
+  entry: PracticeEntry,
+  options: PracticeOptions = {},
+): Promise<string> {
+  const quality = entry.quality ?? null;
+  const comment = normalizeComment(entry.comment);
+  const openSession = options.sessionId ?? null;
+
+  if (openSession) {
+    return logOnSession(openSession, repertoireId, quality, comment, options.position);
+  }
+
   const { data, error } = await supabase.from('pr_sessions').insert({}).select('id').maybeSingle();
 
   if (error) throw new Error(`Could not save the practice: ${error.message}`);
@@ -44,12 +74,15 @@ export async function logPractice(
 
   const sessionId = data.id;
 
-  const { error: lineError } = await supabase.from('pr_session_tunes').insert({
+  const row: Record<string, unknown> = {
     session_id: sessionId,
     repertoire_id: repertoireId,
-    quality: entry.quality ?? null,
-    comment: normalizeComment(entry.comment),
-  });
+    quality,
+    comment,
+  };
+  if (typeof options.position === 'number') row.position = options.position;
+
+  const { error: lineError } = await supabase.from('pr_session_tunes').insert(row);
 
   if (lineError) {
     // Compensación: la sesión sin línea no debe quedar. Si el borrado también
@@ -61,6 +94,45 @@ export async function logPractice(
     }
     throw new Error(`Could not save the practice: ${lineError.message}`);
   }
+
+  return sessionId;
+}
+
+/**
+ * La línea de una tune **dentro de una sesión que ya existe**: se actualiza si
+ * está, y si no se inserta. El `update` va con `select` a propósito: sin filas
+ * devueltas no hay forma de distinguir «actualizada» de «no existía», y crear otra
+ * línea a ciegas chocaría con el único `(session_id, repertoire_id)`.
+ */
+async function logOnSession(
+  sessionId: string,
+  repertoireId: string,
+  quality: number | null,
+  comment: string | null,
+  position: number | undefined,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('pr_session_tunes')
+    .update({ quality, comment })
+    .eq('session_id', sessionId)
+    .eq('repertoire_id', repertoireId)
+    .select('repertoire_id');
+
+  if (error) throw new Error(`Could not save the practice: ${error.message}`);
+  if (Array.isArray(data) && data.length > 0) return sessionId;
+
+  const row: Record<string, unknown> = {
+    session_id: sessionId,
+    repertoire_id: repertoireId,
+    quality,
+    comment,
+  };
+  if (typeof position === 'number') row.position = position;
+
+  const { error: lineError } = await supabase.from('pr_session_tunes').insert(row);
+  if (lineError) throw new Error(`Could not save the practice: ${lineError.message}`);
+
+  return sessionId;
 }
 
 /* ────────────────────────────────────────────────────────────────

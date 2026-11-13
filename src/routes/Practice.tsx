@@ -43,6 +43,7 @@ import {
   fetchSessionMarks,
   unmarkSessionTune,
 } from '../lib/practice';
+import { openPractice } from '../lib/practice-mark';
 import PlayTrigger from '../components/PlayTrigger';
 import './repertoire.css';
 import './practice.css';
@@ -403,6 +404,33 @@ export default function Practice() {
     }
   };
 
+  /**
+   * Valorar una fila desde la lista del día.
+   *
+   * Abre el mismo popup del resto de la app, pero **atado a la sesión de la
+   * lista**: si la fila ya estaba marcada, la valoración actualiza esa línea en
+   * vez de abrir un ensayo nuevo; si no lo estaba, la marca y la valora en el
+   * mismo toque. Guardar desde aquí adopta la sesión cuando la lista aún no tenía
+   * ninguna, que es lo mismo que hace la primera marca.
+   */
+  const rateOne = (row: RepertoireRow, position: number) => {
+    openPractice(
+      {
+        repertoireId: row.id,
+        title: displayTitle(row),
+        sessionId: sessionId(),
+        position,
+      },
+      (usedSession) => {
+        if (!sessionId()) {
+          setSessionId(usedSession);
+          attachSession(usedSession);
+        }
+        addMark(row.id);
+      },
+    );
+  };
+
   const unmarkOne = async (row: RepertoireRow) => {
     const openSession = sessionId();
     if (!openSession || !marked().has(row.id)) return;
@@ -571,6 +599,15 @@ export default function Practice() {
                       onClick={() => void toggleFavorite(row)}
                     >
                       <span aria-hidden="true">{isFavorite(row) ? '♥' : '♡'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      class="practice-row__rate"
+                      aria-label={`Rate ${displayTitle(row)}`}
+                      onClick={() => rateOne(row, index())}
+                    >
+                      <span aria-hidden="true">★</span> Rate
                     </button>
 
                     <button

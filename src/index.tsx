@@ -8,6 +8,7 @@ import Repertoire from './routes/Repertoire';
 import Learning from './routes/Learning';
 import LevelList from './routes/LevelList';
 import Practice from './routes/Practice';
+import History from './routes/History';
 import Search from './routes/Search';
 import TuneDetail from './routes/TuneDetail';
 import About from './routes/About';
@@ -34,6 +35,7 @@ render(
         <Route path="/learning" component={Learning} />
         <Route path="/level/:band" component={LevelList} />
         <Route path="/practice" component={Practice} />
+        <Route path="/history" component={History} />
         <Route path="/search" component={Search} />
         <Route path="/repertoire/:id" component={TuneDetail} />
         <Route path="/about" component={About} />

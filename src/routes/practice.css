@@ -204,7 +204,8 @@
 }
 
 .practice .practice-row__fav,
-.practice .practice-row__mark {
+.practice .practice-row__mark,
+.practice .practice-row__rate {
   font: inherit;
   cursor: pointer;
   background: none;
@@ -245,6 +246,29 @@
 .practice .practice-row__mark:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/*
+ * «Rate» abre el popup de valoración. Es un botón terciario —sin borde en reposo
+ * y con la estrella en acento— porque el gesto primario de la fila sigue siendo
+ * marcar; valorar es el adorno, no el paso obligatorio.
+ */
+.practice .practice-row__rate {
+  padding: 7px 10px;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px solid transparent;
+}
+
+.practice .practice-row__rate span {
+  margin-right: 3px;
+  color: var(--accent);
+}
+
+.practice .practice-row__rate:hover {
+  color: var(--accent);
+  border-color: var(--line);
 }
 
 .practice .practice-row__mark.is-marked {
