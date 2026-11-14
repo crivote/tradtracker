@@ -13,7 +13,8 @@
  *   1. El `upsert` sobre `pr_practice` con `onConflict (user_id, repertoire_id,
  *      day)` funciona **sin mandar `user_id`**: lo pone la base.
  *   2. Marcar otra vez el mismo día **actualiza** la misma fila: una, no dos.
- *   3. El trigger mueve `pr_repertoire.last_practiced_at` y su `last_practiced_day`.
+ *   3. El trigger deriva `pr_repertoire.last_practiced_day` de la marca, y al borrar la última lo deja en
+ *      `null` (la fecha retrocede de verdad).
  *   4. Borrar la marca y llamar a `pr_recompute_last_practice` deja la fecha
  *      atrás: la RPC nueva, la que lee marcas y no sesiones.
  *   5. Si la escritura falla por RLS (repertorio ajeno), no queda ninguna fila.
@@ -109,10 +110,9 @@ describe.skipIf(!enabled)('logPractice contra Supabase real', () => {
 
     const before = await supabase
       .from('pr_repertoire')
-      .select('last_practiced_at,last_practiced_day')
+      .select('last_practiced_day')
       .eq('id', repertoireId!)
       .single();
-    expect(before.data!.last_practiced_at).toBeNull();
     expect(before.data!.last_practiced_day).toBeNull();
 
     const id = await logPractice(repertoireId!, { quality: 4, comment: '  primera prueba real  ' });
@@ -120,10 +120,9 @@ describe.skipIf(!enabled)('logPractice contra Supabase real', () => {
 
     const after = await supabase
       .from('pr_repertoire')
-      .select('last_practiced_at,last_practiced_day')
+      .select('last_practiced_day')
       .eq('id', repertoireId!)
       .single();
-    expect(after.data!.last_practiced_at).not.toBeNull();
     // El día es el local que compuso el cliente, no el que saldría del instante.
     expect(after.data!.last_practiced_day).toBe(day);
 
@@ -164,11 +163,10 @@ describe.skipIf(!enabled)('logPractice contra Supabase real', () => {
 
     const { data: row } = await supabase
       .from('pr_repertoire')
-      .select('last_practiced_at,last_practiced_day')
+      .select('last_practiced_day')
       .eq('id', repertoireId!)
       .single();
     // Sin marcas, el recálculo deja null: la fecha retrocede de verdad.
-    expect(row!.last_practiced_at).toBeNull();
     expect(row!.last_practiced_day).toBeNull();
   }, 30_000);
 

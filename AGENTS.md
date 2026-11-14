@@ -92,7 +92,7 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
 | D3 | Multiusuario público desde v1, RLS completa desde el primer esquema |
 | D4 | **Identidad propia**: `pr_tunes.id` uuid + `origin` + `origin_ref`. Sin esquema prefijado `ts:`/`loc:` |
 
-## Esquema (migraciones `001`–`017`)
+## Esquema (migraciones `001`–`018`)
 
 - **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `composer` (010), `created_by`, `created_at`. Único `(origin, origin_ref)`.
   RLS: lectura para autenticados; alta/edición/borrado solo del creador.
@@ -105,12 +105,13 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
     (`focal_x`, `focal_y`, `zoom`) y fecha de elección.
   RLS: `for all` con `user_id = auth.uid()`.
 - **`pr_repertoire_stats`** (007) — vista con `practice_count` y `avg_quality` por fila de repertorio, con
-  `security_invoker = true`: sin esa opción la vista se salta la RLS y devuelve las filas de todos.
-- **Sesiones** (004) — **MODELO RETIRADO**: `pr_sessions` y `pr_session_tunes` (`quality` opcional), con la
-  función `pr_recompute_last_practiced` (009) y el trigger `pr_session_tunes_touch_trg`. Desde #56 (2026-11-14)
-  **el cliente ya no las usa**: la unidad es la marca por tune y día. Las tablas y `last_practiced_at` siguen en
-  la base hasta que caiga #57 (renombrar a `_legacy` exige rewirar el trigger que deriva `last_practiced_day`
-  de `last_practiced_at`). No implementes nada nuevo sobre este modelo.
+  `security_invoker = true`: sin esa opción la vista se salta la RLS y devuelve las filas de todos. Desde 018
+  cuenta **marcas** de `pr_practice` (no líneas de sesión) y mide los días desde `last_practiced_day` en hora
+  local.
+- **Sesiones** (004) — **RETIRADO Y ARCHIVADO** (018, #57): `pr_sessions` → `pr_sessions_legacy` y
+  `pr_session_tunes` → `pr_session_tunes_legacy` (68 sesiones / 135 líneas conservadas como archivo). Se
+  fueron con ellas `last_practiced_at`, el trigger `pr_session_tunes_touch_trg` y la RPC
+  `pr_recompute_last_practiced`. **No implementes nada sobre este modelo**: la unidad es la marca por tune y día.
 - **Transiciones del peldaño** (016): `pr_ladder_event` es un registro **append-only** de cada cambio de
   `status` y de `shelved` (`kind`, `from_value`, `to_value`, `at`, `source`). Lo escribe el trigger
   `pr_ladder_event_trg` sobre `pr_repertoire`: un `update` que no toca ninguno de los dos **no crea evento**.
@@ -119,11 +120,11 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
   foto conocida, y leerlo como transición pinta 426 promociones el día del corte.
 - **Marcas por día** (017): `pr_practice` (`user_id`, `repertoire_id`, `day date`, `practiced_at`,
   `quality`, `comment`), único `(user_id, repertoire_id, day)`. Es la unidad que sustituye a la sesión:
-  marcar dos veces el mismo día **actualiza** la fila. `pr_practice_touch_trg` mantiene
-  `last_practiced_at` con `greatest(...)` (no retrocede) y `pr_recompute_last_practice(uuid)` la
-  recalcula desde esta tabla al borrar una marca. `pr_repertoire.last_practiced_day date` es el día
-  local derivado (el cliente lee **ese**, no el instante). **En producción desde #56**: `main` sirve el bundle
-  que escribe aquí y ya no nombra `pr_sessions`.
+  marcar dos veces el mismo día **actualiza** la fila. Desde 018 el día del último ensayo lo deriva
+  `pr_practice_sync_day_trg` (`after insert or update or delete`): recalcula `max(day)` de la tune y lo escribe
+  en `last_practiced_day`, así que **avanza y también retrocede** al borrar una marca. `pr_recompute_last_practice(uuid)`
+  queda para el desmarcado del cliente. `last_practiced_at` **ya no existe**. **En producción desde #56**: `main`
+  sirve el bundle que escribe aquí y no nombra `pr_sessions`.
 - **Etiquetas** (012): `pr_tag_facets`, `pr_tags` y `pr_user_tune_tags`, más `pr_tag_with_ancestors` para aplicar una
   faceta con sus hijos.
 - Trigger `pr_repertoire_touch_trg`: mueve `status_changed_at` cuando cambia `status` — y **no** al aparcar.
