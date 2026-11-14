@@ -71,7 +71,8 @@ export async function logPractice(
   entry: PracticeEntry,
   options: PracticeOptions = {},
 ): Promise<string> {
-  const day = localDayOf(options.practicedAt ?? new Date());
+  const instant = options.practicedAt ?? new Date();
+  const day = localDayOf(instant);
 
   const { data, error } = await supabase
     .from('pr_practice')
@@ -79,6 +80,7 @@ export async function logPractice(
       {
         repertoire_id: repertoireId,
         day,
+        practiced_at: instant.toISOString(),
         quality: entry.quality ?? null,
         comment: normalizeComment(entry.comment),
       },
@@ -132,10 +134,15 @@ export async function markPracticeDay(
 ): Promise<number> {
   if (repertoireIds.length === 0) return 0;
 
-  const day = localDayOf(options.practicedAt ?? new Date());
+  const instant = options.practicedAt ?? new Date();
+  const day = localDayOf(instant);
   // Un id repetido en el cuerpo haría que el `ON CONFLICT` tocara la misma fila
   // dos veces y PostgREST lo rechazara (21000): la lista se deduplica antes.
-  const rows = [...new Set(repertoireIds)].map((repertoireId) => ({ repertoire_id: repertoireId, day }));
+  const rows = [...new Set(repertoireIds)].map((repertoireId) => ({
+    repertoire_id: repertoireId,
+    day,
+    practiced_at: instant.toISOString(),
+  }));
 
   const { error } = await supabase
     .from('pr_practice')

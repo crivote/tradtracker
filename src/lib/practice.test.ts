@@ -12,8 +12,9 @@
  *     recalcula la fecha. Si el recálculo falla después del borrado, el error
  *     tiene que decir que la marca se quitó y que la fecha puede estar movida.
  *
- * También se comprueba que el cliente no escribe `user_id` ni `practiced_at`, y
- * que `quality` sigue siendo opcional y el comentario se normaliza.
+ * También se comprueba que el cliente no escribe `user_id` pero **sí** el instante real del ensayo
+ * (`practiced_at`: la base no puede adivinarlo en una marca retroactiva), y que `quality` sigue siendo
+ * opcional y el comentario se normaliza.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -127,13 +128,15 @@ describe('logPractice: la marca es la tune y el día', () => {
     expect(h.upsertBodies[0]).toEqual({
       repertoire_id: 'row-a',
       day: todayKeyFor(Date.now()),
+      practiced_at: expect.any(String),
       quality: 3,
       comment: 'hola',
     });
     expect(h.upsertOptions[0]).toEqual({ onConflict: 'user_id,repertoire_id,day' });
-    // El cliente no manda lo que mantiene la base.
+    // El dueño lo pone la base; el instante no, porque en una marca retroactiva
+    // el `now()` de la base sería el momento del alta y no el del ensayo.
     expect(h.upsertBodies[0].user_id).toBeUndefined();
-    expect(h.upsertBodies[0].practiced_at).toBeUndefined();
+    expect(h.upsertBodies[0].practiced_at).toBeDefined();
   });
 
   it('un ensayo de las 23:30 locales del día 10 es del día 10, no del 11', async () => {
@@ -143,6 +146,8 @@ describe('logPractice: la marca es la tune y el día', () => {
     await logPractice('row-a', { quality: null, comment: null }, { practicedAt: lateNight });
 
     expect(h.upsertBodies[0].day).toBe('2026-11-10');
+    // Y el instante viaja entero: el día es para agrupar, el instante es el dato.
+    expect(h.upsertBodies[0].practiced_at).toBe(lateNight.toISOString());
   });
 
   it('el mismo ensayo justo después de medianoche ya es del día siguiente', async () => {
@@ -194,8 +199,8 @@ describe('markPracticeDay: la tanda de la lista del día', () => {
     expect(written).toBe(2);
     expect(h.upsertBodies).toHaveLength(1);
     expect(h.upsertBodies[0]).toEqual([
-      { repertoire_id: 'row-a', day: todayKeyFor(Date.now()) },
-      { repertoire_id: 'row-b', day: todayKeyFor(Date.now()) },
+      { repertoire_id: 'row-a', day: todayKeyFor(Date.now()), practiced_at: expect.any(String) },
+      { repertoire_id: 'row-b', day: todayKeyFor(Date.now()), practiced_at: expect.any(String) },
     ]);
     expect(h.upsertOptions[0]).toEqual({ onConflict: 'user_id,repertoire_id,day' });
     // Marcar no puntúa y no pisa lo que ya estuviera valorado: el cuerpo no
