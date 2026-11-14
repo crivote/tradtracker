@@ -155,8 +155,12 @@ export interface RevisitSummary {
   pairs: number;
   /** Mediana del hueco en horas; `null` sin pares. */
   medianHours: number | null;
-  under: number;
-  over: number;
+  /** Hueco por debajo de la mitad del objetivo: dos pasadas demasiado seguidas. */
+  tooSoon: number;
+  /** Hueco entre la mitad y el objetivo: el espaciado que se busca. */
+  inBand: number;
+  /** Hueco por encima del objetivo: se pasó el plazo. */
+  late: number;
   buckets: HistogramBucket[];
 }
 
@@ -350,11 +354,8 @@ function sumOverdue(tallies: readonly BandTally[]): number {
  */
 export function overdueHistogram(
   rows: readonly RepertoireRow[],
-  marks: readonly InsightMark[],
   nowMs: number,
 ): OverdueHistogram {
-  void marks;
-
   const universe = rows.filter(isRotationRow);
   const counts = OVERDUE_RANGES.map(() => 0);
   const records: BandRecord[] = [];
@@ -438,18 +439,21 @@ function statusMapAt(events: readonly InsightEvent[], boundary: number): Map<str
  * Comparación del vencimiento de hoy contra el cierre de la **semana pasada**
  * (el domingo anterior al lunes de hoy).
  *
- * Las dos fotos se miden igual —vencidas sobre las que tienen día en cada
- * momento— pero no sobre las mismas filas, y eso es deliberado:
+ * Las dos fotos se miden **sobre el mismo censo**: las tunes que ya estaban en
+ * rotación y con ensayo registrado hasta ese domingo. Se comparan consigo
+ * mismas, de modo que el delta mide envejecimiento y no un cambio de población:
  *
- *   · La de hoy sale de `last_practiced_day` y del peldaño actual.
- *   · La de antes sale del **último ensayo hasta ese domingo** y del **último
- *     evento `status` hasta esa fecha**. Una fila que aún no existía (alta
- *     posterior) o que no tenía estado registrado entonces queda fuera: no se
- *     le supone el peldaño de hoy.
+ *   · La de antes: último ensayo hasta ese domingo y último evento `status` hasta
+ *     esa fecha.
+ *   · La de hoy: el último día que consta de cada una de esas mismas tunes y su
+ *     peldaño actual.
  *
- * `enoughHistory` es `false` cuando no hay ninguna marca anterior a ese domingo;
- * entonces no hay comparación que enseñar y el panel dice «aún sin historial».
- * En ese caso `previousPct` y `deltaPp` no se leen (no hay nada que comparar).
+ * Una fila que aún no existía o que no tenía estado registrado entonces queda
+ * fuera: no se le supone el peldaño de hoy para inventarle un pasado.
+ *
+ * `enoughHistory` es `false` cuando el censo comparado está vacío; entonces no hay
+ * comparación que enseñar y el panel dice «aún sin historial». En ese caso
+ * `previousPct` y `deltaPp` no se leen.
  */
 export function overdueDelta(
   rows: readonly RepertoireRow[],
@@ -457,13 +461,6 @@ export function overdueDelta(
   events: readonly InsightEvent[],
   nowMs: number,
 ): OverdueDelta {
-  const current = tallyBands(
-    rows.filter(isRotationRow).flatMap((row): BandRecord[] => {
-      const days = daysSinceDay(row.last_practiced_day, nowMs);
-      return days === null ? [] : [{ band: row.status, days }];
-    }),
-  );
-
   const previousSunday = shiftDayKey(weekStartKey(nowMs), -1);
   const boundary = dayBoundaryAfter(previousSunday);
   const statusThen = statusMapAt(events, boundary);
@@ -476,21 +473,35 @@ export function overdueDelta(
     if (!known || mark.day > known) lastMark.set(mark.repertoireId, mark.day);
   }
 
+  // **El mismo censo en las dos fotos.** Se mide cómo envejecen las tunes que ya
+  // estaban en rotación y con ensayo registrado el domingo pasado. Si cada foto
+  // se midiera sobre su propio conjunto —la de hoy sobre las 116 con día y la de
+  // antes sobre las 69 de entonces—, el delta mezclaría envejecimiento con cambio
+  // de censo y un repertorio que crece parecería mejorar.
   const previousRecords: BandRecord[] = [];
+  const currentRecords: BandRecord[] = [];
+
   for (const row of rows) {
     if (row.shelved) continue; // aparcar no cambia el peldaño, pero sí la rotación
-    const band = statusThen.get(row.id);
-    if (!band) continue;
+    const bandThen = statusThen.get(row.id);
+    if (!bandThen) continue;
     const addedAt = instantOf(row.added_at);
     if (addedAt !== null && addedAt >= boundary) continue; // todavía no existía
-    const day = lastMark.get(row.id);
-    if (!day) continue; // sin ensayo hasta ese domingo: sin registro, no vencida
-    const days = daysBetween(day, previousSunday);
-    if (days === null) continue;
-    previousRecords.push({ band, days });
+    const dayThen = lastMark.get(row.id);
+    if (!dayThen) continue; // sin ensayo hasta ese domingo: sin registro, no vencida
+
+    const daysBefore = daysBetween(dayThen, previousSunday);
+    // Hoy: el último día que consta (la columna si está, y si no el del domingo).
+    const daysNow = daysSinceDay(row.last_practiced_day ?? dayThen, nowMs);
+    const bandNow = asLadderStatus(row.status);
+    if (daysBefore === null || daysNow === null || !bandNow) continue;
+
+    previousRecords.push({ band: bandThen, days: daysBefore });
+    currentRecords.push({ band: bandNow, days: daysNow });
   }
 
   const previous = tallyBands(previousRecords);
+  const current = tallyBands(currentRecords);
 
   const currentPct = round1(percentOf(sumOverdue(current), sumPracticed(current)));
   const previousPct = round1(percentOf(sumOverdue(previous), sumPracticed(previous)));
@@ -514,7 +525,7 @@ export function overdueDelta(
         deltaPp: round1(nowPct - thenPct),
       };
     }),
-    enoughHistory: marks.some((mark) => mark.day < previousSunday),
+    enoughHistory: previousRecords.length > 0,
   };
 }
 
@@ -679,14 +690,20 @@ export function revisits(
   }
 
   const counts = REVISIT_RANGES.map(() => 0);
-  let under = 0;
-  let over = 0;
+  let tooSoon = 0;
+  let inBand = 0;
+  let late = 0;
 
   for (const gap of gaps) {
     const targetHours = TARGET_DAYS_BY_BAND[gap.band] * 24;
-    if (gap.hours < targetHours) under += 1;
-    else if (gap.hours > targetHours) over += 1;
-    counts[revisitRangeIndex(gap.hours / targetHours)] += 1;
+    const ratio = gap.hours / targetHours;
+    // Tres cubos que suman `pairs`: antes, en banda y tarde. Un `under` que
+    // metiera la banda sana dentro de «demasiado pronto» diría lo contrario de
+    // lo que el panel tiene que decidir.
+    if (ratio < 0.5) tooSoon += 1;
+    else if (ratio <= 1) inBand += 1;
+    else late += 1;
+    counts[revisitRangeIndex(ratio)] += 1;
   }
 
   const medianHours = median(gaps.map((gap) => gap.hours));
@@ -694,8 +711,9 @@ export function revisits(
   return {
     pairs: gaps.length,
     medianHours: medianHours === null ? null : round1(medianHours),
-    under,
-    over,
+    tooSoon,
+    inBand,
+    late,
     buckets: REVISIT_RANGES.map((range, index) => ({
       key: range.key,
       label: range.label,

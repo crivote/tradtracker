@@ -114,7 +114,7 @@ describe('overdueHistogram', () => {
       practicedRow(`t${index}`, 'mastered', NOW, days),
     );
 
-    const histogram = overdueHistogram(rows, [], NOW);
+    const histogram = overdueHistogram(rows, NOW);
 
     expect(countsByKey(histogram.buckets)).toEqual({
       '0-3': 1,
@@ -139,7 +139,7 @@ describe('overdueHistogram', () => {
   });
 
   it('cuenta el día de hoy en «0–3» y no lo saca del universo', () => {
-    const histogram = overdueHistogram([practicedRow('a', 'mastered', NOW, 0)], [], NOW);
+    const histogram = overdueHistogram([practicedRow('a', 'mastered', NOW, 0)], NOW);
     expect(countsByKey(histogram.buckets)['0-3']).toBe(1);
     expect(histogram.overdue).toBe(0);
   });
@@ -151,7 +151,7 @@ describe('overdueHistogram', () => {
       practicedRow('vieja', 'mastered', NOW, 400),
     ];
 
-    const histogram = overdueHistogram(rows, [], NOW);
+    const histogram = overdueHistogram(rows, NOW);
 
     expect(histogram.universe).toBe(3);
     // La columna a null y el texto que no es un día son lo mismo: no hay dato.
@@ -177,7 +177,7 @@ describe('overdueHistogram', () => {
       row({ id: 'aparcada', status: 'mastered', shelved: true, last_practiced_day: dayKey(NOW, 30) }),
     ];
 
-    const histogram = overdueHistogram(rows, [], NOW);
+    const histogram = overdueHistogram(rows, NOW);
 
     expect(histogram.universe).toBe(1);
     expect(histogram.sinRegistro).toBe(0);
@@ -193,7 +193,7 @@ describe('overdueHistogram', () => {
       practicedRow(`${status}-pasada`, status, NOW, TARGET_DAYS_BY_BAND[status] + 1),
     ]);
 
-    const histogram = overdueHistogram(rows, [], NOW);
+    const histogram = overdueHistogram(rows, NOW);
 
     expect(histogram.overdue).toBe(5);
     expect(histogram.overduePct).toBe(50);
@@ -213,7 +213,7 @@ describe('overdueHistogram', () => {
       row({ id: 'sin-registro-2' }),
     ];
 
-    const histogram = overdueHistogram(rows, [], NOW);
+    const histogram = overdueHistogram(rows, NOW);
 
     expect(histogram.universe).toBe(4);
     expect(histogram.sinRegistro).toBe(2);
@@ -230,7 +230,7 @@ describe('overdueHistogram', () => {
   });
 
   it('sin filas devuelve el histograma vacío, con las cinco bandas a cero', () => {
-    const histogram = overdueHistogram([], [], NOW);
+    const histogram = overdueHistogram([], NOW);
 
     expect(histogram.universe).toBe(0);
     expect(histogram.sinRegistro).toBe(0);
@@ -251,7 +251,6 @@ describe('overdueHistogram', () => {
 
     const histogram = overdueHistogram(
       [row({ id: 'tarde', status: 'playing_along', last_practiced_day: day })],
-      [mark('tarde', day, new Date(lateMarkAt).toISOString())],
       at(2026, 11, 14, 0, 30),
     );
 
@@ -336,7 +335,7 @@ describe('overdueDelta', () => {
     expect(delta.deltaPp).toBe(-100);
   });
 
-  it('sin eventos anteriores a esa fecha, la fila no entra en la foto vieja', () => {
+  it('mide las dos fotos sobre el mismo censo: la fila sin estado el domingo no entra en ninguna', () => {
     const rows = [practicedRow('a', 'playing_along', NOW, 4), practicedRow('b', 'playing_along', NOW, 30)];
     const events = [statusEvent('b', 'playing_along', '2026-11-10T10:00:00+00:00')];
     const marks = [
@@ -346,10 +345,13 @@ describe('overdueDelta', () => {
 
     const delta = overdueDelta(rows, marks, events, NOW);
 
-    // Solo `a` tenía estado el domingo 8: la foto vieja se mide sobre una fila.
+    // `b` no tenía estado el domingo 8: queda fuera de la foto vieja y también de
+    // la de hoy, que se mide sobre el mismo censo. Si hoy se midiera sobre las
+    // dos, `b` —30 días, vencida— movería el porcentaje y el delta confundiría
+    // «el repertorio ha crecido» con «estas tunes han envejecido».
     expect(delta.previousPct).toBe(0);
-    expect(delta.currentPct).toBe(50);
-    expect(delta.deltaPp).toBe(50);
+    expect(delta.currentPct).toBe(0);
+    expect(delta.deltaPp).toBe(0);
   });
 
   it('sin ninguna marca anterior a ese domingo no hay comparación (`enoughHistory: false`)', () => {
@@ -476,9 +478,11 @@ describe('revisits', () => {
     expect(summary.pairs).toBe(5);
     // Huecos [12, 96, 120, 72, 24] → mediana 72.
     expect(summary.medianHours).toBe(72);
-    // Bajo el objetivo: 12, 96, 120 y 24 h. Por encima: las 72 h de `q`.
-    expect(summary.under).toBe(4);
-    expect(summary.over).toBe(1);
+    // Por ratio: 12 h sobre 168 → 0,07 (demasiado pronto); 96 y 120 sobre 168 y
+    // 24 sobre 48 caen en banda; 72 sobre 48 → 1,5 (tarde). Los tres suman pairs.
+    expect(summary.tooSoon).toBe(1);
+    expect(summary.inBand).toBe(3);
+    expect(summary.late).toBe(1);
     expect(countsByKey(summary.buckets)).toEqual({
       'under-0.5': 1, // 12 h sobre 168 → 0,07
       '0.5-1': 3, // 96 h (0,57), 120 h (0,71) y 24 h sobre 48 (0,5)
@@ -497,14 +501,15 @@ describe('revisits', () => {
     expect(summary.pairs).toBe(0);
     // `null`, no 0: no hay una mediana de cero horas.
     expect(summary.medianHours).toBeNull();
-    expect(summary.under).toBe(0);
-    expect(summary.over).toBe(0);
+    expect(summary.tooSoon).toBe(0);
+    expect(summary.inBand).toBe(0);
+    expect(summary.late).toBe(0);
     expect(summary.buckets.map((bucket) => bucket.count)).toEqual([0, 0, 0, 0]);
     expect(summary.buckets.map((bucket) => bucket.pct)).toEqual([0, 0, 0, 0]);
   });
 
   it('sin marcas devuelve la estructura vacía', () => {
-    expect(revisits([], [])).toMatchObject({ pairs: 0, medianHours: null, under: 0, over: 0 });
+    expect(revisits([], [])).toMatchObject({ pairs: 0, medianHours: null, tooSoon: 0, inBand: 0, late: 0 });
   });
 
   it('no depende del orden en que lleguen las marcas', () => {
