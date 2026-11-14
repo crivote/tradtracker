@@ -91,7 +91,7 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
 | D3 | Multiusuario público desde v1, RLS completa desde el primer esquema |
 | D4 | **Identidad propia**: `pr_tunes.id` uuid + `origin` + `origin_ref`. Sin esquema prefijado `ts:`/`loc:` |
 
-## Esquema (migraciones `001`–`015`)
+## Esquema (migraciones `001`–`016`)
 
 - **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `composer` (010), `created_by`, `created_at`. Único `(origin, origin_ref)`.
   RLS: lectura para autenticados; alta/edición/borrado solo del creador.
@@ -106,7 +106,14 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
 - **`pr_repertoire_stats`** (007) — vista con `practice_count` y `avg_quality` por fila de repertorio, con
   `security_invoker = true`: sin esa opción la vista se salta la RLS y devuelve las filas de todos.
 - **Sesiones** (004): `pr_sessions` y `pr_session_tunes` (`quality` opcional). La función `pr_recompute_last_practiced`
-  (009) mantiene `last_practiced_at`, y el trigger `pr_session_tunes_touch_trg` la dispara.
+  (009) mantiene `last_practiced_at`, y el trigger `pr_session_tunes_touch_trg` la dispara. **Este modelo se
+  retira** (decisión del dueño, 2026-11-13): la unidad pasa a ser la marca por tune y día (issue #56).
+- **Transiciones del peldaño** (016): `pr_ladder_event` es un registro **append-only** de cada cambio de
+  `status` y de `shelved` (`kind`, `from_value`, `to_value`, `at`, `source`). Lo escribe el trigger
+  `pr_ladder_event_trg` sobre `pr_repertoire`: un `update` que no toca ninguno de los dos **no crea evento**.
+  `source` (`ui`/`import`/`migration`/`backfill`) permite excluir escrituras masivas de las gráficas. El
+  backfill dejó un evento por fila fechado en `status_changed_at`: **no es una transición**, es la última
+  foto conocida, y leerlo como transición pinta 426 promociones el día del corte.
 - **Etiquetas** (012): `pr_tag_facets`, `pr_tags` y `pr_user_tune_tags`, más `pr_tag_with_ancestors` para aplicar una
   faceta con sus hijos.
 - Trigger `pr_repertoire_touch_trg`: mueve `status_changed_at` cuando cambia `status` — y **no** al aparcar.
