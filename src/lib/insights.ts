@@ -606,8 +606,6 @@ export function compositionByWeek(
 interface RevisitRange {
   key: string;
   label: string;
-  /** Límite superior **exclusivo** del tramo: el ratio entra si es menor. */
-  upTo: number;
 }
 
 /**
@@ -615,22 +613,29 @@ interface RevisitRange {
  * es corto para una cima y largo para lo que se está aprendiendo, así que lo que
  * se mide es `hueco / objetivo`, no el hueco suelto.
  *
- * Los límites son semiabiertos por la izquierda: `<0.5`, `[0.5, 1)`, `[1, 2)` y
- * `≥2`. Un hueco exactamente igual al objetivo cae en `1–2`: cumplió, no se
- * quedó corto.
+ * Las fronteras las pone `revisitRangeIndex` y son las mismas que las de los
+ * contadores: `[0, 0.5)`, `[0.5, 1]`, `(1, 2)` y `[2, ∞)`. Un hueco exactamente
+ * igual al objetivo se queda en `0.5–1×`: cumplió, no se pasó.
  */
 const REVISIT_RANGES: readonly RevisitRange[] = [
-  { key: 'under-0.5', label: '<0.5×', upTo: 0.5 },
-  { key: '0.5-1', label: '0.5–1×', upTo: 1 },
-  { key: '1-2', label: '1–2×', upTo: 2 },
-  { key: '2+', label: '≥2×', upTo: Number.POSITIVE_INFINITY },
+  { key: 'under-0.5', label: '<0.5×' },
+  { key: '0.5-1', label: '0.5–1×' },
+  { key: '1-2', label: '1–2×' },
+  { key: '2+', label: '≥2×' },
 ];
 
+/**
+ * Tramo de una revisita por su ratio. Las fronteras son las MISMAS que las de
+ * `tooSoon`/`inBand`/`late`: `[0, 0.5)`, `[0.5, 1]`, `(1, 2)`, `[2, ∞)`. Un hueco
+ * exactamente igual al objetivo es «en banda» —cumplido justo— y tiene que caer
+ * en el mismo cubo que el contador dice, o el gráfico y la cifra se contradicen
+ * en ese punto.
+ */
 function revisitRangeIndex(ratio: number): number {
-  for (let index = 0; index < REVISIT_RANGES.length; index += 1) {
-    if (ratio < REVISIT_RANGES[index].upTo) return index;
-  }
-  return REVISIT_RANGES.length - 1;
+  if (ratio < 0.5) return 0;
+  if (ratio <= 1) return 1;
+  if (ratio < 2) return 2;
+  return 3;
 }
 
 /**

@@ -512,6 +512,25 @@ describe('revisits', () => {
     expect(revisits([], [])).toMatchObject({ pairs: 0, medianHours: null, tooSoon: 0, inBand: 0, late: 0 });
   });
 
+  it('un hueco exactamente igual al objetivo cuenta en banda, no tarde', () => {
+    // `shaky` tiene objetivo de 4 días: 96 h exactas. Es la única frontera que
+    // separa «cumplido» de «se pasó», y sin este caso el corte podría moverse a
+    // cualquiera de los dos lados sin que la suite se enterara.
+    const rows = [row({ id: 'exacto', status: 'shaky' })];
+    const marks = [
+      mark('exacto', '2026-11-01', '2026-11-01T08:00:00Z'),
+      mark('exacto', '2026-11-05', '2026-11-05T08:00:00Z'),
+    ];
+
+    const summary = revisits(marks, rows);
+
+    expect(summary.pairs).toBe(1);
+    expect(summary.inBand).toBe(1);
+    expect(summary.late).toBe(0);
+    expect(summary.tooSoon).toBe(0);
+    expect(countsByKey(summary.buckets)['0.5-1']).toBe(1);
+  });
+
   it('no depende del orden en que lleguen las marcas', () => {
     const rows = [row({ id: 'a', status: 'learning' })];
     const marks = [
