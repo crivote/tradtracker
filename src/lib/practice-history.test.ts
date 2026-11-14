@@ -1,21 +1,22 @@
 /**
- * Modelo del historial (`/history`): agrupación por día local, cifras y serie de
- * la gráfica. Todo es puro y se prueba sin red ni base.
+ * Modelo del historial (`/history`): agrupación por día, cifras y serie de la
+ * gráfica. Todo es puro y se prueba sin red ni base.
  *
- * Las fechas se construyen con el constructor local (`new Date(año, mes, día,
- * hora)`) y se comparan contra claves locales: la prueba no depende de la zona
- * horaria del runner, que es justo el error que este código evita cometer.
+ * Desde #56 una marca es la tune **y el día**: `pr_practice.day` es un día local
+ * («YYYY-MM-DD») que compuso el cliente, así que el modelo agrupa por esa clave
+ * tal cual y no convierte instantes. Las claves se comparan con `todayKeyFor`
+ * sobre fechas construidas en local: la prueba no depende de la zona horaria del
+ * runner, que es justo el error que este código evita cometer.
  */
 import { describe, expect, it } from 'vitest';
 import {
   buildHistoryDays,
-  dayKeyOf,
   dayLabel,
   historySeries,
   historyStats,
   practiceStreak,
-  type HistoryEntry,
-  type HistorySession,
+  rangeStartKey,
+  type PracticeMark,
 } from './practice-history';
 import { todayKeyFor } from './practice-storage';
 
@@ -24,66 +25,72 @@ function at(year: number, month: number, day: number, hour = 12, minute = 0): nu
   return new Date(year, month - 1, day, hour, minute).getTime();
 }
 
-function entry(id: string, quality: number | null, comment: string | null = null): HistoryEntry {
+/** Marca de una tune en un día local, tal y como llega de `pr_practice`. */
+function mark(
+  repertoireId: string,
+  day: string,
+  quality: number | null,
+  comment: string | null = null,
+): PracticeMark {
   return {
-    repertoireId: id,
-    title: `Tune ${id}`,
+    day,
+    repertoireId,
+    title: `Tune ${repertoireId}`,
     rhythm: 'reel',
     quality,
     comment,
-    position: 0,
   };
 }
 
-function session(id: string, startedMs: number, entries: HistoryEntry[]): HistorySession {
-  return { id, startedAt: new Date(startedMs).toISOString(), entries };
+/** Clave `YYYY-MM-DD` del día local del instante. */
+function keyOf(ms: number): string {
+  return todayKeyFor(ms);
 }
 
 describe('buildHistoryDays', () => {
-  it('agrupa por día local y no por el día UTC', () => {
-    // 23:30 del 10 y 00:30 del 11 son días distintos, aunque en UTC puedan caer
-    // en el mismo si la zona va por detrás.
+  it('agrupa por el día local que trae la marca, sin convertirlo', () => {
+    // Las 23:30 del 10 y las 00:30 del 11 son días distintos: el cliente ya
+    // escribió el día local de cada ensayo, así que aquí no hay husos que valgan.
     const days = buildHistoryDays([
-      session('s1', at(2026, 11, 10, 23, 30), [entry('a', 3)]),
-      session('s2', at(2026, 11, 11, 0, 30), [entry('b', null)]),
+      mark('a', keyOf(at(2026, 11, 10, 23, 30)), 3),
+      mark('b', keyOf(at(2026, 11, 11, 0, 30)), null),
     ]);
 
-    expect(days.map((day) => day.key)).toEqual([
-      todayKeyFor(at(2026, 11, 11, 0, 30)),
-      todayKeyFor(at(2026, 11, 10, 23, 30)),
-    ]);
+    expect(days.map((day) => day.key)).toEqual([keyOf(at(2026, 11, 11, 0, 30)), keyOf(at(2026, 11, 10, 23, 30))]);
     expect(days[0].entries.map((e) => e.repertoireId)).toEqual(['b']);
     expect(days[1].entries.map((e) => e.repertoireId)).toEqual(['a']);
   });
 
-  it('suma sesiones y ensayos del mismo día y deja la media de lo valorado', () => {
+  it('suma los ensayos del mismo día y deja la media de lo valorado', () => {
+    const day = keyOf(at(2026, 11, 11, 9));
     const days = buildHistoryDays([
-      session('s1', at(2026, 11, 11, 9), [entry('a', 5), entry('b', null)]),
-      session('s2', at(2026, 11, 11, 20), [entry('c', 2)]),
+      mark('a', day, 5),
+      mark('b', day, null),
+      mark('c', day, 2),
     ]);
 
     expect(days).toHaveLength(1);
-    expect(days[0]).toMatchObject({ sessions: 2, practices: 3 });
+    expect(days[0].practices).toBe(3);
     // La media ignora los ensayos sin puntuar: (5 + 2) / 2.
     expect(days[0].avgQuality).toBe(3.5);
   });
 
   it('sin valoraciones no hay media, y no se inventa un cero', () => {
-    const [day] = buildHistoryDays([session('s1', at(2026, 11, 11, 9), [entry('a', null)])]);
+    const [day] = buildHistoryDays([mark('a', keyOf(at(2026, 11, 11, 9)), null)]);
     expect(day.avgQuality).toBeNull();
   });
 
   it('ordena los días del más reciente al más antiguo aunque lleguen desordenados', () => {
     const days = buildHistoryDays([
-      session('s1', at(2026, 11, 9, 9), [entry('a', null)]),
-      session('s2', at(2026, 11, 11, 9), [entry('b', null)]),
-      session('s3', at(2026, 11, 10, 9), [entry('c', null)]),
+      mark('a', keyOf(at(2026, 11, 9, 9)), null),
+      mark('b', keyOf(at(2026, 11, 11, 9)), null),
+      mark('c', keyOf(at(2026, 11, 10, 9)), null),
     ]);
 
     expect(days.map((day) => day.key)).toEqual([
-      todayKeyFor(at(2026, 11, 11, 9)),
-      todayKeyFor(at(2026, 11, 10, 9)),
-      todayKeyFor(at(2026, 11, 9, 9)),
+      keyOf(at(2026, 11, 11, 9)),
+      keyOf(at(2026, 11, 10, 9)),
+      keyOf(at(2026, 11, 9, 9)),
     ]);
   });
 });
@@ -92,8 +99,9 @@ describe('historySeries', () => {
   it('devuelve un punto por día del rango, con ceros incluidos, del antiguo a hoy', () => {
     const now = at(2026, 11, 11, 18);
     const days = buildHistoryDays([
-      session('s1', at(2026, 11, 11, 9), [entry('a', null)]),
-      session('s2', at(2026, 11, 9, 9), [entry('b', null), entry('c', null)]),
+      mark('a', keyOf(at(2026, 11, 11, 9)), null),
+      mark('b', keyOf(at(2026, 11, 9, 9)), null),
+      mark('c', keyOf(at(2026, 11, 9, 9)), null),
     ]);
 
     const points = historySeries(days, { nowMs: now, range: 4 });
@@ -108,6 +116,15 @@ describe('historySeries', () => {
     const now = at(2026, 11, 11, 23, 45);
     const points = historySeries([], { nowMs: now, range: 7 });
     expect(points[points.length - 1].key).toBe(todayKeyFor(now));
+  });
+});
+
+describe('rangeStartKey', () => {
+  it('el primer día del rango es local y no se descuadra con el cambio de hora', () => {
+    // Del 21 al 28 de octubre de 2026 cae el cambio de hora en Europa: una resta
+    // de 86 400 000 ms por día caería en el día de al lado.
+    expect(rangeStartKey(at(2026, 10, 28, 12), 7)).toBe(keyOf(at(2026, 10, 22, 12)));
+    expect(rangeStartKey(at(2026, 10, 28, 12), 1)).toBe(keyOf(at(2026, 10, 28, 12)));
   });
 });
 
@@ -141,16 +158,17 @@ describe('historyStats', () => {
   it('resume el rango y reparte las valoraciones', () => {
     const now = at(2026, 11, 11, 18);
     const days = buildHistoryDays([
-      session('s1', at(2026, 11, 11, 9), [entry('a', 5), entry('b', 4)]),
-      session('s2', at(2026, 11, 10, 9), [entry('a', 3), entry('c', null)]),
-      session('s3', at(2026, 11, 8, 9), [entry('d', 1)]),
+      mark('a', keyOf(at(2026, 11, 11, 9)), 5),
+      mark('b', keyOf(at(2026, 11, 11, 9)), 4),
+      mark('a', keyOf(at(2026, 11, 10, 9)), 3),
+      mark('c', keyOf(at(2026, 11, 10, 9)), null),
+      mark('d', keyOf(at(2026, 11, 8, 9)), 1),
     ]);
 
     const stats = historyStats(days, { nowMs: now, range: 7 });
 
     expect(stats).toMatchObject({
       practices: 5,
-      sessions: 3,
       activeDays: 3,
       streak: 2,
       ratedCount: 4,
@@ -164,7 +182,6 @@ describe('historyStats', () => {
     const stats = historyStats([], { nowMs: at(2026, 11, 11, 12), range: 30 });
     expect(stats).toMatchObject({
       practices: 0,
-      sessions: 0,
       activeDays: 0,
       streak: 0,
       avgQuality: null,
@@ -185,12 +202,5 @@ describe('dayLabel', () => {
 
   it('una fecha anterior se dice con el día de la semana y el mes', () => {
     expect(dayLabel(todayKeyFor(at(2026, 11, 8, 9)), now)).toBe('Sunday 8 November');
-  });
-});
-
-describe('dayKeyOf', () => {
-  it('usa la fecha local del instante ISO', () => {
-    const ms = at(2026, 11, 11, 23, 30);
-    expect(dayKeyOf(new Date(ms).toISOString())).toBe(todayKeyFor(ms));
   });
 });

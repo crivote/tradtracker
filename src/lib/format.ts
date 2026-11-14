@@ -61,3 +61,54 @@ export function daysSince(iso: string | null, now: number = Date.now()): number 
   if (Number.isNaN(then)) return null;
   return Math.max(0, Math.floor((now - then) / 86_400_000));
 }
+
+/**
+ * Instante de la medianoche **local** del día `YYYY-MM-DD`.
+ *
+ * `Date.parse('2026-11-13')` y `new Date('2026-11-13')` leen la fecha como UTC
+ * medianoche (lo dice la norma), así que en Madrid el día empieza a las 01:00 y
+ * a las 23:30 se cuentan dos días distintos según el huso. Las fechas de ensayo
+ * (`pr_practice.day`, `pr_repertoire.last_practiced_day`) son días locales, y
+ * solo se pueden convertir con el constructor local.
+ *
+ * `NaN` si el texto no tiene la forma `YYYY-MM-DD`: quien llama decide qué
+ * hacer con una fecha ilegible, no se inventa un día.
+ */
+export function parseLocalDay(day: string): number {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!match) return Number.NaN;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).getTime();
+}
+
+/**
+ * Días locales enteros entre un día `YYYY-MM-DD` y `now`.
+ *
+ * Se cuenta por medianoches locales, no por milisegundos del instante: un
+ * ensayo de las 23:30 del día 10 es el día 10, y a las 00:30 del 11 ya es el 11.
+ * El redondeo absorbe los días de cambio de hora (23 o 25 horas), que una resta
+ * de 86 400 000 ms convertiría en un día de más o de menos. Nunca negativo, por
+ * lo mismo que `daysSince`.
+ */
+export function daysSinceDay(day: string | null, now: number = Date.now()): number | null {
+  if (!day) return null;
+  const then = parseLocalDay(day);
+  if (Number.isNaN(then)) return null;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.round((today.getTime() - then) / 86_400_000));
+}
+
+/**
+ * Un día local `YYYY-MM-DD` como fecha legible, con el formato corto del resto
+ * de la app. Sin día —o ilegible— devuelve el guion de los huecos.
+ */
+export function formatDay(day: string | null): string {
+  if (!day) return '—';
+  const ms = parseLocalDay(day);
+  if (Number.isNaN(ms)) return '—';
+  return new Date(ms).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}

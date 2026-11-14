@@ -15,11 +15,13 @@ import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { MemoryRouter, Route, createMemoryHistory } from '@solidjs/router';
 import TuneCard from './TuneCard';
 import type { RepertoireRow } from '../lib/repertoire-model';
+import { todayKeyFor } from '../lib/practice-storage';
 
 const NOW = Date.parse('2026-10-28T12:00:00Z');
 
+/** Día local (`YYYY-MM-DD`) de hace `days` días: la carta lee días, no instantes. */
 function daysAgo(days: number): string {
-  return new Date(NOW - days * 86_400_000).toISOString();
+  return todayKeyFor(NOW - days * 86_400_000);
 }
 
 function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
@@ -35,7 +37,7 @@ function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
     customAbc: null,
     notes: null,
     added_at: '2026-09-01T10:00:00Z',
-    last_practiced_at: null,
+    last_practiced_day: null,
     status_changed_at: null,
     tune: {
       id: 'tune-a',
@@ -139,7 +141,7 @@ describe('la carta (#29)', () => {
   });
 
   it('el color del tag sale de los días crudos: 3 días es rgb(235,214,197)', () => {
-    const { container } = mount([row({ last_practiced_at: daysAgo(3) })]);
+    const { container } = mount([row({ last_practiced_day: daysAgo(3) })]);
     const tag = container.querySelector('.tag') as HTMLElement;
     expect(tag.textContent?.trim()).toBe('3 days');
     expect(tag.getAttribute('style')).toMatch(/235,\s*214,\s*197/);
@@ -147,7 +149,7 @@ describe('la carta (#29)', () => {
   });
 
   it('a 90 días el tag está en teja y el texto va en blanco', () => {
-    const { container } = mount([row({ last_practiced_at: daysAgo(90) })]);
+    const { container } = mount([row({ last_practiced_day: daysAgo(90) })]);
     const tag = container.querySelector('.tag') as HTMLElement;
     expect(tag.textContent?.trim()).toBe('90 days');
     expect(tag.getAttribute('style')).toMatch(/186,\s*95,\s*62/);

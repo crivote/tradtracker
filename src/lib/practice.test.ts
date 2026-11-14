@@ -1,37 +1,36 @@
 /**
  * Capa de datos de la práctica con el cliente de Supabase simulado.
  *
- * Dos reglas se juegan algo aquí y por eso están probadas:
- *   · La **compensación** de F4: si la línea falla, la sesión recién creada no
- *     puede quedarse vacía en el historial (una sesión fantasma).
- *   · El **desmarcado** es una sola operación: borrar la línea **y** recalcular
- *     `last_practiced_at`. Si el recálculo falla después del borrado, el error
+ * Desde #56 la unidad es la **tune y el día**: una fila de `pr_practice` con
+ * `unique (user_id, repertoire_id, day)`. Aquí se prueban las reglas que se
+ * juegan algo:
+ *   · El **día** lo compone el cliente con `todayKeyFor`: un ensayo de las 23:30
+ *     locales es del día en que se tocó, no del siguiente. Nunca `toISOString`.
+ *   · El **upsert** del mismo día: marcar y luego valorar deja **una** fila y
+ *     actualiza la valoración.
+ *   · El **desmarcado** es una sola operación: borra la fila del día **y**
+ *     recalcula la fecha. Si el recálculo falla después del borrado, el error
  *     tiene que decir que la marca se quitó y que la fecha puede estar movida.
  *
- * También se comprueba que el cliente no escribe `user_id` ni
- * `last_practiced_at` — los pone la base.
+ * También se comprueba que el cliente no escribe `user_id` ni `practiced_at`, y
+ * que `quality` sigue siendo opcional y el comentario se normaliza.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  sessionResult: { data: { id: 'session-1' }, error: null } as any,
-  /** Resultado de cada `insert` de `pr_session_tunes`, en orden; si se acaba, `lineResult`. */
-  lineResults: [] as any[],
-  lineResult: { error: null } as any,
-  /** Respuesta de `fetchSessionMarks`: líneas de una sesión concreta. */
+  /** Resultado del `upsert` de `pr_practice` (por defecto, una fila con id). */
+  upsertResult: { data: { id: 'practice-1' }, error: null } as any,
+  /** Cuerpos de cada `upsert`, en orden. */
+  upsertBodies: [] as any[],
+  /** Opciones de cada `upsert` (`onConflict`), en orden. */
+  upsertOptions: [] as any[],
+  /** Respuesta de `fetchDayMarks`. */
   marksResult: { data: null, error: null } as any,
-  /** Respuesta del `update` de una línea dentro de una sesión abierta. */
-  updateResult: { data: [{ repertoire_id: 'row-a' }], error: null } as any,
-  updateBodies: [] as any[],
-  updateFilters: [] as any[],
-  deleteResult: { error: null } as any,
-  rpcResult: { error: null } as any,
-  sessionBodies: [] as any[],
-  lineBodies: [] as any[],
-  deleted: [] as string[],
-  deletes: [] as Array<Record<string, string>>,
   marksSelect: '' as string,
   marksFilters: [] as any[],
+  deleteResult: { error: null } as any,
+  rpcResult: { error: null } as any,
+  deletes: [] as Array<Record<string, string>>,
   rpcCalls: [] as Array<{ fn: string; args: any }>,
 }));
 
@@ -51,22 +50,6 @@ vi.mock('./supabase', () => {
         filter((call) => log?.(call), { method: 'eq', col, val });
         return self;
       },
-      is: (col: string, val: unknown) => {
-        filter((call) => log?.(call), { method: 'is', col, val });
-        return self;
-      },
-      gte: (col: string, val: unknown) => {
-        filter((call) => log?.(call), { method: 'gte', col, val });
-        return self;
-      },
-      order: (col: string, opts: unknown) => {
-        filter((call) => log?.(call), { method: 'order', col, opts });
-        return self;
-      },
-      limit: (n: number) => {
-        filter((call) => log?.(call), { method: 'limit', n });
-        return self;
-      },
       select: () => self,
       maybeSingle: async () => result,
       single: async () => result,
@@ -78,63 +61,32 @@ vi.mock('./supabase', () => {
   return {
     supabase: {
       from: (table: string) => {
-        if (table === 'pr_sessions') {
-          return {
-            insert: (body: any) => {
-              h.sessionBodies.push(body);
-              return { select: () => ({ maybeSingle: async () => h.sessionResult }) };
-            },
-            delete: () => {
-              // `delete().eq('id', …)` — se anota al resolver, no al llamar.
-              const self: any = {
-                eq: (col: string, val: unknown) => {
-                  if (col === 'id' && typeof val === 'string') h.deleted.push(val);
-                  return self;
-                },
-                then: (resolve: any, reject: any) =>
-                  Promise.resolve({ error: null }).then(resolve, reject),
-              };
-              return self;
-            },
-          };
+        if (table !== 'pr_practice') {
+          throw new Error(`unexpected table in this test: ${table}`);
         }
-
-        if (table === 'pr_session_tunes') {
-          return {
-            insert: async (body: any) => {
-              h.lineBodies.push(body);
-              if (h.lineResults.length > 0) return h.lineResults.shift();
-              return h.lineResult;
-            },
-            update: (body: any) => {
-              h.updateBodies.push(body);
-              return chain(h.updateResult, (call) => h.updateFilters.push(call));
-            },
-            select: (columns: string) => {
-              h.marksSelect = columns;
-              return chain(h.marksResult, (call) => h.marksFilters.push(call));
-            },
-            delete: () => {
-              const record: Record<string, string> = {};
-              const self: any = {
-                eq: (col: string, val: string) => {
-                  record[col] = val;
-                  return self;
-                },
-                then: (resolve: any, reject: any) => {
-                  h.deletes.push({ ...record });
-                  return Promise.resolve(h.deleteResult).then(resolve, reject);
-                },
-              };
-              return self;
-            },
-          };
-        }
-
         return {
-          insert: async (body: any) => {
-            h.lineBodies.push(body);
-            return h.lineResult;
+          upsert: (body: any, options?: any) => {
+            h.upsertBodies.push(body);
+            h.upsertOptions.push(options);
+            return chain(h.upsertResult);
+          },
+          select: (columns: string) => {
+            h.marksSelect = columns;
+            return chain(h.marksResult, (call) => h.marksFilters.push(call));
+          },
+          delete: () => {
+            const record: Record<string, string> = {};
+            const self: any = {
+              eq: (col: string, val: string) => {
+                record[col] = val;
+                return self;
+              },
+              then: (resolve: any, reject: any) => {
+                h.deletes.push({ ...record });
+                return Promise.resolve(h.deleteResult).then(resolve, reject);
+              },
+            };
+            return self;
           },
         };
       },
@@ -147,271 +99,208 @@ vi.mock('./supabase', () => {
 });
 
 import {
-  addSessionMarks,
-  createSessionWithMarks,
-  fetchSessionMarks,
+  fetchDayMarks,
   logPractice,
-  unmarkSessionTune,
+  markPracticeDay,
+  recomputeLastPractice,
+  unmarkPractice,
 } from './practice';
+import { todayKeyFor } from './practice-storage';
 
 beforeEach(() => {
-  h.sessionResult = { data: { id: 'session-1' }, error: null };
-  h.lineResults = [];
-  h.lineResult = { error: null };
+  h.upsertResult = { data: { id: 'practice-1' }, error: null };
+  h.upsertBodies = [];
+  h.upsertOptions = [];
   h.marksResult = { data: null, error: null };
-  h.updateResult = { data: [{ repertoire_id: 'row-a' }], error: null };
-  h.updateBodies = [];
-  h.updateFilters = [];
-  h.deleteResult = { error: null };
-  h.rpcResult = { error: null };
-  h.sessionBodies = [];
-  h.lineBodies = [];
-  h.deleted = [];
-  h.deletes = [];
   h.marksSelect = '';
   h.marksFilters = [];
+  h.deleteResult = { error: null };
+  h.rpcResult = { error: null };
+  h.deletes = [];
   h.rpcCalls = [];
 });
 
-describe('logPractice', () => {
-  it('inserts the session with no body and then the line with the quality and comment', async () => {
+describe('logPractice: la marca es la tune y el día', () => {
+  it('hace upsert con el día local, el único que hace del día la unidad', async () => {
     await logPractice('row-a', { quality: 3, comment: '  hola  ' });
 
-    // Sin cuerpo: user_id y started_at los pone la base.
-    expect(h.sessionBodies).toEqual([{}]);
-    expect(h.lineBodies[0]).toEqual({
-      session_id: 'session-1',
+    expect(h.upsertBodies[0]).toEqual({
       repertoire_id: 'row-a',
+      day: todayKeyFor(Date.now()),
       quality: 3,
       comment: 'hola',
     });
+    expect(h.upsertOptions[0]).toEqual({ onConflict: 'user_id,repertoire_id,day' });
     // El cliente no manda lo que mantiene la base.
-    expect(h.lineBodies[0].user_id).toBeUndefined();
-    expect(h.lineBodies[0].last_practiced_at).toBeUndefined();
+    expect(h.upsertBodies[0].user_id).toBeUndefined();
+    expect(h.upsertBodies[0].practiced_at).toBeUndefined();
   });
 
-  it('sends a blank comment as null', async () => {
+  it('un ensayo de las 23:30 locales del día 10 es del día 10, no del 11', async () => {
+    // La trampa: `new Date('2026-11-10')` y `toISOString().slice(0, 10)` leen
+    // UTC, y en Madrid el día UTC ya cambió a las 23:00 locales.
+    const lateNight = new Date(2026, 10, 10, 23, 30);
+    await logPractice('row-a', { quality: null, comment: null }, { practicedAt: lateNight });
+
+    expect(h.upsertBodies[0].day).toBe('2026-11-10');
+  });
+
+  it('el mismo ensayo justo después de medianoche ya es del día siguiente', async () => {
+    const afterMidnight = new Date(2026, 10, 11, 0, 30);
+    await logPractice('row-a', { quality: null, comment: null }, { practicedAt: afterMidnight });
+
+    expect(h.upsertBodies[0].day).toBe('2026-11-11');
+  });
+
+  it('valora con el instante recibido: `practicedAt` manda sobre el reloj', async () => {
+    const at = new Date(2026, 10, 10, 9, 0);
+    await logPractice('row-a', { quality: 4, comment: null }, { practicedAt: at });
+
+    expect(h.upsertBodies[0].day).toBe(todayKeyFor(at.getTime()));
+    expect(h.upsertBodies[0].quality).toBe(4);
+  });
+
+  it('manda el comentario en blanco como null y la calidad ausente como null', async () => {
     await logPractice('row-a', { quality: null, comment: '   ' });
-    expect(h.lineBodies[0].comment).toBeNull();
-    expect(h.lineBodies[0].quality).toBeNull();
+    expect(h.upsertBodies[0].comment).toBeNull();
+    expect(h.upsertBodies[0].quality).toBeNull();
   });
 
-  it('deletes the new session and rethrows the line error', async () => {
-    h.lineResult = { error: { message: 'nope' } };
+  it('devuelve el id de la fila que la base deja escrita', async () => {
+    await expect(logPractice('row-a', { quality: 4, comment: null })).resolves.toBe('practice-1');
+  });
+
+  it('un error del upsert se lanza con el mensaje de la base', async () => {
+    h.upsertResult = { data: null, error: { message: 'denied' } };
 
     await expect(logPractice('row-a', { quality: null, comment: null })).rejects.toThrow(
-      'Could not save the practice: nope'
+      'Could not save the practice: denied',
     );
-
-    expect(h.deleted).toEqual(['session-1']);
   });
 
-  it('reports a failed session insert and does not try the line', async () => {
-    h.sessionResult = { data: null, error: { message: 'denied' } };
+  it('si la base no devuelve id, se dice en vez de devolver vacío', async () => {
+    h.upsertResult = { data: null, error: null };
 
     await expect(logPractice('row-a', { quality: null, comment: null })).rejects.toThrow(
-      'Could not save the practice: denied'
+      'The practice was saved but no id came back.',
     );
-
-    expect(h.lineBodies).toEqual([]);
-    expect(h.deleted).toEqual([]);
-  });
-
-  it('devuelve el id de la sesión que abrió', async () => {
-    await expect(logPractice('row-a', { quality: 4, comment: null })).resolves.toBe('session-1');
   });
 });
 
-describe('logPractice sobre la sesión abierta de la lista (#36)', () => {
-  it('actualiza la línea de esa tune y no abre otra sesión', async () => {
-    const sessionId = await logPractice(
-      'row-a',
-      { quality: 4, comment: '  bien  ' },
-      { sessionId: 'open-session' },
-    );
+describe('markPracticeDay: la tanda de la lista del día', () => {
+  it('marca varias tunes de hoy en un solo viaje, sin valoración', async () => {
+    const written = await markPracticeDay(['row-a', 'row-b']);
 
-    expect(sessionId).toBe('open-session');
-    expect(h.sessionBodies).toEqual([]);
-    expect(h.lineBodies).toEqual([]);
-    expect(h.updateBodies).toEqual([{ quality: 4, comment: 'bien' }]);
-    expect(h.updateFilters).toEqual([
-      { method: 'eq', col: 'session_id', val: 'open-session' },
-      { method: 'eq', col: 'repertoire_id', val: 'row-a' },
+    expect(written).toBe(2);
+    expect(h.upsertBodies).toHaveLength(1);
+    expect(h.upsertBodies[0]).toEqual([
+      { repertoire_id: 'row-a', day: todayKeyFor(Date.now()) },
+      { repertoire_id: 'row-b', day: todayKeyFor(Date.now()) },
     ]);
+    expect(h.upsertOptions[0]).toEqual({ onConflict: 'user_id,repertoire_id,day' });
+    // Marcar no puntúa y no pisa lo que ya estuviera valorado: el cuerpo no
+    // lleva `quality` ni `comment`, así que el `DO UPDATE` no los toca.
+    expect(h.upsertBodies[0][0].quality).toBeUndefined();
+    expect(h.upsertBodies[0][0].comment).toBeUndefined();
   });
 
-  it('si la línea ya no está, la cuelga de la misma sesión con su posición', async () => {
-    h.updateResult = { data: [], error: null };
+  it('no repite un id en el cuerpo: el `ON CONFLICT` no puede tocar dos veces la misma fila', async () => {
+    await markPracticeDay(['row-a', 'row-a', 'row-b']);
 
-    const sessionId = await logPractice(
-      'row-a',
-      { quality: null, comment: null },
-      { sessionId: 'open-session', position: 2 },
-    );
-
-    expect(sessionId).toBe('open-session');
-    // No se abre sesión nueva: la que estaba abierta es la del día.
-    expect(h.sessionBodies).toEqual([]);
-    expect(h.lineBodies).toEqual([
-      {
-        session_id: 'open-session',
-        repertoire_id: 'row-a',
-        quality: null,
-        comment: null,
-        position: 2,
-      },
-    ]);
+    expect(h.upsertBodies[0].map((row: any) => row.repertoire_id)).toEqual(['row-a', 'row-b']);
   });
 
-  it('un error del update se lanza y no cae al insert', async () => {
-    h.updateResult = { data: null, error: { message: 'denied' } };
+  it('sin marcas no escribe nada', async () => {
+    await expect(markPracticeDay([])).resolves.toBe(0);
+    expect(h.upsertBodies).toEqual([]);
+  });
 
-    await expect(
-      logPractice('row-a', { quality: 3, comment: null }, { sessionId: 'open-session' }),
-    ).rejects.toThrow('Could not save the practice: denied');
+  it('un error del upsert se lanza', async () => {
+    h.upsertResult = { data: null, error: { message: 'nope' } };
 
-    expect(h.lineBodies).toEqual([]);
+    await expect(markPracticeDay(['row-a'])).rejects.toThrow(
+      'Could not save the practice: nope',
+    );
   });
 });
 
-describe('fetchSessionMarks (#36)', () => {
-  it('lee las marcas de la sesión de la lista, por id, sin adivinar fechas', async () => {
+describe('fetchDayMarks: lo marcado de un día', () => {
+  it('lee las marcas del día, por día y sin adivinar fechas', async () => {
     h.marksResult = {
       data: [{ repertoire_id: 'row-a' }, { repertoire_id: 'row-b' }],
       error: null,
     };
 
-    await expect(fetchSessionMarks('session-1')).resolves.toEqual(['row-a', 'row-b']);
+    await expect(fetchDayMarks('2026-11-10')).resolves.toEqual(['row-a', 'row-b']);
     expect(h.marksSelect).toBe('repertoire_id');
-    expect(h.marksFilters).toEqual([{ method: 'eq', col: 'session_id', val: 'session-1' }]);
+    expect(h.marksFilters).toEqual([{ method: 'eq', col: 'day', val: '2026-11-10' }]);
   });
 
-  it('una sesión sin líneas marca vacío y no revienta', async () => {
+  it('un día sin marcas marca vacío y no revienta', async () => {
     h.marksResult = { data: [], error: null };
-    await expect(fetchSessionMarks('session-1')).resolves.toEqual([]);
+    await expect(fetchDayMarks('2026-11-10')).resolves.toEqual([]);
 
     h.marksResult = { data: null, error: null };
-    await expect(fetchSessionMarks('session-1')).resolves.toEqual([]);
+    await expect(fetchDayMarks('2026-11-10')).resolves.toEqual([]);
   });
 
-  it('descarta líneas sin id en vez de devolver huecos', async () => {
+  it('descarta filas sin id en vez de devolver huecos', async () => {
     h.marksResult = {
       data: [{ repertoire_id: 'row-a' }, { repertoire_id: null }, {}],
       error: null,
     };
-    await expect(fetchSessionMarks('session-1')).resolves.toEqual(['row-a']);
+    await expect(fetchDayMarks('2026-11-10')).resolves.toEqual(['row-a']);
   });
 
   it('el error de la consulta se lanza con contexto', async () => {
     h.marksResult = { data: null, error: { message: 'boom' } };
-    await expect(fetchSessionMarks('session-1')).rejects.toThrow(
-      'Could not load the practice marks: boom'
+    await expect(fetchDayMarks('2026-11-10')).rejects.toThrow(
+      'Could not load the practice marks: boom',
     );
   });
 });
 
-describe('createSessionWithMarks (#36)', () => {
-  it('abre la sesión sin cuerpo y cuelga la primera tanda con calidad null', async () => {
-    const id = await createSessionWithMarks([
-      { repertoireId: 'row-a', position: 0 },
-      { repertoireId: 'row-b', position: 3 },
-    ]);
+describe('recomputeLastPractice', () => {
+  it('llama a la RPC nueva, la que lee marcas y no sesiones', async () => {
+    await recomputeLastPractice('row-a');
 
-    expect(id).toBe('session-1');
-    expect(h.sessionBodies).toEqual([{}]);
-    expect(h.lineBodies[0]).toEqual([
-      { session_id: 'session-1', repertoire_id: 'row-a', quality: null, position: 0 },
-      { session_id: 'session-1', repertoire_id: 'row-b', quality: null, position: 3 },
-    ]);
-    // El trigger mueve la fecha; el cliente no la escribe.
-    expect(h.lineBodies[0][0].last_practiced_at).toBeUndefined();
-    expect(h.lineBodies[0][0].user_id).toBeUndefined();
-  });
-
-  it('si la línea falla, borra la sesión recién creada y lanza el error', async () => {
-    h.lineResult = { error: { message: 'nope' } };
-
-    await expect(createSessionWithMarks([{ repertoireId: 'row-a', position: 0 }])).rejects.toThrow(
-      'Could not save the practice: nope'
-    );
-
-    expect(h.deleted).toEqual(['session-1']);
-  });
-
-  it('no abre sesión vacía: sin marcas es un error, no una sesión fantasma', async () => {
-    await expect(createSessionWithMarks([])).rejects.toThrow(
-      'A practice session needs at least one tune.'
-    );
-    expect(h.sessionBodies).toEqual([]);
-  });
-});
-
-describe('addSessionMarks (#36)', () => {
-  it('la tanda va en un viaje y devuelve cuántas escribió', async () => {
-    const written = await addSessionMarks('session-1', [
-      { repertoireId: 'row-a', position: 0 },
-      { repertoireId: 'row-b', position: 1 },
-    ]);
-
-    expect(written).toBe(2);
-    expect(h.lineBodies).toHaveLength(1);
-    expect(h.lineBodies[0]).toHaveLength(2);
-  });
-
-  it('sin marcas no escribe nada', async () => {
-    await expect(addSessionMarks('session-1', [])).resolves.toBe(0);
-    expect(h.lineBodies).toEqual([]);
-  });
-
-  it('tolera un 23505 fila a fila y cuenta solo lo que de verdad escribió', async () => {
-    // La tanda choca entera (otra pestaña marcó una), después fila a fila:
-    // la repetida se ignora y las demás entran.
-    h.lineResults = [
-      { error: { code: '23505', message: 'duplicate key' } },
-      { error: null },
-      { error: { code: '23505', message: 'duplicate key' } },
-      { error: null },
-    ];
-
-    const written = await addSessionMarks('session-1', [
-      { repertoireId: 'row-a', position: 0 },
-      { repertoireId: 'row-b', position: 1 },
-      { repertoireId: 'row-c', position: 2 },
-    ]);
-
-    expect(written).toBe(2);
-    // Un viaje de tanda y tres fila a fila.
-    expect(h.lineBodies).toHaveLength(4);
-    expect(h.lineBodies.slice(1).map((body: any) => body.repertoire_id)).toEqual([
-      'row-a',
-      'row-b',
-      'row-c',
-    ]);
-  });
-
-  it('un error que no es 23505 se lanza', async () => {
-    h.lineResult = { error: { code: '42501', message: 'denied' } };
-    await expect(
-      addSessionMarks('session-1', [{ repertoireId: 'row-a', position: 0 }])
-    ).rejects.toThrow('Could not save the practice: denied');
-  });
-});
-
-describe('unmarkSessionTune (#36)', () => {
-  it('borra la línea de esa sesión y esa tune, y recalcula la fecha', async () => {
-    await unmarkSessionTune('session-1', 'row-a');
-
-    expect(h.deletes).toEqual([{ session_id: 'session-1', repertoire_id: 'row-a' }]);
     expect(h.rpcCalls).toEqual([
-      { fn: 'pr_recompute_last_practiced', args: { p_repertoire_id: 'row-a' } },
+      { fn: 'pr_recompute_last_practice', args: { p_repertoire_id: 'row-a' } },
     ]);
+  });
+
+  it('el error de la RPC se lanza con contexto', async () => {
+    h.rpcResult = { error: { message: 'function not found' } };
+    await expect(recomputeLastPractice('row-a')).rejects.toThrow(
+      'Could not recompute the practice date: function not found',
+    );
+  });
+});
+
+describe('unmarkPractice: quitar la marca de un día', () => {
+  it('borra la fila de esa tune y ese día, y recalcula la fecha', async () => {
+    await unmarkPractice('row-a', '2026-11-10');
+
+    expect(h.deletes).toEqual([{ repertoire_id: 'row-a', day: '2026-11-10' }]);
+    expect(h.rpcCalls).toEqual([
+      { fn: 'pr_recompute_last_practice', args: { p_repertoire_id: 'row-a' } },
+    ]);
+  });
+
+  it('borrar la marca más reciente puede mover la fecha atrás: el recálculo va después', async () => {
+    await unmarkPractice('row-a', '2026-11-10');
+
+    // Sin el recálculo el trigger —que solo avanza— dejaría la fecha en el día
+    // borrado y la tune fuera del radar dos meses.
+    expect(h.deletes).toHaveLength(1);
+    expect(h.rpcCalls[0].fn).toBe('pr_recompute_last_practice');
   });
 
   it('si el borrado falla, no recalcula y lanza', async () => {
     h.deleteResult = { error: { message: 'denied' } };
 
-    await expect(unmarkSessionTune('session-1', 'row-a')).rejects.toThrow(
-      'Could not remove the mark: denied'
+    await expect(unmarkPractice('row-a', '2026-11-10')).rejects.toThrow(
+      'Could not remove the mark: denied',
     );
     expect(h.rpcCalls).toEqual([]);
   });
@@ -419,10 +308,10 @@ describe('unmarkSessionTune (#36)', () => {
   it('si el recálculo falla tras el borrado, el error lo dice y pide recargar', async () => {
     h.rpcResult = { error: { message: 'function not found' } };
 
-    const failure = unmarkSessionTune('session-1', 'row-a');
+    const failure = unmarkPractice('row-a', '2026-11-10');
     await expect(failure).rejects.toThrow(/The mark was removed/);
     await expect(failure).rejects.toThrow(/reload the page/);
     // El borrado sí ocurrió: la marca ya no está y la fecha puede estar movida.
-    expect(h.deletes).toEqual([{ session_id: 'session-1', repertoire_id: 'row-a' }]);
+    expect(h.deletes).toEqual([{ repertoire_id: 'row-a', day: '2026-11-10' }]);
   });
 });

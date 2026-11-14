@@ -62,7 +62,7 @@ function row(overrides: Record<string, any> = {}) {
     custom_key: null,
     notes: null,
     added_at: '2026-10-01T10:00:00Z',
-    last_practiced_at: null,
+    last_practiced_day: null,
     tune: {
       id: 'tune-a',
       origin: 'thesession',

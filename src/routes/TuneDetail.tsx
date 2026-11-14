@@ -29,7 +29,7 @@ import {
   saveStatus,
 } from '../lib/repertoire';
 import { focalPosition } from '../lib/image-sources';
-import { formatDate } from '../lib/format';
+import { formatDate, formatDay } from '../lib/format';
 import { facetTree, tagsForTune } from '../lib/tags';
 import {
   addTuneTags,
@@ -772,7 +772,7 @@ export default function TuneDetail() {
                   </span>
                   <span>
                     Last practiced{' '}
-                    <span class="text-gray-300" title={formatDate(item().last_practiced_at)}>
+                    <span class="text-gray-300" title={formatDay(item().last_practiced_day)}>
                       {recency().label}
                     </span>
                   </span>

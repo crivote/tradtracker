@@ -138,17 +138,19 @@ function PracticeDialog(props: { target: PracticeTarget; onClose: () => void }) 
     setSaving(true);
     setError(null);
     try {
-      const sessionId = await logPractice(
-        props.target.repertoireId,
-        { quality: quality(), comment: comment() },
-        { sessionId: props.target.sessionId ?? null, position: props.target.position },
-      );
+      // Sin sesión ni posición: la marca es la tune **y el día**, y el día lo
+      // compone `logPractice` con el reloj. Valorar una fila ya marcada
+      // actualiza esa marca (unique por día) en vez de crear otro ensayo.
+      const practiceId = await logPractice(props.target.repertoireId, {
+        quality: quality(),
+        comment: comment(),
+      });
       // El callback de recarga se toma antes de cerrar: cerrar limpia el estado
       // del popup y con él la referencia a la pantalla que lo abrió.
       const logged = consumeLogged();
       props.onClose();
       try {
-        await logged?.(sessionId);
+        await logged?.(practiceId);
       } catch {
         /* la vista decide dónde mostrar el fallo de recarga */
       }

@@ -64,8 +64,10 @@ export interface RecentList {
  * No lleva fecha de calendario a propósito. Antes se congelaba «la de hoy» y la
  * vista reanudaba «la última sesión abierta de hoy»; cualquier recarga en un mal
  * momento abría una sesión nueva y las marcas se repartían en fragmentos de una
- * línea. Aquí la lista lleva **su** sesión: la identidad la da `sessionId`, no el
- * día ni la hora.
+ * línea. Desde #56 la unidad de práctica es la tune **y el día**, así que la
+ * lista no lleva identidad de sesión: lo marcado se pregunta por día
+ * (`pr_practice`, único por `user_id, repertoire_id, day`) y el `unique` hace el
+ * trabajo que antes hacía la identidad de sesión guardada aquí.
  */
 export interface PracticePlan {
   /** Instante de generación (ms epoch): fecha la cabecera y siembra la lista. */
@@ -73,8 +75,6 @@ export interface PracticePlan {
   ids: string[];
   /** Vencidas que no cupieron en la lista, tal y como se congeló. */
   overflow: number;
-  /** Sesión abierta para esta lista; `null` hasta la primera marca. */
-  sessionId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,11 +178,6 @@ function normalizeCreatedAt(value: unknown): number {
   return Math.round(value);
 }
 
-/** Un id de sesión solo vale si es una cadena con algo dentro. */
-function readSessionId(value: unknown): string | null {
-  return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
 // ---------------------------------------------------------------------------
 // Preferencias
 // ---------------------------------------------------------------------------
@@ -257,12 +252,12 @@ export function previousIds(store: KeyValueStore, todayKey: string): Set<string>
  * lista hasta que el usuario pida otra. Eso es justo lo que la hace inmutable —
  * recargar, navegar a The Session y volver no la toca.
  *
- * **Migración (2026-11-05):** si no hay plan, se adopta la lista congelada de la
- * clave vieja `tt-practice-today`, pero **solo si es de hoy**; una de ayer muere
+ * **Migración (2026-11-05):** si no hay plan, se adopta la lista congelada de
+ * clave `tt-practice-today`, pero **solo si es de hoy**; una de ayer muere
  * como moría antes. Al adoptarla se borra la clave vieja, para que «New list» no
- * la resucite en la siguiente lectura. La sesión de esa lista no se hereda: no
- * hay forma fiable de saber cuál era (era el bug), así que la primera marca abre
- * una nueva.
+ * la resucite en la siguiente lectura. Desde #56 no hay identidad de sesión que
+ * heredar: las marcas se preguntan por día, así que adoptar una lista vieja no
+ * arrastra nada.
  */
 export function readPlan(store: KeyValueStore, nowMs: number): PracticePlan | null {
   const stored = parseStored(store, PLAN_KEY);
@@ -274,7 +269,6 @@ export function readPlan(store: KeyValueStore, nowMs: number): PracticePlan | nu
         createdAt,
         ids,
         overflow: normalizeOverflow(stored.overflow),
-        sessionId: readSessionId(stored.sessionId),
       };
     }
   }
@@ -294,7 +288,6 @@ export function readPlan(store: KeyValueStore, nowMs: number): PracticePlan | nu
     createdAt: startOfLocalDay(nowMs),
     ids: legacyIds,
     overflow: normalizeOverflow(legacy.overflow),
-    sessionId: null,
   };
 }
 
@@ -313,7 +306,6 @@ export function writePlan(store: KeyValueStore, plan: PracticePlan): void {
     createdAt,
     ids: [...plan.ids],
     overflow: normalizeOverflow(plan.overflow),
-    sessionId: readSessionId(plan.sessionId),
   };
   store.setItem(PLAN_KEY, JSON.stringify(value));
 
@@ -354,10 +346,10 @@ export function todayKeyFor(nowMs: number): string {
 /**
  * Instante del inicio del día **local** que contiene `nowMs`.
  *
- * Es la frontera de «la sesión de hoy»: la vista la compara con `started_at` en
- * la base. Se compone con los setters locales por lo mismo que `todayKeyFor`:
- * medianoche local, no UTC. `setHours` sobre la fecha local resuelve además los
- * días de cambio de hora sin cuentas de 86 400 000 ms.
+ * Es la frontera del día local: el rango del historial y la adopción de una
+ * lista vieja se cuentan desde aquí. Se compone con los setters locales por lo
+ * mismo que `todayKeyFor`: medianoche local, no UTC. `setHours` sobre la fecha
+ * local resuelve además los días de cambio de hora sin cuentas de 86 400 000 ms.
  */
 export function startOfLocalDay(nowMs: number): number {
   const date = new Date(nowMs);

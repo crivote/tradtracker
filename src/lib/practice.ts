@@ -1,4 +1,17 @@
 import { supabase } from './supabase';
+import { todayKeyFor } from './practice-storage';
+
+/**
+ * La práctica, tal y como la guarda la base desde #56: **una marca es una tune
+ * en un día**, no una línea dentro de una sesión. `pr_practice` tiene
+ * `unique (user_id, repertoire_id, day)`, así que marcar dos veces la misma tune
+ * el mismo día **actualiza** la valoración y el comentario del último toque en
+ * vez de duplicar.
+ *
+ * El día lo compone el cliente con `todayKeyFor` y nunca se deriva de un
+ * `timestamptz` en la base: en Madrid el día UTC cambia a las 23:00 locales, y
+ * un ensayo de las 23:30 tiene que ser del día en que se tocó.
+ */
 
 /**
  * Lo que el usuario puede apuntar de un ensayo en este corte (#10): la calidad
@@ -10,16 +23,12 @@ export interface PracticeEntry {
   comment: string | null;
 }
 
-/** Dónde cuelga el ensayo, cuando no es una sesión nueva. */
+/**
+ * Cuándo se ensayó. Falta el día a propósito: no lo elige quien llama, sale del
+ * instante con `todayKeyFor`. Sin `practicedAt`, el instante es ahora.
+ */
 export interface PracticeOptions {
-  /**
-   * Sesión ya abierta por la lista del día (#36). Con sesión, el ensayo
-   * **actualiza** la línea de esa tune; sin ella, se abre una sesión nueva de una
-   * sola línea.
-   */
-  sessionId?: string | null;
-  /** Posición de la fila en la lista del día; la base pone 0 si falta. */
-  position?: number;
+  practicedAt?: Date;
 }
 
 /**
@@ -32,259 +41,146 @@ function normalizeComment(comment: string | null): string | null {
 }
 
 /**
- * Apunta un ensayo de un tune del repertorio (#10, corte 1).
+ * Día local `YYYY-MM-DD` del instante del ensayo.
  *
- * Sin sesión en `options`, una sesión con un solo tune: la forma del dato es la
- * misma que usará el historial, así que no hay un camino corto con otra forma. La
- * sesión se inserta **sin cuerpo** — `user_id` y `started_at` los pone la base
- * (`default auth.uid()` / `default now()`) — y se pide el `id` de vuelta para
- * colgar la línea.
+ * `todayKeyFor` compone la fecha con los getters locales; es la única forma
+ * admitida de decir «hoy» en este módulo (`toISOString().slice(0, 10)` daría el
+ * día siguiente a partir de las 23:00 en Madrid).
+ */
+function localDayOf(instant: Date): string {
+  return todayKeyFor(instant.getTime());
+}
+
+/** Las columnas del `onConflict`: el único que hace del día la unidad. */
+const PRACTICE_CONFLICT = 'user_id,repertoire_id,day';
+
+/**
+ * Apunta un ensayo de un tune del repertorio (#10, unidad de día en #56).
  *
- * **Con `sessionId`** (el popup abierto desde la lista del día) no se abre otra
- * sesión: se actualiza la línea de esa tune en la sesión que ya está abierta. Un
- * toque de «valorar» sobre una fila marcada no puede dejar dos ensayos del mismo
- * momento en el historial. Si la línea ya no está —borrada en otra pestaña—, se
- * vuelve a colgar de la misma sesión.
+ * **Upsert**, no insert: el `unique (user_id, repertoire_id, day)` convierte el
+ * segundo toque del día en una actualización. Marcar y después valorar la misma
+ * tune no puede dejar dos ensayos en el historial, y con esta forma tampoco hay
+ * que «adoptar» una sesión abierta para conseguirlo.
  *
- * Devuelve el `id` de la sesión usada, que es lo que la lista necesita para
- * adoptarla cuando aún no tenía ninguna.
- *
- * Si la línea falla, la sesión recién creada se borra (mejor esfuerzo) y se
- * lanza el error original: una sesión vacía sería un ensayo fantasma en el
- * historial. `last_practiced_at` lo mueve el trigger de la base al insertar o
- * actualizar la línea; el cliente nunca lo escribe.
+ * `user_id`, `practiced_at` y `created_at` los pone la base; `day` lo pone el
+ * cliente porque el día es local. Devuelve el `id` de la fila, que es lo que
+ * espera quien abre el popup.
  */
 export async function logPractice(
   repertoireId: string,
   entry: PracticeEntry,
   options: PracticeOptions = {},
 ): Promise<string> {
-  const quality = entry.quality ?? null;
-  const comment = normalizeComment(entry.comment);
-  const openSession = options.sessionId ?? null;
+  const day = localDayOf(options.practicedAt ?? new Date());
 
-  if (openSession) {
-    return logOnSession(openSession, repertoireId, quality, comment, options.position);
-  }
-
-  const { data, error } = await supabase.from('pr_sessions').insert({}).select('id').maybeSingle();
+  const { data, error } = await supabase
+    .from('pr_practice')
+    .upsert(
+      {
+        repertoire_id: repertoireId,
+        day,
+        quality: entry.quality ?? null,
+        comment: normalizeComment(entry.comment),
+      },
+      { onConflict: PRACTICE_CONFLICT },
+    )
+    .select('id')
+    .maybeSingle();
 
   if (error) throw new Error(`Could not save the practice: ${error.message}`);
   if (!data?.id) throw new Error('The practice was saved but no id came back.');
 
-  const sessionId = data.id;
-
-  const row: Record<string, unknown> = {
-    session_id: sessionId,
-    repertoire_id: repertoireId,
-    quality,
-    comment,
-  };
-  if (typeof options.position === 'number') row.position = options.position;
-
-  const { error: lineError } = await supabase.from('pr_session_tunes').insert(row);
-
-  if (lineError) {
-    // Compensación: la sesión sin línea no debe quedar. Si el borrado también
-    // falla no hay nada mejor que hacer desde aquí; manda el error de la línea.
-    try {
-      await supabase.from('pr_sessions').delete().eq('id', sessionId);
-    } catch {
-      /* mejor esfuerzo */
-    }
-    throw new Error(`Could not save the practice: ${lineError.message}`);
-  }
-
-  return sessionId;
+  return data.id;
 }
 
 /**
- * La línea de una tune **dentro de una sesión que ya existe**: se actualiza si
- * está, y si no se inserta. El `update` va con `select` a propósito: sin filas
- * devueltas no hay forma de distinguir «actualizada» de «no existía», y crear otra
- * línea a ciegas chocaría con el único `(session_id, repertoire_id)`.
- */
-async function logOnSession(
-  sessionId: string,
-  repertoireId: string,
-  quality: number | null,
-  comment: string | null,
-  position: number | undefined,
-): Promise<string> {
-  const { data, error } = await supabase
-    .from('pr_session_tunes')
-    .update({ quality, comment })
-    .eq('session_id', sessionId)
-    .eq('repertoire_id', repertoireId)
-    .select('repertoire_id');
-
-  if (error) throw new Error(`Could not save the practice: ${error.message}`);
-  if (Array.isArray(data) && data.length > 0) return sessionId;
-
-  const row: Record<string, unknown> = {
-    session_id: sessionId,
-    repertoire_id: repertoireId,
-    quality,
-    comment,
-  };
-  if (typeof position === 'number') row.position = position;
-
-  const { error: lineError } = await supabase.from('pr_session_tunes').insert(row);
-  if (lineError) throw new Error(`Could not save the practice: ${lineError.message}`);
-
-  return sessionId;
-}
-
-/* ────────────────────────────────────────────────────────────────
- * Sesión de la lista del día (#36)
- * ──────────────────────────────────────────────────────────────── */
-
-/** Una marca de la lista: qué tune y en qué posición de la cola estaba. */
-export interface SessionMark {
-  repertoireId: string;
-  /** Índice 0-based de la fila en la lista del día. */
-  position: number;
-}
-
-/** Una línea de `pr_session_tunes` tal y como la escribe este corte. */
-function markRow(sessionId: string, mark: SessionMark) {
-  return {
-    session_id: sessionId,
-    repertoire_id: mark.repertoireId,
-    // La calidad es opcional a propósito (#10): marcar en la lista no puntúa.
-    quality: null,
-    position: mark.position,
-  };
-}
-
-/**
- * Las marcas de **una sesión concreta** (#36), por id y sin adivinar.
+ * Las marcas de **un día concreto** de la lista del día (#36), por día y sin
+ * adivinar.
  *
- * Antes se buscaba «la última sesión abierta de hoy»; cuando esa consulta no
- * acertaba —una recarga, un montaje temprano— la vista creía no tener sesión y
- * la siguiente marca abría otra. Resultado: una sesión de una línea por marca y
- * solo la última visible. La lista guarda su `sessionId`, así que aquí no hay
- * nada que interpretar: o la sesión es esa, o no hay marcas.
+ * Antes se buscaba «la última sesión abierta de hoy» y, cuando esa consulta no
+ * acertaba —una recarga, un montaje temprano—, la vista creía no tener sesión y
+ * la siguiente marca abría otra. Con la unidad de día no hay nada que
+ * interpretar: la pregunta es «qué se marcó hoy», y el `unique` por día se
+ * encarga de que la respuesta sea una sola.
  */
-export async function fetchSessionMarks(sessionId: string): Promise<string[]> {
+export async function fetchDayMarks(day: string): Promise<string[]> {
   const { data, error } = await supabase
-    .from('pr_session_tunes')
+    .from('pr_practice')
     .select('repertoire_id')
-    .eq('session_id', sessionId);
+    .eq('day', day);
 
   if (error) throw new Error(`Could not load the practice marks: ${error.message}`);
 
-  const lines = Array.isArray(data) ? data : [];
-  return lines
-    .map((line: { repertoire_id?: unknown }) => line?.repertoire_id)
+  const marks = Array.isArray(data) ? data : [];
+  return marks
+    .map((mark: { repertoire_id?: unknown }) => mark?.repertoire_id)
     .filter((id: unknown): id is string => typeof id === 'string');
 }
 
 /**
- * Abre la sesión de hoy y cuelga de ella la primera tanda de marcas (#36).
+ * Marca varias tunes **del mismo día** en un solo viaje: el gesto «Mark all» de
+ * la lista del día.
  *
- * Patrón de F4: la sesión se inserta **sin cuerpo** (`user_id` y `started_at`
- * los pone la base) y se pide el `id`; si la tanda falla, la sesión recién
- * creada se borra. Una sesión vacía sería un ensayo fantasma en el historial, y
- * ese es justo el estado que evita crear la sesión al abrir la lista.
+ * El cuerpo no lleva `quality` ni `comment`: marcar no puntúa (#10) y, al no
+ * venir en el `ON CONFLICT DO UPDATE`, una valoración puesta antes desde la
+ * ficha no se pierde porque alguien pulse «Mark all». Devuelve cuántas filas
+ * viajaron, que es lo que la vista apunta como marcado.
  */
-export async function createSessionWithMarks(marks: readonly SessionMark[]): Promise<string> {
-  if (marks.length === 0) {
-    throw new Error('A practice session needs at least one tune.');
-  }
+export async function markPracticeDay(
+  repertoireIds: readonly string[],
+  options: PracticeOptions = {},
+): Promise<number> {
+  if (repertoireIds.length === 0) return 0;
 
-  const { data, error } = await supabase.from('pr_sessions').insert({}).select('id').maybeSingle();
+  const day = localDayOf(options.practicedAt ?? new Date());
+  // Un id repetido en el cuerpo haría que el `ON CONFLICT` tocara la misma fila
+  // dos veces y PostgREST lo rechazara (21000): la lista se deduplica antes.
+  const rows = [...new Set(repertoireIds)].map((repertoireId) => ({ repertoire_id: repertoireId, day }));
+
+  const { error } = await supabase
+    .from('pr_practice')
+    .upsert(rows, { onConflict: PRACTICE_CONFLICT });
 
   if (error) throw new Error(`Could not save the practice: ${error.message}`);
-  if (!data?.id) throw new Error('The practice was saved but no id came back.');
-
-  const sessionId = data.id;
-  const { error: lineError } = await supabase
-    .from('pr_session_tunes')
-    .insert(marks.map((mark) => markRow(sessionId, mark)));
-
-  if (lineError) {
-    try {
-      await supabase.from('pr_sessions').delete().eq('id', sessionId);
-    } catch {
-      /* mejor esfuerzo */
-    }
-    throw new Error(`Could not save the practice: ${lineError.message}`);
-  }
-
-  return sessionId;
+  return rows.length;
 }
 
 /**
- * Añade marcas a una sesión ya abierta y devuelve **cuántas escribió de
- * verdad**.
- *
- * La tanda va en un viaje. Si choca con `23505` (otra pestaña marcó alguna de
- * las mismas a la vez) se reintenta fila a fila ignorando los duplicados: el
- * resultado final es el mismo y perder las demás por una repetida no lo es. Por
- * eso el recuento es el de filas escritas, no el de filas pedidas.
+ * Recalcula la fecha del último ensayo desde `pr_practice` con la función de la
+ * base (#35, #56). El trigger solo **avanza** la fecha: sin este recálculo,
+ * quitar la marca dejaría la tune fuera del radar ~2 meses.
  */
-export async function addSessionMarks(
-  sessionId: string,
-  marks: readonly SessionMark[],
-): Promise<number> {
-  if (marks.length === 0) return 0;
-
-  const rows = marks.map((mark) => markRow(sessionId, mark));
-  const { error } = await supabase.from('pr_session_tunes').insert(rows);
-  if (!error) return rows.length;
-  if (error.code !== '23505') {
-    throw new Error(`Could not save the practice: ${error.message}`);
-  }
-
-  let written = 0;
-  for (const row of rows) {
-    const { error: rowError } = await supabase.from('pr_session_tunes').insert(row);
-    if (!rowError) {
-      written += 1;
-      continue;
-    }
-    if (rowError.code === '23505') continue; // otra pestaña la marcó: mismo resultado
-    throw new Error(`Could not save the practice: ${rowError.message}`);
-  }
-  return written;
-}
-
-/**
- * Recalcula `last_practiced_at` desde el historial con la función de la base
- * (#35). El trigger solo **avanza** la fecha: sin este recálculo, quitar la
- * marca dejaría la tune fuera del radar ~2 meses.
- */
-export async function recomputeLastPracticed(repertoireId: string): Promise<void> {
-  const { error } = await supabase.rpc('pr_recompute_last_practiced', {
+export async function recomputeLastPractice(repertoireId: string): Promise<void> {
+  const { error } = await supabase.rpc('pr_recompute_last_practice', {
     p_repertoire_id: repertoireId,
   });
   if (error) throw new Error(`Could not recompute the practice date: ${error.message}`);
 }
 
 /**
- * Quita una marca puesta por error (#36): borra la línea **y** recalcula la
- * fecha.
+ * Quita una marca puesta por error (#36): borra la fila de ese día **y**
+ * recalcula la fecha.
  *
  * Las dos cosas van en la misma función a propósito: son una sola operación y
- * separarlas dejaría el olvido del recálculo al criterio de cada llamante.
+ * separarlas dejaría el olvido del recálculo al criterio de cada llamante. El
+ * día entra por parámetro porque es justo lo que identifica la fila.
  *
  * Si el recálculo falla **después** del borrado, el estado es el peor de los
  * dos —la marca ya no está y la fecha puede seguir movida—, así que el error lo
  * dice con palabras y pide recargar: es un estado que el usuario tiene que
  * conocer, no un fallo que se pueda tragar.
  */
-export async function unmarkSessionTune(sessionId: string, repertoireId: string): Promise<void> {
+export async function unmarkPractice(repertoireId: string, day: string): Promise<void> {
   const { error } = await supabase
-    .from('pr_session_tunes')
+    .from('pr_practice')
     .delete()
-    .eq('session_id', sessionId)
-    .eq('repertoire_id', repertoireId);
+    .eq('repertoire_id', repertoireId)
+    .eq('day', day);
 
   if (error) throw new Error(`Could not remove the mark: ${error.message}`);
 
   try {
-    await recomputeLastPracticed(repertoireId);
+    await recomputeLastPractice(repertoireId);
   } catch (recomputeError) {
     const detail = recomputeError instanceof Error ? recomputeError.message : String(recomputeError);
     throw new Error(

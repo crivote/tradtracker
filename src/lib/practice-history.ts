@@ -1,60 +1,54 @@
 /**
  * Historial de ensayos: lectura y modelo.
  *
- * El historial se lee **por sesiones**, que es la forma en que la base guarda la
- * práctica desde F4: una sesión con sus líneas. La pantalla lo reordena por día
- * local, porque es como se pregunta («¿qué hice el martes?»), no por sesión.
+ * Desde #56 la práctica se lee **por marcas**: una fila de `pr_practice` es una
+ * tune en un día. El día (`day`) ya es local —lo compuso el cliente con
+ * `todayKeyFor` al apuntar—, así que agrupar es agrupar por esa columna, sin
+ * convertir ningún instante.
  *
  * Dos cosas que no se hacen aquí:
  *   · **No se agrega en la base.** `pr_repertoire_stats` da totales por tune, no
  *     una serie diaria; un RPC nuevo solo para una pantalla de lectura sería más
- *     superficie que la que resuelve. Se traen las sesiones del rango —son
+ *     superficie que la que resuelve. Se traen las marcas del rango —son
  *     decenas, no miles— y se agrupan en memoria.
- *   · **No se inventa el día.** La clave de día se compone con los getters
- *     locales (`todayKeyFor`), nunca con `toISOString()`: en Madrid, un ensayo a
- *     las 23:30 es del día en que se tocó, no del siguiente.
+ *   · **No se inventa el día.** La clave de día es la de la base, y donde hace
+ *     falta componerla (el rango, la serie) se usa `todayKeyFor`, nunca
+ *     `toISOString()`: en Madrid, un ensayo a las 23:30 es del día en que se
+ *     tocó, no del siguiente.
  *
  * El modelo puro (`buildHistoryDays`, `historyStats`, `historySeries`) no toca la
  * red y se prueba aparte.
  */
 import { supabase } from './supabase';
-import { startOfLocalDay, todayKeyFor } from './practice-storage';
+import { todayKeyFor } from './practice-storage';
 
 export const HISTORY_RANGES = [7, 30, 90] as const;
 export type HistoryRange = (typeof HISTORY_RANGES)[number];
 export const DEFAULT_HISTORY_RANGE: HistoryRange = 30;
 
-/** Un ensayo: una tune tocada dentro de una sesión. */
-export interface HistoryEntry {
+/** Una marca: una tune tocada un día. */
+export interface PracticeMark {
+  /** `YYYY-MM-DD` local, tal y como lo guarda `pr_practice.day`. */
+  day: string;
   repertoireId: string;
   title: string;
   rhythm: string | null;
   /** 1–5, o `null` si el ensayo se apuntó sin puntuar (es lo normal). */
   quality: number | null;
   comment: string | null;
-  position: number;
-}
-
-export interface HistorySession {
-  id: string;
-  /** `started_at` tal y como lo devuelve la base (ISO con zona). */
-  startedAt: string;
-  entries: HistoryEntry[];
 }
 
 /** Un día local con lo que se ensayó en él. */
 export interface HistoryDay {
   /** `YYYY-MM-DD` local. */
   key: string;
-  sessions: number;
-  entries: HistoryEntry[];
+  entries: PracticeMark[];
   practices: number;
   avgQuality: number | null;
 }
 
 export interface HistoryStats {
   practices: number;
-  sessions: number;
   activeDays: number;
   /** Días consecutivos con algún ensayo, contando desde hoy (o desde ayer). */
   streak: number;
@@ -77,38 +71,37 @@ export interface HistoryPoint {
 /**
  * La consulta del historial, con el título resuelto en el mismo viaje.
  *
- * `!inner` en los dos embeds: una línea sin fila de repertorio no existe (el
- * borrado es en cascada), y un embed opcional solo añadiría nulos que habría que
- * filtrar después.
+ * Un solo embed de dos niveles (`pr_practice → pr_repertoire → pr_tunes`): antes
+ * colgaba de la línea de la sesión y ahora de la marca, que es la unidad.
+ *
+ * `!inner` en los dos: una marca sin fila de repertorio no existe (el borrado es
+ * en cascada), y un embed opcional solo añadiría nulos que habría que filtrar
+ * después.
  *
  * El tope de 1.000 filas es el máximo por defecto de PostgREST y sobra para 90
- * días de una persona (el repertorio real ronda las 10 sesiones diarias). Si
- * algún día se queda corto, la gráfica sigue siendo correcta para lo cargado; lo
- * que no se hace es paginar en silencio y contar de menos sin decirlo.
+ * días de una persona (el repertorio real ronda las 8 marcas diarias). Si algún
+ * día se queda corto, la gráfica sigue siendo correcta para lo cargado; lo que no
+ * se hace es paginar en silencio y contar de menos sin decirlo.
  */
 const HISTORY_SELECT = [
-  'id',
-  'started_at',
-  'pr_session_tunes(quality,comment,position,repertoire_id,pr_repertoire!inner(custom_title,pr_tunes!inner(name,rhythm)))',
+  'day',
+  'quality',
+  'comment',
+  'repertoire_id',
+  'pr_repertoire!inner(custom_title,pr_tunes!inner(name,rhythm))',
 ].join(',');
 
 const HISTORY_LIMIT = 1000;
 
-interface RawLine {
+interface RawMark {
+  day?: unknown;
   quality?: unknown;
   comment?: unknown;
-  position?: unknown;
   repertoire_id?: unknown;
   pr_repertoire?: {
     custom_title?: unknown;
     pr_tunes?: { name?: unknown; rhythm?: unknown } | null;
   } | null;
-}
-
-interface RawSession {
-  id?: unknown;
-  started_at?: unknown;
-  pr_session_tunes?: RawLine[] | null;
 }
 
 export interface FetchHistoryOptions {
@@ -118,58 +111,64 @@ export interface FetchHistoryOptions {
   range: number;
 }
 
-/** Las sesiones del rango, más recientes primero. */
+/**
+ * La clave del primer día del rango, `days - 1` días antes del día local de
+ * `nowMs`.
+ *
+ * Se retrocede con `setDate` sobre la fecha local, no con una resta de
+ * 86 400 000 ms: el día del cambio de hora dura 23 o 25 horas y la resta caería
+ * en el día de al lado.
+ */
+export function rangeStartKey(nowMs: number, days: number): string {
+  const date = new Date(nowMs);
+  date.setDate(date.getDate() - (days - 1));
+  date.setHours(12, 0, 0, 0);
+  return todayKeyFor(date.getTime());
+}
+
+/** Las marcas del rango, del día más reciente al más antiguo. */
 export async function fetchPracticeHistory(
   options: FetchHistoryOptions,
-): Promise<HistorySession[]> {
+): Promise<PracticeMark[]> {
   const { nowMs, range } = options;
   const days = Math.max(1, Math.floor(range));
-  const from = startOfLocalDay(nowMs) - (days - 1) * 86_400_000;
 
   const { data, error } = await supabase
-    .from('pr_sessions')
+    .from('pr_practice')
     .select(HISTORY_SELECT)
-    .gte('started_at', new Date(from).toISOString())
-    .order('started_at', { ascending: false })
+    .gte('day', rangeStartKey(nowMs, days))
+    // `day` manda; dentro del día, el orden en que se tocaron.
+    .order('day', { ascending: false })
+    .order('practiced_at', { ascending: true })
     .limit(HISTORY_LIMIT);
 
   if (error) throw new Error(`Could not load the practice history: ${error.message}`);
 
-  const rows = Array.isArray(data) ? (data as RawSession[]) : [];
-  const sessions: HistorySession[] = [];
+  const rows = Array.isArray(data) ? (data as RawMark[]) : [];
+  const marks: PracticeMark[] = [];
 
   for (const row of rows) {
-    const id = typeof row.id === 'string' ? row.id : null;
-    const startedAt = typeof row.started_at === 'string' ? row.started_at : null;
-    if (!id || !startedAt) continue;
+    const day = typeof row.day === 'string' ? row.day : null;
+    const repertoireId = typeof row.repertoire_id === 'string' ? row.repertoire_id : null;
+    // Sin día o sin tune no hay marca que pintar: los dos son la identidad.
+    if (!day || !repertoireId) continue;
 
-    const entries: HistoryEntry[] = [];
-    for (const line of row.pr_session_tunes ?? []) {
-      const repertoireId = typeof line.repertoire_id === 'string' ? line.repertoire_id : null;
-      if (!repertoireId) continue;
+    const tune = row.pr_repertoire?.pr_tunes ?? null;
+    const custom = row.pr_repertoire?.custom_title;
+    const name = typeof tune?.name === 'string' ? tune.name : '';
+    const title = typeof custom === 'string' && custom.trim() ? custom : name || 'Untitled tune';
 
-      const tune = line.pr_repertoire?.pr_tunes ?? null;
-      const custom = line.pr_repertoire?.custom_title;
-      const name = typeof tune?.name === 'string' ? tune.name : '';
-      const title = typeof custom === 'string' && custom.trim() ? custom : name || 'Untitled tune';
-
-      entries.push({
-        repertoireId,
-        title,
-        rhythm: typeof tune?.rhythm === 'string' ? tune.rhythm : null,
-        quality: typeof line.quality === 'number' ? line.quality : null,
-        comment: typeof line.comment === 'string' && line.comment.trim() ? line.comment : null,
-        position: typeof line.position === 'number' ? line.position : 0,
-      });
-    }
-
-    // Una sesión sin líneas no es un ensayo: no se pinta.
-    if (entries.length === 0) continue;
-    entries.sort((a, b) => a.position - b.position);
-    sessions.push({ id, startedAt, entries });
+    marks.push({
+      day,
+      repertoireId,
+      title,
+      rhythm: typeof tune?.rhythm === 'string' ? tune.rhythm : null,
+      quality: typeof row.quality === 'number' ? row.quality : null,
+      comment: typeof row.comment === 'string' && row.comment.trim() ? row.comment : null,
+    });
   }
 
-  return sessions;
+  return marks;
 }
 
 /** Media con dos decimales, o `null` sin valoraciones. */
@@ -179,29 +178,21 @@ function average(values: readonly number[]): number | null {
   return Math.round((total / values.length) * 100) / 100;
 }
 
-/** El día local de un instante ISO, como clave `YYYY-MM-DD`. */
-export function dayKeyOf(iso: string): string {
-  return todayKeyFor(new Date(iso).getTime());
-}
-
 /**
- * Las sesiones agrupadas por día local, del más reciente al más antiguo. El orden
- * dentro del día es el de las sesiones (la consulta ya viene descendente) y el de
- * las líneas, la posición que tenían en la lista.
+ * Las marcas agrupadas por su día local, del más reciente al más antiguo. El
+ * orden dentro del día es el de la consulta, que ya viene por `practiced_at`.
  */
-export function buildHistoryDays(sessions: readonly HistorySession[]): HistoryDay[] {
+export function buildHistoryDays(marks: readonly PracticeMark[]): HistoryDay[] {
   const byDay = new Map<string, HistoryDay>();
 
-  for (const session of sessions) {
-    const key = dayKeyOf(session.startedAt);
-    let day = byDay.get(key);
+  for (const mark of marks) {
+    let day = byDay.get(mark.day);
     if (!day) {
-      day = { key, sessions: 0, entries: [], practices: 0, avgQuality: null };
-      byDay.set(key, day);
+      day = { key: mark.day, entries: [], practices: 0, avgQuality: null };
+      byDay.set(mark.day, day);
     }
-    day.sessions += 1;
-    day.entries.push(...session.entries);
-    day.practices += session.entries.length;
+    day.entries.push(mark);
+    day.practices += 1;
   }
 
   const days = [...byDay.values()];
@@ -284,7 +275,6 @@ export function historyStats(
 
   return {
     practices: days.reduce((sum, day) => sum + day.practices, 0),
-    sessions: days.reduce((sum, day) => sum + day.sessions, 0),
     activeDays: days.length,
     streak: practiceStreak(points),
     avgQuality: average(rated),

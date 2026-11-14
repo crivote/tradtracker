@@ -3,9 +3,9 @@
  * La lista de ensayo del día (#36), montada de verdad.
  *
  * Lo que solo se ve montando: el orden congelado sobrevive al remontaje, la
- * sesión se crea con la primera marca y no al abrir, «Mark all» escribe solo lo
- * que falta, desmarcar llama a la capa que además recalcula la fecha, y el
- * corazón guarda el valor contrario al que había.
+ * primera marca no necesita sesión previa (el día es la unidad), «Mark all»
+ * escribe solo lo que falta, desmarcar llama a la capa que además recalcula la
+ * fecha, y el corazón guarda el valor contrario al que había.
  *
  * `vitest` corre sin `globals`: sin `cleanup` explícito el DOM de una prueba se
  * cuela en la siguiente, y sin limpiar `localStorage` la lista congelada de una
@@ -32,10 +32,9 @@ vi.mock('../lib/practice', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/practice')>();
   return {
     ...actual,
-    fetchSessionMarks: vi.fn(),
-    createSessionWithMarks: vi.fn(),
-    addSessionMarks: vi.fn(),
-    unmarkSessionTune: vi.fn(),
+    fetchDayMarks: vi.fn(),
+    markPracticeDay: vi.fn(),
+    unmarkPractice: vi.fn(),
   };
 });
 
@@ -57,12 +56,7 @@ vi.mock('../lib/session', () => ({
 }));
 
 import { fetchRepertoire, saveFavorite } from '../lib/repertoire';
-import {
-  addSessionMarks,
-  createSessionWithMarks,
-  fetchSessionMarks,
-  unmarkSessionTune,
-} from '../lib/practice';
+import { fetchDayMarks, markPracticeDay, unmarkPractice } from '../lib/practice';
 import {
   readPlan,
   readPrefs,
@@ -74,15 +68,19 @@ import Practice from './Practice';
 
 const mockedFetch = vi.mocked(fetchRepertoire);
 const mockedFavorite = vi.mocked(saveFavorite);
-const mockedMarks = vi.mocked(fetchSessionMarks);
-const mockedCreate = vi.mocked(createSessionWithMarks);
-const mockedAdd = vi.mocked(addSessionMarks);
-const mockedUnmark = vi.mocked(unmarkSessionTune);
+const mockedMarks = vi.mocked(fetchDayMarks);
+const mockedMark = vi.mocked(markPracticeDay);
+const mockedUnmark = vi.mocked(unmarkPractice);
 
 const DAY = 86_400_000;
 
 function daysAgo(days: number): string {
   return new Date(Date.now() - days * DAY).toISOString();
+}
+
+/** Día local (`YYYY-MM-DD`) de hace `days` días: la fila trae el día, no el instante. */
+function dayAgo(days: number): string {
+  return todayKeyFor(Date.now() - days * DAY);
 }
 
 /**
@@ -104,7 +102,7 @@ function row(index: number, overrides: Record<string, any> = {}) {
     custom_key: null,
     notes: null,
     added_at: daysAgo(200),
-    last_practiced_at: daysAgo(60 + index),
+    last_practiced_day: dayAgo(60 + index),
     tune: {
       id: `tune-${n}`,
       origin: 'thesession',
@@ -146,7 +144,6 @@ function seedPlan(overrides: Partial<Parameters<typeof writePlan>[1]> = {}) {
     createdAt: Date.now() - 60_000,
     ids: OVERDUE_FIRST,
     overflow: 4,
-    sessionId: null,
     ...overrides,
   };
   writePlan(localStorage, plan);
@@ -193,8 +190,7 @@ beforeEach(() => {
 
   mockedFetch.mockResolvedValue(ROWS as any);
   mockedMarks.mockResolvedValue([]);
-  mockedCreate.mockResolvedValue('session-new');
-  mockedAdd.mockResolvedValue(1);
+  mockedMark.mockResolvedValue(1);
   mockedUnmark.mockResolvedValue(undefined);
   mockedFavorite.mockResolvedValue(undefined);
 });
@@ -268,7 +264,7 @@ describe('lista del día (#36)', () => {
     expect(readPlan(localStorage, Date.now())).toEqual(seeded);
   });
 
-  it('la marca de una tune sin sesión previa abre la sesión y deja la fila marcada', async () => {
+  it('la primera marca no abre nada: escribe la marca del día y deja la fila marcada', async () => {
     renderPractice();
     await waitForRows(8);
 
@@ -276,37 +272,34 @@ describe('lista del día (#36)', () => {
     const markButton = document.querySelector('.practice-row .practice-row__mark') as HTMLElement;
     fireEvent.click(markButton);
 
-    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
-    expect(mockedCreate).toHaveBeenCalledWith([{ repertoireId: firstId, position: 0 }]);
-    expect(mockedAdd).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockedMark).toHaveBeenCalledTimes(1));
+    // Solo la tune: el día lo compone la capa de datos con el reloj.
+    expect(mockedMark).toHaveBeenCalledWith([firstId]);
 
     await waitFor(() => expect(markButton.textContent).toContain('Marked'));
   });
 
-  it('con la sesión de la lista guardada, reanuda sus marcas y no abre otra', async () => {
-    seedPlan({ sessionId: 'session-open' });
+  it('reanuda las marcas de hoy al montar y marca por día', async () => {
+    seedPlan();
     mockedMarks.mockResolvedValue(['row-12']);
 
     renderPractice();
     await waitForRows(8);
     await waitFor(() => expect(screenText()).toContain('1 marked'));
-    // Las marcas se piden a la sesión de la lista, por id.
-    expect(mockedMarks).toHaveBeenCalledWith('session-open');
+    // Las marcas se piden por día local, que es la unidad de la marca.
+    expect(mockedMarks).toHaveBeenCalledWith(todayKeyFor(Date.now()));
 
     const rows = document.querySelectorAll('.practice-row');
     const target = rows[1] as HTMLElement;
     fireEvent.click(target.querySelector('.practice-row__mark') as HTMLElement);
 
-    await waitFor(() => expect(mockedAdd).toHaveBeenCalledTimes(1));
-    expect(mockedCreate).not.toHaveBeenCalled();
-    expect(mockedAdd).toHaveBeenCalledWith('session-open', [
-      { repertoireId: idsInOrder()[1], position: 1 },
-    ]);
+    await waitFor(() => expect(mockedMark).toHaveBeenCalledTimes(1));
+    expect(mockedMark).toHaveBeenCalledWith([idsInOrder()[1]]);
   });
 
   it('«Mark all» escribe solo las que faltan y dos pulsaciones no duplican', async () => {
-    // Las dos más vencidas (row-12 y row-11) ya estaban marcadas.
-    seedPlan({ sessionId: 'session-open' });
+    // Las dos más vencidas (row-12 y row-11) ya estaban marcadas hoy.
+    seedPlan();
     mockedMarks.mockResolvedValue(['row-12', 'row-11']);
 
     renderPractice();
@@ -315,19 +308,20 @@ describe('lista del día (#36)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^Mark all$/ }));
 
-    await waitFor(() => expect(mockedAdd).toHaveBeenCalledTimes(1));
-    const [, marks] = mockedAdd.mock.calls[0];
+    await waitFor(() => expect(mockedMark).toHaveBeenCalledTimes(1));
+    const [ids] = mockedMark.mock.calls[0];
     // Dos de las ocho ya estaban marcadas: seis marcas, no ocho.
-    expect(marks).toHaveLength(6);
-    expect(mockedCreate).not.toHaveBeenCalled();
+    expect(ids).toHaveLength(6);
+    expect(ids).not.toContain('row-12');
+    expect(ids).not.toContain('row-11');
 
     fireEvent.click(screen.getByRole('button', { name: /^Mark all$/ }));
     await waitFor(() => expect(screenText()).toContain('8 marked'));
-    expect(mockedAdd).toHaveBeenCalledTimes(1);
+    expect(mockedMark).toHaveBeenCalledTimes(1);
   });
 
-  it('desmarcar llama a la capa que borra y recalcula, con la fila correcta', async () => {
-    seedPlan({ sessionId: 'session-open' });
+  it('desmarcar llama a la capa que borra y recalcula, con la fila y el día', async () => {
+    seedPlan();
     mockedMarks.mockResolvedValue(OVERDUE_FIRST);
 
     renderPractice();
@@ -338,7 +332,7 @@ describe('lista del día (#36)', () => {
     fireEvent.click(screen.getByRole('button', { name: `Unmark Tune ${firstId.slice(-2)}` }));
 
     await waitFor(() => expect(mockedUnmark).toHaveBeenCalledTimes(1));
-    expect(mockedUnmark).toHaveBeenCalledWith('session-open', firstId);
+    expect(mockedUnmark).toHaveBeenCalledWith(firstId, todayKeyFor(Date.now()));
   });
 
   it('el aviso de desbordamiento lleva la cifra congelada y sigue tras remontar', async () => {
@@ -418,34 +412,33 @@ describe('lista del día (#36)', () => {
     expect(firstRow.textContent).toContain('Marked ✓');
   });
 
-  it('recargar conserva la lista y sus marcas: la sesión va escrita en la lista', async () => {
+  it('recargar conserva la lista y las marcas del día: se preguntan por día', async () => {
     renderPractice();
     await waitForRows(8);
 
     const firstId = idsInOrder()[0];
     fireEvent.click(document.querySelector('.practice-row .practice-row__mark') as HTMLElement);
-    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockedMark).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screenText()).toContain('1 marked'));
 
-    // La primera marca dejó la sesión escrita junto a la lista.
+    // La lista guardada no lleva identidad de sesión: la marca vive en la base,
+    // con su día, y es el `unique` por día el que impide duplicarla.
     const stored = readPlan(localStorage, Date.now());
-    expect(stored?.sessionId).toBe('session-new');
     expect(stored?.ids).toEqual(idsInOrder());
 
-    // Recarga —o volver de un enlace de The Session—: las marcas se piden a ESA
-    // sesión, no a «la última abierta de hoy». Era el bug de las sesiones de una
-    // línea: cada recarga perdía todas menos la última.
+    // Recarga —o volver de un enlace de The Session—: las marcas se vuelven a
+    // pedir al día de hoy y la fila sigue marcada.
     cleanup();
     mockedMarks.mockResolvedValue([firstId]);
     renderPractice();
     await waitForRows(8);
 
-    await waitFor(() => expect(mockedMarks).toHaveBeenCalledWith('session-new'));
+    await waitFor(() => expect(mockedMarks).toHaveBeenLastCalledWith(todayKeyFor(Date.now())));
     await waitFor(() => expect(screenText()).toContain('1 marked'));
     expect(idsInOrder()).toEqual(stored?.ids);
     expect(document.querySelectorAll('.practice-row.is-marked')).toHaveLength(1);
-    // No se abrió una sesión nueva por la recarga.
-    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    // La recarga no escribe nada.
+    expect(mockedMark).toHaveBeenCalledTimes(1);
   });
 
   it('«New list» pide confirmación y genera otra sin marcas', async () => {
@@ -463,18 +456,17 @@ describe('lista del día (#36)', () => {
     );
     expect(readPlan(localStorage, Date.now())?.createdAt).toBe(before?.createdAt);
 
-    // Segunda: la sustituye, sin sesión y sin marcas.
+    // Segunda: la sustituye, sin marcas.
     fireEvent.click(screen.getByRole('button', { name: 'Replace this list?' }));
     await waitFor(() => expect(screenText()).toContain('0 marked'));
 
     const after = readPlan(localStorage, Date.now());
-    expect(after?.sessionId).toBeNull();
     expect(after?.createdAt).not.toBe(before?.createdAt);
     expect(document.querySelectorAll('.practice-row.is-marked')).toHaveLength(0);
   });
 
   it('con toda la lista marcada lo dice y remite a «New list», sin refrescarse sola', async () => {
-    seedPlan({ sessionId: 'session-open' });
+    seedPlan();
     mockedMarks.mockResolvedValue(OVERDUE_FIRST);
 
     renderPractice();
@@ -489,7 +481,7 @@ describe('lista del día (#36)', () => {
     mockedFetch.mockResolvedValue([
       ...ROWS,
       // Un deseo de hace dos años y medio: antes encabezaba la lista.
-      row(99, { status: 'to_learn', added_at: daysAgo(900), last_practiced_at: null }),
+      row(99, { status: 'to_learn', added_at: daysAgo(900), last_practiced_day: null }),
     ] as any);
 
     renderPractice();

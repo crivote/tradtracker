@@ -1,25 +1,27 @@
 // @vitest-environment node
 /**
- * Integración real de `logPractice` contra Supabase (#10).
+ * Integración real de `logPractice` contra Supabase (#10; unidad de día en #56).
  *
- * `practice.test.ts` prueba la compensación con el cliente simulado; esto es el
- * otro extremo: el adaptador hablando con PostgREST de verdad, con una cuenta
- * efímera y su JWT. Se salta sola si no hay credenciales, así que la suite
- * normal sigue sin red:
+ * `practice.test.ts` prueba el adaptador con el cliente simulado; esto es el otro
+ * extremo: PostgREST de verdad, con una cuenta efímera y su JWT. Se salta sola si
+ * no hay credenciales, así que la suite normal sigue sin red:
  *
  *   VITE_SUPABASE_URL=… VITE_SUPABASE_ANON_KEY=… SUPABASE_SERVICE_ROLE=… \
  *     npx vitest run src/lib/practice.integration.test.ts
  *
  * Lo que comprueba, y que ningún mock puede comprobar:
- *   1. `insert({})` en `pr_sessions` funciona sin cuerpo (user_id y started_at
- *      los pone la base) y devuelve el id.
- *   2. El trigger mueve `pr_repertoire.last_practiced_at` al insertar la línea.
- *   3. Si la línea falla por RLS (repertorio ajeno), NO queda una sesión vacía:
- *      la compensación borra la sesión recién creada.
+ *   1. El `upsert` sobre `pr_practice` con `onConflict (user_id, repertoire_id,
+ *      day)` funciona **sin mandar `user_id`**: lo pone la base.
+ *   2. Marcar otra vez el mismo día **actualiza** la misma fila: una, no dos.
+ *   3. El trigger mueve `pr_repertoire.last_practiced_at` y su `last_practiced_day`.
+ *   4. Borrar la marca y llamar a `pr_recompute_last_practice` deja la fecha
+ *      atrás: la RPC nueva, la que lee marcas y no sesiones.
+ *   5. Si la escritura falla por RLS (repertorio ajeno), no queda ninguna fila.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { supabase } from './supabase';
-import { logPractice } from './practice';
+import { logPractice, unmarkPractice } from './practice';
+import { todayKeyFor } from './practice-storage';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -86,7 +88,7 @@ describe.skipIf(!enabled)('logPractice contra Supabase real', () => {
   }, 30_000);
 
   afterAll(async () => {
-    // El borrado del usuario arrastra repertorio y sesiones; la tune queda con
+    // El borrado del usuario arrastra repertorio y marcas; la tune queda con
     // created_by = null y se borra aparte, solo la de esta prueba.
     if (userId) await admin(`admin/users/${userId}`, 'DELETE');
     if (tuneId) {
@@ -102,60 +104,98 @@ describe.skipIf(!enabled)('logPractice contra Supabase real', () => {
     await supabase.auth.signOut();
   }, 30_000);
 
-  it('apunta el ensayo y mueve last_practiced_at', async () => {
+  it('apunta la marca del día, mueve la fecha y el segundo toque del día la actualiza', async () => {
+    const day = todayKeyFor(Date.now());
+
     const before = await supabase
       .from('pr_repertoire')
-      .select('last_practiced_at')
+      .select('last_practiced_at,last_practiced_day')
       .eq('id', repertoireId!)
       .single();
     expect(before.data!.last_practiced_at).toBeNull();
+    expect(before.data!.last_practiced_day).toBeNull();
 
-    await logPractice(repertoireId!, { quality: 4, comment: '  primera prueba real  ' });
+    const id = await logPractice(repertoireId!, { quality: 4, comment: '  primera prueba real  ' });
+    expect(typeof id).toBe('string');
 
     const after = await supabase
       .from('pr_repertoire')
-      .select('last_practiced_at')
+      .select('last_practiced_at,last_practiced_day')
       .eq('id', repertoireId!)
       .single();
     expect(after.data!.last_practiced_at).not.toBeNull();
+    // El día es el local que compuso el cliente, no el que saldría del instante.
+    expect(after.data!.last_practiced_day).toBe(day);
 
-    const { data: lines, error } = await supabase
-      .from('pr_session_tunes')
-      .select('quality, comment, session_id')
+    const { data: marks, error } = await supabase
+      .from('pr_practice')
+      .select('id,day,quality,comment')
       .eq('repertoire_id', repertoireId!);
     expect(error).toBeNull();
-    expect(lines).toHaveLength(1);
-    expect(lines![0].quality).toBe(4);
+    expect(marks).toHaveLength(1);
+    expect(marks![0].id).toBe(id);
+    expect(marks![0].day).toBe(day);
+    expect(marks![0].quality).toBe(4);
     // El recorte es del cliente: a la base no llega el relleno.
-    expect(lines![0].comment).toBe('primera prueba real');
+    expect(marks![0].comment).toBe('primera prueba real');
+
+    // El mismo día, otra vez: el `unique (user_id, repertoire_id, day)` convierte
+    // el segundo toque en una actualización —una fila, la del último—.
+    await logPractice(repertoireId!, { quality: 2, comment: '  segunda pasada  ' });
+
+    const { data: again, error: againError } = await supabase
+      .from('pr_practice')
+      .select('quality,comment')
+      .eq('repertoire_id', repertoireId!);
+    expect(againError).toBeNull();
+    expect(again).toHaveLength(1);
+    expect(again![0].quality).toBe(2);
+    expect(again![0].comment).toBe('segunda pasada');
   }, 30_000);
 
-  it('guarda sin calidad (opcional) y sin comentario', async () => {
+  it('borrar la marca y recalcular deja la fecha atrás', async () => {
+    await unmarkPractice(repertoireId!, todayKeyFor(Date.now()));
+
+    const { data: marks } = await supabase
+      .from('pr_practice')
+      .select('id')
+      .eq('repertoire_id', repertoireId!);
+    expect(marks).toHaveLength(0);
+
+    const { data: row } = await supabase
+      .from('pr_repertoire')
+      .select('last_practiced_at,last_practiced_day')
+      .eq('id', repertoireId!)
+      .single();
+    // Sin marcas, el recálculo deja null: la fecha retrocede de verdad.
+    expect(row!.last_practiced_at).toBeNull();
+    expect(row!.last_practiced_day).toBeNull();
+  }, 30_000);
+
+  it('guarda sin calidad y no deja marca de un repertorio ajeno (RLS)', async () => {
     await logPractice(repertoireId!, { quality: null, comment: '   ' });
 
-    const { data: lines } = await supabase
-      .from('pr_session_tunes')
-      .select('quality, comment')
+    const { data: marks } = await supabase
+      .from('pr_practice')
+      .select('quality,comment')
       .eq('repertoire_id', repertoireId!)
       .is('quality', null);
-    expect(lines).toHaveLength(1);
-    expect(lines![0].comment).toBeNull();
-  }, 30_000);
+    expect(marks).toHaveLength(1);
+    expect(marks![0].comment).toBeNull();
 
-  it('no deja sesión vacía cuando la línea falla por RLS', async () => {
     const ghostRepertoire = crypto.randomUUID();
-    const sessionsBefore = await supabase
-      .from('pr_sessions')
+    const before = await supabase
+      .from('pr_practice')
       .select('id', { count: 'exact', head: true });
 
     await expect(
-      logPractice(ghostRepertoire, { quality: 3, comment: null })
+      logPractice(ghostRepertoire, { quality: 3, comment: null }),
     ).rejects.toThrow(/Could not save the practice/);
 
-    const sessionsAfter = await supabase
-      .from('pr_sessions')
+    const after = await supabase
+      .from('pr_practice')
       .select('id', { count: 'exact', head: true });
-    // Ni una sesión más: la que se creó para la línea imposible ya no está.
-    expect(sessionsAfter.count).toBe(sessionsBefore.count);
+    // Ni una fila más: la marca de un repertorio ajeno no entra.
+    expect(after.count).toBe(before.count);
   }, 30_000);
 });

@@ -51,7 +51,7 @@ function row(overrides: { customAbc?: string | null; abc?: string | null; origin
     custom_key: null,
     notes: null,
     added_at: '2026-10-01T10:00:00Z',
-    last_practiced_at: null,
+    last_practiced_day: null,
     pr_tunes: {
       id: 'tune-1',
       origin: 'thesession',

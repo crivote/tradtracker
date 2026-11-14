@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { LadderStatus, RepertoireRow } from './repertoire-model';
 import type { PracticeCandidate } from './practice-plan';
+import { todayKeyFor } from './practice-storage';
 import { 
   computeTargets, 
   urgencyOf, 
@@ -18,7 +19,13 @@ import {
 describe('Practice Plan Model', () => {
   const nowMs = new Date('2026-10-31T10:00:00Z').getTime();
   const tenDaysAgo = new Date(nowMs - 10 * 86_400_000).toISOString();
-  const tomorrow = new Date(nowMs + 86_400_000).toISOString();
+  /**
+   * Día local (`YYYY-MM-DD`) de hace `days` días: el candidato lleva el día del
+   * último ensayo, no el instante. Se compone con `todayKeyFor` —nunca con
+   * `toISOString().slice(0, 10)`, que a las 23:00 locales ya es el día siguiente.
+   */
+  const dayBefore = (days: number) => todayKeyFor(nowMs - days * 86_400_000);
+  const tomorrow = dayBefore(-1);
 
   describe('computeTargets', () => {
     it('calculates targets correctly for 421/8', () => {
@@ -53,7 +60,7 @@ describe('Practice Plan Model', () => {
       const base = {
         id: 'x',
         addedAt: new Date(nowMs - 40 * 86_400_000).toISOString(),
-        lastPracticedAt: new Date(nowMs - 30 * 86_400_000).toISOString(),
+        lastPracticedDay: dayBefore(30),
         rhythm: 'Reel',
         favorite: false,
       };
@@ -72,7 +79,7 @@ describe('Practice Plan Model', () => {
         id: '1',
         status: 'learning' as const,
         addedAt: tenDaysAgo,
-        lastPracticedAt: null,
+        lastPracticedDay: null,
         rhythm: 'Reel',
         favorite: false,
       };
@@ -83,7 +90,7 @@ describe('Practice Plan Model', () => {
     });
 
     it('applies 1.4x bonus for favorites', () => {
-      const c1 = { id: '1', status: 'learning' as const, addedAt: tenDaysAgo, lastPracticedAt: null, rhythm: 'Reel', favorite: false };
+      const c1 = { id: '1', status: 'learning' as const, addedAt: tenDaysAgo, lastPracticedDay: null, rhythm: 'Reel', favorite: false };
       const c2 = { ...c1, id: '2', favorite: true };
       const u1 = urgencyOf(c1, targets, nowMs);
       const u2 = urgencyOf(c2, targets, nowMs);
@@ -93,23 +100,37 @@ describe('Practice Plan Model', () => {
     it('respects hierarchy: solo_ready favorite does not exceed learning normal if time is same', () => {
       // learning: T=52.6, days=10 -> u=10/52.6 = 0.19
       // solo_ready: T=210.5, days=10, fav=true -> u=(10/210.5)*1.4 = 0.066
-      const cLearning = { id: '1', status: 'learning' as const, addedAt: tenDaysAgo, lastPracticedAt: null, rhythm: 'Reel', favorite: false };
-      const cSolo = { id: '2', status: 'solo_ready' as const, addedAt: tenDaysAgo, lastPracticedAt: null, rhythm: 'Reel', favorite: true };
+      const cLearning = { id: '1', status: 'learning' as const, addedAt: tenDaysAgo, lastPracticedDay: null, rhythm: 'Reel', favorite: false };
+      const cSolo = { id: '2', status: 'solo_ready' as const, addedAt: tenDaysAgo, lastPracticedDay: null, rhythm: 'Reel', favorite: true };
       
       expect(urgencyOf(cLearning, targets, nowMs)).toBeGreaterThan(urgencyOf(cSolo, targets, nowMs));
     });
 
     it('applies 0.5x penalty for recentIds', () => {
-      const candidate = { id: '1', status: 'learning' as const, addedAt: tenDaysAgo, lastPracticedAt: null, rhythm: 'Reel', favorite: false };
+      const candidate = { id: '1', status: 'learning' as const, addedAt: tenDaysAgo, lastPracticedDay: null, rhythm: 'Reel', favorite: false };
       const uNormal = urgencyOf(candidate, targets, nowMs);
       const uRecent = urgencyOf(candidate, targets, nowMs, new Set(['1']));
       expect(uRecent).toBeCloseTo(uNormal * 0.5, 5);
     });
 
-    it('clamps days to 0 if lastPracticedAt is in the future', () => {
-      const candidate = { id: '1', status: 'learning' as const, addedAt: tenDaysAgo, lastPracticedAt: tomorrow, rhythm: 'Reel', favorite: false };
+    it('clamps days to 0 if the last practiced day is in the future', () => {
+      const candidate = { id: '1', status: 'learning' as const, addedAt: tenDaysAgo, lastPracticedDay: tomorrow, rhythm: 'Reel', favorite: false };
       const urgency = urgencyOf(candidate, targets, nowMs);
       expect(urgency).toBe(0);
+    });
+
+    it('cuenta los días desde la medianoche local: las 23:30 del día 10 son el día 10', () => {
+      // Frontera del huso. En Madrid, `Date.parse('2026-11-10')` es medianoche
+      // UTC = 01:00 local, así que leerlo como instante mueve la antigüedad una
+      // hora y, cerca de medianoche, un día entero.
+      const lateNight = new Date(2026, 10, 10, 23, 30).getTime();
+      const candidate = { id: '1', status: 'learning' as const, addedAt: tenDaysAgo, lastPracticedDay: '2026-11-10', rhythm: 'Reel', favorite: false };
+      const single = computeTargets(1, 1); // T(learning) = 1 día: urgencia = días
+
+      // 23:30 del 10: aún es el día en que se tocó (23,5 horas, no más).
+      expect(urgencyOf(candidate, single, lateNight)).toBeCloseTo(23.5 / 24, 5);
+      // 00:30 del 11: el día 10 ya ha cumplido entero, no «casi».
+      expect(urgencyOf(candidate, single, lateNight + 3_600_000)).toBeGreaterThan(1);
     });
   });
 
@@ -130,7 +151,7 @@ describe('Practice Plan Model', () => {
         id: `id${i}`,
         status: 'learning' as const,
         addedAt: new Date(nowMs - (20 + i) * 86_400_000).toISOString(), // Very overdue
-        lastPracticedAt: null,
+        lastPracticedDay: null,
         rhythm: 'Reel',
         favorite: false,
       }));
@@ -146,7 +167,7 @@ describe('Practice Plan Model', () => {
         id: `id${i}`,
         status: (i < 10 ? 'solo_ready' : 'learning') as LadderStatus,
         addedAt: new Date(nowMs - 1 * 86_400_000).toISOString(),
-        lastPracticedAt: null,
+        lastPracticedDay: null,
         rhythm: 'Reel',
         favorite: false,
       }));
@@ -163,7 +184,7 @@ describe('Practice Plan Model', () => {
         id: `id${i}`,
         status: (i < 3 ? 'solo_ready' : 'learning') as LadderStatus,
         addedAt: new Date(nowMs - 1 * 86_400_000).toISOString(),
-        lastPracticedAt: null,
+        lastPracticedDay: null,
         rhythm: 'Reel',
         favorite: false,
       }));
@@ -177,8 +198,8 @@ describe('Practice Plan Model', () => {
     it('diversifies rhythms (no runs of 4+)', () => {
       // 6 Jig + 6 Reel, target 8. maxConsecutive 3.
       const candidates = [
-        ...Array.from({ length: 6 }, (_, i) => ({ id: `jig${i}`, status: 'learning' as const, addedAt: new Date(nowMs - 1 * 86_400_000).toISOString(), lastPracticedAt: null, rhythm: 'Jig', favorite: false })),
-        ...Array.from({ length: 6 }, (_, i) => ({ id: `reel${i}`, status: 'learning' as const, addedAt: new Date(nowMs - 1 * 86_400_000).toISOString(), lastPracticedAt: null, rhythm: 'Reel', favorite: false })),
+        ...Array.from({ length: 6 }, (_, i) => ({ id: `jig${i}`, status: 'learning' as const, addedAt: new Date(nowMs - 1 * 86_400_000).toISOString(), lastPracticedDay: null, rhythm: 'Jig', favorite: false })),
+        ...Array.from({ length: 6 }, (_, i) => ({ id: `reel${i}`, status: 'learning' as const, addedAt: new Date(nowMs - 1 * 86_400_000).toISOString(), lastPracticedDay: null, rhythm: 'Reel', favorite: false })),
       ];
       
       const result = buildPracticeList(candidates, { seed: 123, nowMs, dailyTarget: 8, maxConsecutiveRhythm: 3 });
@@ -202,7 +223,7 @@ describe('Practice Plan Model', () => {
         id: `id${i}`,
         status: 'learning' as const,
         addedAt: tenDaysAgo,
-        lastPracticedAt: null,
+        lastPracticedDay: null,
         rhythm: i % 2 === 0 ? 'Jig' : 'Reel',
         favorite: i % 3 === 0,
       }));
@@ -231,15 +252,20 @@ describe('Practice Plan Model', () => {
 
   describe('umbrales y estructura (estos tests muerden)', () => {
     const iso = (daysAgo: number) => new Date(nowMs - daysAgo * 86_400_000).toISOString();
+    /** Día local de hace `days` días, como lo guarda `pr_repertoire.last_practiced_day`. */
+    const day = (daysAgo: number) => todayKeyFor(nowMs - daysAgo * 86_400_000);
     const mk = (id: string, over: Partial<PracticeCandidate> = {}): PracticeCandidate => ({
-      id, status: 'learning', addedAt: iso(0), lastPracticedAt: iso(0), rhythm: 'Reel', favorite: false, ...over,
+      id, status: 'learning', addedAt: iso(0), lastPracticedDay: day(0), rhythm: 'Reel', favorite: false, ...over,
     });
 
-    it('fija el umbral de la regla dura en 2: 1.99 no entra, 2.01 si', () => {
-      // 100 candidatas y dailyTarget 10 => T(learning) = 10 dias => urgencia = dias / 10
+    it('fija el umbral de la regla dura en 2: por debajo no entra, por encima sí', () => {
+      // 100 candidatas y dailyTarget 10 => T(learning) = 10 días => la línea está
+      // en 20 días. La antigüedad se cuenta desde la medianoche local del día del
+      // ensayo, así que 19 días quedan por debajo (19,x) y 20 por encima (20,x):
+      // es el par más ajustado que admite la unidad de día.
       const base = Array.from({ length: 98 }, (_, i) => mk(`z${String(i).padStart(3, '0')}`));
-      const low = mk('a-low', { lastPracticedAt: iso(19.9) });   // 1.99
-      const high = mk('b-high', { lastPracticedAt: iso(20.1) }); // 2.01
+      const low = mk('a-low', { lastPracticedDay: day(19) });   // 1.9x
+      const high = mk('b-high', { lastPracticedDay: day(20) }); // 2.0x
       const res = buildPracticeList([...base, low, high], { seed: 7, nowMs, dailyTarget: 10 });
       const eHigh = res.entries.find((e) => e.candidate.id === 'b-high');
       const eLow = res.entries.find((e) => e.candidate.id === 'a-low');
@@ -272,8 +298,10 @@ describe('Practice Plan Model', () => {
 
     it('la diversificacion corta la racha que el muestreo produciria', () => {
       // Urgencias dispares pero <2 (sin regla dura): los jigs dominan el peso y saldrian seguidos.
-      const jigs = Array.from({ length: 6 }, (_, i) => mk(`j${i}`, { lastPracticedAt: iso(2.5), rhythm: 'Jig' }));
-      const reels = Array.from({ length: 6 }, (_, i) => mk(`r${i}`, { lastPracticedAt: iso(0.1), rhythm: 'Reel' }));
+      // Días locales: 2 días frente a hoy. Con T(learning) = 1,5 la urgencia de
+      // los jigs es ~1,6 (<2, sin regla dura) y la de los reels ~0,3.
+      const jigs = Array.from({ length: 6 }, (_, i) => mk(`j${i}`, { lastPracticedDay: day(2), rhythm: 'Jig' }));
+      const reels = Array.from({ length: 6 }, (_, i) => mk(`r${i}`, { lastPracticedDay: day(0), rhythm: 'Reel' }));
       const res = buildPracticeList([...jigs, ...reels], { seed: 99, nowMs, dailyTarget: 8, maxConsecutiveRhythm: 3 });
       let run = 1;
       for (let i = 1; i < res.entries.length; i++) {
@@ -308,7 +336,7 @@ function repertoireRow(overrides: Partial<RepertoireRow> & { id: string; rhythm?
     custom_key: null,
     notes: null,
     added_at: '2026-09-01T10:00:00Z',
-    last_practiced_at: null,
+    last_practiced_day: null,
     tune: {
       id: `tune-${overrides.id}`,
       origin: 'thesession',
@@ -371,7 +399,7 @@ describe('toCandidates (#36)', () => {
         id: 'a',
         status: 'solo_ready',
         favorite: true,
-        last_practiced_at: '2026-10-20T09:00:00Z',
+        last_practiced_day: '2026-10-20',
       }),
     ];
 
@@ -379,7 +407,7 @@ describe('toCandidates (#36)', () => {
       id: 'a',
       status: 'solo_ready',
       addedAt: '2026-09-01T10:00:00Z',
-      lastPracticedAt: '2026-10-20T09:00:00Z',
+      lastPracticedDay: '2026-10-20',
       rhythm: 'Reel',
       favorite: true,
     });

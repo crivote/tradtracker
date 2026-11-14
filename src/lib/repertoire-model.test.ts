@@ -50,6 +50,7 @@ import {
   type RepertoireStats,
   type TuneStatus,
 } from './repertoire-model';
+import { todayKeyFor } from './practice-storage';
 
 const tune = {
   id: 'tune-uuid',
@@ -71,7 +72,7 @@ const baseRow = {
   custom_key: null,
   notes: null,
   added_at: '2026-10-28T12:00:00Z',
-  last_practiced_at: null,
+  last_practiced_day: null,
 };
 
 describe('mapRepertoireRow', () => {
@@ -164,7 +165,7 @@ function makeRow(input: {
   composer?: string | null;
   rating?: number | null;
   added_at?: string;
-  last_practiced_at?: string | null;
+  last_practiced_day?: string | null;
   /** Reloj del banco de trabajo (#52): solo viaja si la prueba lo pide. */
   status_changed_at?: string | null;
   status?: TuneStatus;
@@ -202,11 +203,11 @@ describe('collationKey', () => {
 describe('sortRepertoire', () => {
   it('urgency puts never-practiced rows first, then the ones practiced longest ago', () => {
     const never = makeRow({ id: 'n1', name: 'Fresh Jig' });
-    const old = makeRow({ id: 'old', name: 'Old Reel', last_practiced_at: '2026-01-10T10:00:00Z' });
+    const old = makeRow({ id: 'old', name: 'Old Reel', last_practiced_day: '2026-01-10' });
     const recent = makeRow({
       id: 'recent',
       name: 'Recent Reel',
-      last_practiced_at: '2026-10-20T10:00:00Z',
+      last_practiced_day: '2026-10-20',
     });
     const sorted = sortRepertoire([recent, never, old], 'urgency');
     expect(sorted.map((row) => row.id)).toEqual(['n1', 'old', 'recent']);
@@ -423,28 +424,28 @@ describe('practiceRecency', () => {
   });
 
   it('says «Never practiced» for an unparsable timestamp', () => {
-    const row = makeRow({ id: 'broken', last_practiced_at: 'ayer' });
+    const row = makeRow({ id: 'broken', last_practiced_day: 'ayer' });
     expect(practiceRecency(row, NOW).label).toBe('Never practiced');
     expect(practiceRecency(row, NOW).days).toBeNull();
   });
 
   it('says «Practiced today» for anything within the last day', () => {
-    const row = makeRow({ id: 'today', last_practiced_at: '2026-10-28T08:00:00Z' });
+    const row = makeRow({ id: 'today', last_practiced_day: '2026-10-28' });
     expect(practiceRecency(row, NOW)).toEqual({ days: 0, label: 'Practiced today' });
   });
 
   it('says «1 day ago» in the singular', () => {
-    const row = makeRow({ id: 'yesterday', last_practiced_at: '2026-10-27T08:00:00Z' });
+    const row = makeRow({ id: 'yesterday', last_practiced_day: '2026-10-27' });
     expect(practiceRecency(row, NOW)).toEqual({ days: 1, label: '1 day ago' });
   });
 
   it('says «N days ago» in the plural', () => {
-    const row = makeRow({ id: 'week', last_practiced_at: '2026-10-21T08:00:00Z' });
+    const row = makeRow({ id: 'week', last_practiced_day: '2026-10-21' });
     expect(practiceRecency(row, NOW)).toEqual({ days: 7, label: '7 days ago' });
   });
 
   it('counts a future timestamp as today instead of a negative number', () => {
-    const row = makeRow({ id: 'future', last_practiced_at: '2026-12-24T08:00:00Z' });
+    const row = makeRow({ id: 'future', last_practiced_day: '2026-12-24' });
     expect(practiceRecency(row, NOW)).toEqual({ days: 0, label: 'Practiced today' });
   });
 });
@@ -560,9 +561,13 @@ describe('customDrafts (#8)', () => {
 
 // --- Home del repertorio (#29): peldaños, gradiente, medidor y topes --------
 
-/** Instante ISO de hace `days` días respecto a NOW. */
+/**
+ * Día local (`YYYY-MM-DD`) de hace `days` días respecto a NOW: la fila trae el
+ * día del último ensayo, no el instante, así que se compone con `todayKeyFor` y
+ * nunca con `toISOString().slice(0, 10)`.
+ */
 function daysAgo(days: number): string {
-  return new Date(NOW - days * 86_400_000).toISOString();
+  return todayKeyFor(NOW - days * 86_400_000);
 }
 
 describe('mapRepertoireRow con los agregados de la vista (#29)', () => {
@@ -789,9 +794,9 @@ describe('bandas de la escalera (#29, quinta en #46, cima en #50)', () => {
 });
 
 describe('staleness: días, etiqueta y gradiente (#29)', () => {
-  it('sale de last_practiced_at con el instante inyectado', () => {
+  it('sale de last_practiced_day con el instante inyectado', () => {
     expect(stalenessDays(makeRow({ id: 'never' }), NOW)).toBeNull();
-    expect(stalenessDays(makeRow({ id: 'x', last_practiced_at: daysAgo(41) }), NOW)).toBe(41);
+    expect(stalenessDays(makeRow({ id: 'x', last_practiced_day: daysAgo(41) }), NOW)).toBe(41);
   });
 
   it('usa los días de la vista solo si falta la fecha en la fila', () => {
@@ -913,11 +918,11 @@ describe('groupIntoBands y orden por staleness (#29)', () => {
 
   it('dentro de cada banda, nunca tocada primero y después días descendentes', () => {
     const rows = [
-      makeRow({ id: 'recent', name: 'Recent', status: 'learning', last_practiced_at: daysAgo(2) }),
+      makeRow({ id: 'recent', name: 'Recent', status: 'learning', last_practiced_day: daysAgo(2) }),
       makeRow({ id: 'never-b', name: 'Never B', status: 'learning' }),
-      makeRow({ id: 'old', name: 'Old', status: 'learning', last_practiced_at: daysAgo(90) }),
+      makeRow({ id: 'old', name: 'Old', status: 'learning', last_practiced_day: daysAgo(90) }),
       makeRow({ id: 'never-a', name: 'Never A', status: 'learning' }),
-      makeRow({ id: 'mid', name: 'Mid', status: 'learning', last_practiced_at: daysAgo(41) }),
+      makeRow({ id: 'mid', name: 'Mid', status: 'learning', last_practiced_day: daysAgo(41) }),
     ];
     const [learning, shaky] = groupIntoBands(rows, NOW);
     expect(learning.rows.map((row) => row.id)).toEqual([
@@ -932,9 +937,9 @@ describe('groupIntoBands y orden por staleness (#29)', () => {
 
   it('el empate de staleness se rompe por título sin diacríticos (collationKey)', () => {
     const rows = [
-      makeRow({ id: 'z', name: 'Zed', status: 'learning', last_practiced_at: daysAgo(10) }),
-      makeRow({ id: 'a', name: 'Ángel', status: 'learning', last_practiced_at: daysAgo(10) }),
-      makeRow({ id: 'n', name: 'nube', status: 'learning', last_practiced_at: daysAgo(10) }),
+      makeRow({ id: 'z', name: 'Zed', status: 'learning', last_practiced_day: daysAgo(10) }),
+      makeRow({ id: 'a', name: 'Ángel', status: 'learning', last_practiced_day: daysAgo(10) }),
+      makeRow({ id: 'n', name: 'nube', status: 'learning', last_practiced_day: daysAgo(10) }),
     ];
     expect(groupIntoBands(rows, NOW)[0].rows.map((row) => row.id)).toEqual(['a', 'n', 'z']);
   });
@@ -950,8 +955,8 @@ describe('groupIntoBands y orden por staleness (#29)', () => {
   });
 
   it('compareStaleness es un comparador total: mismo resultado en cualquier orden', () => {
-    const a = makeRow({ id: 'a', name: 'Alpha', last_practiced_at: daysAgo(5) });
-    const b = makeRow({ id: 'b', name: 'Beta', last_practiced_at: daysAgo(5) });
+    const a = makeRow({ id: 'a', name: 'Alpha', last_practiced_day: daysAgo(5) });
+    const b = makeRow({ id: 'b', name: 'Beta', last_practiced_day: daysAgo(5) });
     expect(compareStaleness(a, b, NOW)).toBeLessThan(0);
     expect(compareStaleness(b, a, NOW)).toBeGreaterThan(0);
     expect(compareStaleness(a, a, NOW)).toBe(0);
@@ -1161,9 +1166,9 @@ describe('aparcadas (#11): fuera de las bandas y del recuento', () => {
 
 describe('visibleShelved: el cajón del final (#11)', () => {
   const shelved = [
-    makeRow({ id: 'old', name: 'Old Reel', status: 'playing_along', shelved: true, last_practiced_at: daysAgo(80) }),
+    makeRow({ id: 'old', name: 'Old Reel', status: 'playing_along', shelved: true, last_practiced_day: daysAgo(80) }),
     makeRow({ id: 'never', name: 'Never Jig', status: 'learning', shelved: true }),
-    makeRow({ id: 'recent', name: 'Recent Slide', status: 'solo_ready', shelved: true, last_practiced_at: daysAgo(3) }),
+    makeRow({ id: 'recent', name: 'Recent Slide', status: 'solo_ready', shelved: true, last_practiced_day: daysAgo(3) }),
   ];
   const rows = [...shelved, makeRow({ id: 'in-rotation', name: 'In Rotation', status: 'learning' })];
 
@@ -1222,7 +1227,7 @@ describe('cardKey', () => {
 /**
  * Banco de trabajo (#52): `learning` se mide con otro reloj.
  *
- * El de la rejilla es el abandono (`last_practiced_at`); el del taller es el
+ * El de la rejilla es el abandono (`last_practiced_day`); el del taller es el
  * **dwell** (`status_changed_at`), porque la pregunta no es cuánto hace que no la
  * toco sino cuánto hace que no se mueve.
  */
