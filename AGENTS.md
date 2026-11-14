@@ -56,8 +56,9 @@ nunca con la paleta oscura del detalle.
 **Marcar un ensayo es un solo gesto en toda la app.** `PracticeMarkHost` (en `Layout`) monta un único popup en un
 portal del `body`, con valoración opcional 1–5 en estrellas y una nota. Los disparadores están en el menú de la carta,
 el botón del taller, el menú del listado, la ficha y el botón «Rate» de la lista del día. Los tres primeros pasan por
-`store.practise`, que **abre el popup y no escribe**: la escritura vive en `logPractice`. Abierto desde la lista del
-día, el popup lleva el `sessionId` de la lista y **actualiza** la línea de esa tune en vez de abrir otra sesión.
+`store.practise`, que **abre el popup y no escribe**: la escritura vive en `logPractice`, que hace **upsert** en
+`pr_practice` por `(user_id, repertoire_id, day)` — así que marcar y luego valorar la misma tune el mismo día
+**actualiza la marca**, no crea otra. Desde la lista del día, «Mark all» viaja en un solo `markPracticeDay`.
 
 El alta de tunes es un **cajón lateral** (`src/components/AddTuneAside.tsx`) desde `/` y `/learning`: no empuja la
 pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The Session vive plegado dentro.
@@ -91,7 +92,7 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
 | D3 | Multiusuario público desde v1, RLS completa desde el primer esquema |
 | D4 | **Identidad propia**: `pr_tunes.id` uuid + `origin` + `origin_ref`. Sin esquema prefijado `ts:`/`loc:` |
 
-## Esquema (migraciones `001`–`016`)
+## Esquema (migraciones `001`–`017`)
 
 - **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `composer` (010), `created_by`, `created_at`. Único `(origin, origin_ref)`.
   RLS: lectura para autenticados; alta/edición/borrado solo del creador.
@@ -105,15 +106,24 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
   RLS: `for all` con `user_id = auth.uid()`.
 - **`pr_repertoire_stats`** (007) — vista con `practice_count` y `avg_quality` por fila de repertorio, con
   `security_invoker = true`: sin esa opción la vista se salta la RLS y devuelve las filas de todos.
-- **Sesiones** (004): `pr_sessions` y `pr_session_tunes` (`quality` opcional). La función `pr_recompute_last_practiced`
-  (009) mantiene `last_practiced_at`, y el trigger `pr_session_tunes_touch_trg` la dispara. **Este modelo se
-  retira** (decisión del dueño, 2026-11-13): la unidad pasa a ser la marca por tune y día (issue #56).
+- **Sesiones** (004) — **MODELO RETIRADO**: `pr_sessions` y `pr_session_tunes` (`quality` opcional), con la
+  función `pr_recompute_last_practiced` (009) y el trigger `pr_session_tunes_touch_trg`. Desde #56 (2026-11-14)
+  **el cliente ya no las usa**: la unidad es la marca por tune y día. Las tablas y `last_practiced_at` siguen en
+  la base hasta que caiga #57 (renombrar a `_legacy` exige rewirar el trigger que deriva `last_practiced_day`
+  de `last_practiced_at`). No implementes nada nuevo sobre este modelo.
 - **Transiciones del peldaño** (016): `pr_ladder_event` es un registro **append-only** de cada cambio de
   `status` y de `shelved` (`kind`, `from_value`, `to_value`, `at`, `source`). Lo escribe el trigger
   `pr_ladder_event_trg` sobre `pr_repertoire`: un `update` que no toca ninguno de los dos **no crea evento**.
   `source` (`ui`/`import`/`migration`/`backfill`) permite excluir escrituras masivas de las gráficas. El
   backfill dejó un evento por fila fechado en `status_changed_at`: **no es una transición**, es la última
   foto conocida, y leerlo como transición pinta 426 promociones el día del corte.
+- **Marcas por día** (017): `pr_practice` (`user_id`, `repertoire_id`, `day date`, `practiced_at`,
+  `quality`, `comment`), único `(user_id, repertoire_id, day)`. Es la unidad que sustituye a la sesión:
+  marcar dos veces el mismo día **actualiza** la fila. `pr_practice_touch_trg` mantiene
+  `last_practiced_at` con `greatest(...)` (no retrocede) y `pr_recompute_last_practice(uuid)` la
+  recalcula desde esta tabla al borrar una marca. `pr_repertoire.last_practiced_day date` es el día
+  local derivado (el cliente lee **ese**, no el instante). **En producción desde #56**: `main` sirve el bundle
+  que escribe aquí y ya no nombra `pr_sessions`.
 - **Etiquetas** (012): `pr_tag_facets`, `pr_tags` y `pr_user_tune_tags`, más `pr_tag_with_ancestors` para aplicar una
   faceta con sus hijos.
 - Trigger `pr_repertoire_touch_trg`: mueve `status_changed_at` cuando cambia `status` — y **no** al aparcar.
