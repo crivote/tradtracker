@@ -18,8 +18,13 @@ import {
 import { readPrefs } from '../lib/practice-storage';
 import { createRepertoireStore } from '../lib/repertoire-store';
 import { preloadCatalogue } from '../lib/catalogue-db';
+import { overdueDelta, overdueHistogram, type InsightEvent, type InsightMark } from '../lib/insights';
+import { fetchInsightEvents, fetchInsightMarks } from '../lib/insights-data';
+import { aliveInRange, streakFromMarks } from '../lib/insights-view';
 import TuneCard from '../components/TuneCard';
 import AddTuneAside from '../components/AddTuneAside';
+import StatStrip from '../components/insights/StatStrip';
+import OverdueHistogram from '../components/insights/OverdueHistogram';
 import './repertoire.css';
 
 /**
@@ -171,8 +176,50 @@ export default function Repertoire() {
       )
   );
 
+  /**
+   * El panel de estado (#22): sus dos consultas —marcas y eventos de escalera—
+   * se piden **una vez al montar**, en paralelo y aparte de la carga del
+   * repertorio. No se recargan con cada gesto de la pantalla (marcar, cambiar de
+   * peldaño, abrir el cajón): las cifras hablan del día, no del último clic, y
+   * un refetch por señal convertiría cada gesto en cuatro peticiones.
+   */
+  const [insightMarks, setInsightMarks] = createSignal<InsightMark[]>([]);
+  const [insightEvents, setInsightEvents] = createSignal<InsightEvent[]>([]);
+  const [insightsLoading, setInsightsLoading] = createSignal(true);
+  const [insightsError, setInsightsError] = createSignal<string | null>(null);
+
+  const loadInsights = async () => {
+    setInsightsLoading(true);
+    setInsightsError(null);
+    try {
+      const [marks, events] = await Promise.all([fetchInsightMarks(), fetchInsightEvents()]);
+      setInsightMarks(marks);
+      setInsightEvents(events);
+    } catch {
+      // Mensaje fijo, no el de PostgREST: el aviso del repertorio ya cuenta lo
+      // suyo y aquí lo único que hay que decir es que las cifras no están.
+      setInsightsError('Could not load the statistics.');
+    } finally {
+      setInsightsLoading(false);
+    }
+  };
+
+  /**
+   * Un solo instante para el panel: la cifra de vencidas, el delta y el
+   * histograma tienen que hablar del mismo día. Sale del reloj de la vista del
+   * store, que se refresca al cargar y al recargar.
+   */
+  const insightsNow = createMemo(() => store.now());
+  const histogram = createMemo(() => overdueHistogram(store.rows(), insightsNow()));
+  const overdue = createMemo(() =>
+    overdueDelta(store.rows(), insightMarks(), insightEvents(), insightsNow())
+  );
+  const alive = createMemo(() => aliveInRange(insightMarks(), insightsNow(), 14));
+  const streak = createMemo(() => streakFromMarks(insightMarks(), insightsNow()));
+
   onMount(() => {
     void store.load();
+    void loadInsights();
     // El artefacto del catálogo se descarga en segundo plano: cuando se abre el
     // cajón del alta, el buscador ya está listo.
     void preloadCatalogue();
@@ -225,6 +272,27 @@ export default function Repertoire() {
           </button>
         </div>
       </header>
+
+      {/* Panel de estado (#22): las cuatro cifras y el histograma, en papel y
+          justo bajo la cabecera. Las bandas de debajo no se mueven ni se
+          reordenan: el panel es un resumen, no otra pantalla. */}
+      <section class="insights" aria-label="Repertoire status">
+        <Show when={insightsError()}>
+          <p class="notice notice-error" role="alert">
+            {insightsError()}
+          </p>
+        </Show>
+
+        <Show when={!insightsError()}>
+          <Show
+            when={!insightsLoading() && !store.loading()}
+            fallback={<p class="notice">Loading the figures…</p>}
+          >
+            <StatStrip histogram={histogram()} alive={alive()} streak={streak()} />
+            <OverdueHistogram histogram={histogram()} delta={overdue()} nowMs={insightsNow()} />
+          </Show>
+        </Show>
+      </section>
 
       <Show when={store.error()}>
         <p class="notice notice-error" role="alert">

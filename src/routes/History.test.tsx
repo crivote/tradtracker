@@ -14,11 +14,37 @@ vi.mock('../lib/practice-history', async (importOriginal) => {
   return { ...actual, fetchPracticeHistory: vi.fn() };
 });
 
+/**
+ * El panel (#22) pide las marcas del corte A, los eventos de escalera y las filas
+ * del repertorio (para la composición y las revisitas), y pinta con Chart.js.
+ * Aquí lo que se prueba es el cableado de la pantalla: los tres adaptadores van
+ * simulados y `drawChart` también, porque jsdom no tiene canvas.
+ */
+vi.mock('../lib/repertoire', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/repertoire')>();
+  return { ...actual, fetchRepertoire: vi.fn() };
+});
+
+vi.mock('../lib/insights-data', () => ({
+  INSIGHT_ROW_LIMIT: 5000,
+  fetchInsightMarks: vi.fn(async () => []),
+  fetchInsightEvents: vi.fn(async () => []),
+}));
+
+vi.mock('../lib/charts', () => ({
+  drawChart: vi.fn(() => ({ destroy: vi.fn() })),
+}));
+
 import { fetchPracticeHistory, type PracticeMark } from '../lib/practice-history';
+import { fetchRepertoire } from '../lib/repertoire';
+import { fetchInsightEvents, fetchInsightMarks } from '../lib/insights-data';
 import { todayKeyFor } from '../lib/practice-storage';
 import History from './History';
 
 const mockedFetch = vi.mocked(fetchPracticeHistory);
+const mockedRows = vi.mocked(fetchRepertoire);
+const mockedMarks = vi.mocked(fetchInsightMarks);
+const mockedEvents = vi.mocked(fetchInsightEvents);
 
 /** Día local (`YYYY-MM-DD`) de hace `daysAgo` días: es lo que guarda la base. */
 function daysAgo(daysAgo: number): string {
@@ -64,6 +90,13 @@ function mount() {
 beforeEach(() => {
   mockedFetch.mockReset();
   mockedFetch.mockResolvedValue(TODAY);
+  // El panel se carga aparte y con datos vacíos: no es lo que prueba este fichero.
+  mockedRows.mockReset();
+  mockedRows.mockResolvedValue([]);
+  mockedMarks.mockReset();
+  mockedMarks.mockResolvedValue([]);
+  mockedEvents.mockReset();
+  mockedEvents.mockResolvedValue([]);
 });
 
 afterEach(() => cleanup());
@@ -112,6 +145,57 @@ describe('History', () => {
 
     await waitFor(() => expect(screen.getByText(/Nothing recorded in the last 30 days/)).toBeTruthy());
     expect(document.querySelector('.history-days')).toBeNull();
+  });
+
+  it('el panel de estado va después de la lista de días, con las tres gráficas', async () => {
+    // Marcas y filas reales para el panel: una tune con dos pasadas y su peldaño.
+    mockedMarks.mockResolvedValue([
+      { repertoireId: 'a', day: daysAgo(1), practicedAt: new Date(Date.now() - 86_400_000).toISOString() },
+      { repertoireId: 'a', day: daysAgo(0), practicedAt: new Date().toISOString() },
+    ]);
+    mockedRows.mockResolvedValue([
+      {
+        id: 'a',
+        status: 'shaky',
+        shelved: false,
+        added_at: '2026-10-01T10:00:00Z',
+        last_practiced_day: daysAgo(0),
+        tune: { id: 't-a', origin: 'thesession', origin_ref: '1', name: 'A', rhythm: 'reel', meter: '4/4', key: null, abc: null },
+      } as any,
+    ]);
+
+    mount();
+
+    const panel = await waitFor(() => {
+      const node = document.querySelector('.history-insights');
+      expect(node).toBeTruthy();
+      return node as HTMLElement;
+    });
+
+    // Ritmo, composición y revisitas: tres tarjetas, ninguna con canvas vacío.
+    expect(panel.querySelectorAll('.insight-card')).toHaveLength(3);
+    expect(panel.querySelector('.insight-card--pace')).toBeTruthy();
+    expect(panel.querySelector('.insight-card--composition')).toBeTruthy();
+    expect(panel.querySelector('.insight-card--revisits')).toBeTruthy();
+
+    // Y va **después** de los días, no antes: el diario manda.
+    const days = document.querySelector('.history-days') as HTMLElement;
+    expect(days.compareDocumentPosition(panel)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it('si el panel no puede leer, lo dice y los días siguen en pantalla', async () => {
+    mockedMarks.mockRejectedValue(new Error('boom'));
+
+    mount();
+
+    const alert = await waitFor(() => {
+      const node = screen.getByText('Could not load the statistics.');
+      expect(node.getAttribute('role')).toBe('alert');
+      return node;
+    });
+    expect(alert).toBeTruthy();
+    expect(document.querySelector('.history-days')).toBeTruthy();
+    expect(document.querySelector('.history-insights')).toBeNull();
   });
 
   it('un fallo de lectura se muestra con su mensaje y una salida', async () => {

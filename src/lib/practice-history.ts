@@ -227,14 +227,22 @@ export function practiceStreak(points: readonly HistoryPoint[]): number {
   return streak;
 }
 
-/** Serie diaria del rango, del día más antiguo a hoy. */
-export function historySeries(
-  days: readonly HistoryDay[],
+/**
+ * Serie diaria del rango a partir de un **recuento por día**: siempre hay un
+ * punto por día, con o sin ensayo, del más antiguo a hoy.
+ *
+ * Se separa de `historySeries` porque el panel de estado (#22) cuenta **tunes
+ * distintas por día** desde las marcas de `pr_practice`, no desde los días del
+ * historial, y la serie —el rango, los ceros, las etiquetas, el «hoy»— tiene que
+ * ser exactamente la misma que la de `/history`. Duplicar ese recorrido sería
+ * duplicar el día del cambio de hora.
+ */
+export function seriesFromCounts(
+  counts: ReadonlyMap<string, number>,
   options: { nowMs: number; range: number },
 ): HistoryPoint[] {
   const { nowMs, range } = options;
   const span = Math.max(1, Math.floor(range));
-  const byKey = new Map(days.map((day) => [day.key, day]));
   const todayKey = todayKeyFor(nowMs);
   const points: HistoryPoint[] = [];
 
@@ -245,16 +253,24 @@ export function historySeries(
     date.setDate(date.getDate() - offset);
     date.setHours(12, 0, 0, 0);
     const key = todayKeyFor(date.getTime());
-    const day = byKey.get(key);
     points.push({
       key,
       label: date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
-      practices: day?.practices ?? 0,
+      practices: counts.get(key) ?? 0,
       isToday: key === todayKey,
     });
   }
 
   return points;
+}
+
+/** Serie diaria del rango, del día más antiguo a hoy. */
+export function historySeries(
+  days: readonly HistoryDay[],
+  options: { nowMs: number; range: number },
+): HistoryPoint[] {
+  // El día manda: `practices` es lo que se pinta y `key` lo que se busca.
+  return seriesFromCounts(new Map(days.map((day) => [day.key, day.practices])), options);
 }
 
 /** Cifras del rango. La racha se calcula sobre la serie completa, con sus ceros. */
