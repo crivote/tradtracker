@@ -21,17 +21,9 @@ export interface PracticeTarget {
   repertoireId: string;
   /** Título ya compuesto por el modelo, solo para el encabezado del popup. */
   title: string;
-  /**
-   * Sesión abierta a la que pertenece la tune (la lista de ensayo guarda la
-   * suya). Con sesión, valorar **actualiza** esa línea en vez de abrir otra: al
-   * marcar y puntuar en la lista no pueden salir dos ensayos del mismo toque.
-   */
-  sessionId?: string | null;
-  /** Posición de la fila en la lista del día; 0 cuando no viene de una lista. */
-  position?: number;
 }
 
-export type PracticeLogged = (sessionId: string) => void | Promise<void>;
+export type PracticeLogged = (practiceId: string) => void | Promise<void>;
 
 const [target, setTarget] = createSignal<PracticeTarget | null>(null);
 let onLogged: PracticeLogged | null = null;

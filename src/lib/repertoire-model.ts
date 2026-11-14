@@ -1,4 +1,4 @@
-import { daysSince, normalizeTitle } from './format';
+import { daysSince, daysSinceDay, normalizeTitle, parseLocalDay } from './format';
 
 /**
  * Modelo puro del repertorio: tipos, normalización de la fila que devuelve
@@ -94,7 +94,14 @@ export interface RepertoireRow {
   customAbc: string | null;
   notes: string | null;
   added_at: string;
-  last_practiced_at: string | null;
+  /**
+   * Último día ensayado, `YYYY-MM-DD` **local** (columna `last_practiced_day`,
+   * migración 017). Es un día, no un instante: la antigüedad de la tune es una
+   * resta de días locales y no lleva husos. Lo mantiene el trigger de
+   * `pr_practice`, avanzando y nunca retrocediendo; el cliente no lo escribe.
+   * `null` = nunca ensayada (o el dato no vino).
+   */
+  last_practiced_day: string | null;
   /**
    * Instante del último cambio de peldaño (#52). Lo mantiene el trigger
    * `pr_repertoire_touch_trg` y **solo** avanza cuando cambia `status`: aparcar
@@ -231,7 +238,9 @@ export function mapRepertoireRow(
     customAbc: typeof row.custom_abc === 'string' ? row.custom_abc : null,
     notes: row.notes ?? null,
     added_at: row.added_at,
-    last_practiced_at: row.last_practiced_at ?? null,
+    // Día local `YYYY-MM-DD` o nada: un doble de test, una fila anterior a la
+    // migración 017 o un `undefined` son lo mismo —nunca ensayada—, no `NaN`.
+    last_practiced_day: typeof row.last_practiced_day === 'string' ? row.last_practiced_day : null,
     status_changed_at: typeof row.status_changed_at === 'string' ? row.status_changed_at : null,
     // El autor viaja en la relación embebida (#44) y se normaliza aquí: una fila
     // anterior a la migración 010, un doble de test o un `composer` vacío son lo
@@ -528,7 +537,7 @@ export interface PracticeRecency {
 }
 
 export function practiceRecency(row: RepertoireRow, now: number): PracticeRecency {
-  const days = daysSince(row.last_practiced_at, now);
+  const days = daysSinceDay(row.last_practiced_day, now);
   if (days === null) return { days: null, label: 'Never practiced' };
   if (days === 0) return { days, label: 'Practiced today' };
   if (days === 1) return { days, label: '1 day ago' };
@@ -714,8 +723,10 @@ function tieBreak(left: RepertoireRow, right: RepertoireRow): number {
 
 /** Último ensayo como instante; null si nunca se ensayó o la fecha es inválida. */
 function practiceTime(row: RepertoireRow): number | null {
-  if (row.last_practiced_at === null) return null;
-  const time = new Date(row.last_practiced_at).getTime();
+  if (row.last_practiced_day === null) return null;
+  // `parseLocalDay`, no `Date.parse`: la fecha es un día local y el constructor
+  // de cadenas la leería como UTC medianoche.
+  const time = parseLocalDay(row.last_practiced_day);
   return Number.isNaN(time) ? null : time;
 }
 
@@ -769,7 +780,7 @@ export function addedAge(addedAt: string, now: number): string {
 const SORT_COMPARATORS: Record<SortKey, (left: RepertoireRow, right: RepertoireRow) => number> = {
   /**
    * Urgencia: primero los nunca ensayados; después los más antiguos de
-   * `last_practiced_at` primero (más días sin practicar). Los nunca ensayados
+   * `last_practiced_day` primero (más días sin practicar). Los nunca ensayados
    * no se ordenan entre sí por fecha: no tienen ninguna, quedan juntos y los
    * desempata el título.
    */
@@ -855,12 +866,13 @@ export const STALENESS_TO: readonly [number, number, number] = [186, 95, 62];
 
 /**
  * Días sin ensayar de una fila: `never` es null. Se derivan de
- * `last_practiced_at` (la columna que mantiene el trigger de sesiones) para que
- * el resultado sea determinista con el `now` inyectado; si la fila no trae la
- * fecha pero la vista sí trae los días, se usa el de la base como respaldo.
+ * `last_practiced_day` (la columna que mantiene el trigger de `pr_practice`) y se
+ * cuentan por medianoches locales, así que el resultado es determinista con el
+ * `now` inyectado; si la fila no trae el día pero la vista sí trae los días, se
+ * usa el de la base como respaldo.
  */
 export function stalenessDays(row: RepertoireRow, now: number): number | null {
-  if (row.last_practiced_at) return daysSince(row.last_practiced_at, now);
+  if (row.last_practiced_day) return daysSinceDay(row.last_practiced_day, now);
   return row.days_since_last_practice ?? null;
 }
 

@@ -14,44 +14,41 @@ vi.mock('../lib/practice-history', async (importOriginal) => {
   return { ...actual, fetchPracticeHistory: vi.fn() };
 });
 
-import { fetchPracticeHistory, type HistorySession } from '../lib/practice-history';
+import { fetchPracticeHistory, type PracticeMark } from '../lib/practice-history';
+import { todayKeyFor } from '../lib/practice-storage';
 import History from './History';
 
 const mockedFetch = vi.mocked(fetchPracticeHistory);
 
-/** Instante local de hace `daysAgo` días, a mediodía. */
+/** Día local (`YYYY-MM-DD`) de hace `daysAgo` días: es lo que guarda la base. */
 function daysAgo(daysAgo: number): string {
   const date = new Date();
   date.setDate(date.getDate() - daysAgo);
   date.setHours(12, 0, 0, 0);
-  return date.toISOString();
+  return todayKeyFor(date.getTime());
 }
 
-function session(
-  id: string,
-  startedAt: string,
+/** Una marca del historial: una tune en un día, como la devuelve el adaptador. */
+function mark(
+  day: string,
   entries: Array<{ id: string; title: string; quality: number | null; comment?: string }>,
-): HistorySession {
-  return {
-    id,
-    startedAt,
-    entries: entries.map((entry, index) => ({
-      repertoireId: entry.id,
-      title: entry.title,
-      rhythm: 'reel',
-      quality: entry.quality,
-      comment: entry.comment ?? null,
-      position: index,
-    })),
-  };
+): PracticeMark[] {
+  return entries.map((entry) => ({
+    day,
+    repertoireId: entry.id,
+    title: entry.title,
+    rhythm: 'reel',
+    quality: entry.quality,
+    comment: entry.comment ?? null,
+  }));
 }
 
 const TODAY = [
-  session('s-1', daysAgo(0), [
+  ...mark(daysAgo(0), [
     { id: 'a', title: 'The Morning Dew', quality: 5, comment: 'La B parte, más lenta' },
     { id: 'b', title: 'Cooley’s', quality: null },
   ]),
-  session('s-2', daysAgo(1), [{ id: 'c', title: 'Drowsy Maggie', quality: 3 }]),
+  ...mark(daysAgo(1), [{ id: 'c', title: 'Drowsy Maggie', quality: 3 }]),
 ];
 
 function mount() {

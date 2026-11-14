@@ -4,9 +4,9 @@
  * en la ficha.
  *
  * Se simula la escritura: lo que se comprueba es el contrato del componente —
- * qué manda a `logPractice`, qué opciones lleva cuando viene de la lista del día,
- * que cerrar cancela de verdad, y que un fallo de red no se lleva por delante lo
- * tecleado.
+ * qué manda a `logPractice` (la tune y lo valorado, sin sesión: el día lo pone
+ * la capa de datos), que el callback recibe el id de la marca, que cerrar
+ * cancela de verdad, y que un fallo de red no se lleva por delante lo tecleado.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
@@ -19,17 +19,12 @@ import { closePractice } from '../lib/practice-mark';
 
 const mockedLog = vi.mocked(logPractice);
 
-function renderMark(options: { onLogged?: (sessionId: string) => void; sessionId?: string; position?: number } = {}) {
+function renderMark(options: { onLogged?: (practiceId: string) => void } = {}) {
   const onLogged = options.onLogged ?? vi.fn();
   render(() => (
     <>
       <PracticeMarkButton
-        target={{
-          repertoireId: 'row-a',
-          title: 'The Morning Dew',
-          sessionId: options.sessionId,
-          position: options.position,
-        }}
+        target={{ repertoireId: 'row-a', title: 'The Morning Dew' }}
         onLogged={onLogged}
       />
       <PracticeMarkHost />
@@ -43,7 +38,7 @@ const dialog = () => screen.getByRole('dialog');
 
 beforeEach(() => {
   mockedLog.mockReset();
-  mockedLog.mockResolvedValue('session-1');
+  mockedLog.mockResolvedValue('practice-1');
 });
 
 afterEach(() => {
@@ -89,13 +84,13 @@ describe('PracticeMark', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save practice' }));
 
     await waitFor(() =>
-      expect(mockedLog).toHaveBeenCalledWith(
-        'row-a',
-        { quality: 4, comment: '  La B parte, más lenta  ' },
-        { sessionId: null, position: undefined },
-      ),
+      expect(mockedLog).toHaveBeenCalledWith('row-a', {
+        quality: 4,
+        comment: '  La B parte, más lenta  ',
+      }),
     );
-    await waitFor(() => expect(onLogged).toHaveBeenCalledWith('session-1'));
+    // El callback recibe el id de la marca, no el de una sesión.
+    await waitFor(() => expect(onLogged).toHaveBeenCalledWith('practice-1'));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
@@ -106,13 +101,12 @@ describe('PracticeMark', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save practice' }));
 
     await waitFor(() =>
-      expect(mockedLog).toHaveBeenCalledWith(
-        'row-a',
+      expect(mockedLog).toHaveBeenCalledWith('row-a', {
         // La nota vacía viaja tal cual: quien la convierte en `null` es
         // `logPractice`, que es donde se decide qué se guarda.
-        { quality: null, comment: '' },
-        { sessionId: null, position: undefined },
-      ),
+        quality: null,
+        comment: '',
+      }),
     );
   });
 
@@ -127,20 +121,21 @@ describe('PracticeMark', () => {
     expect(dialog().textContent).toContain('Optional');
   });
 
-  it('con la sesión de la lista abierta, valora sobre esa sesión y en su posición', async () => {
-    renderMark({ sessionId: 'open-session', position: 3 });
+  it('valora sin sesión ni posición: marcar dos veces el mismo día actualiza la marca', async () => {
+    // El popup es el mismo en todas las superficies (#10) y desde #56 la
+    // identidad de la marca es la tune **y el día**: no hay sesión que adoptar
+    // ni línea que actualizar, y valorar dos veces no puede duplicar el ensayo.
+    renderMark();
     openDialog();
 
     fireEvent.click(screen.getByRole('button', { name: '5 of 5 — Strong' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save practice' }));
 
     await waitFor(() =>
-      expect(mockedLog).toHaveBeenCalledWith(
-        'row-a',
-        { quality: 5, comment: '' },
-        { sessionId: 'open-session', position: 3 },
-      ),
+      expect(mockedLog).toHaveBeenCalledWith('row-a', { quality: 5, comment: '' }),
     );
+    // Dos argumentos: la tune y lo valorado. El tercero ya no existe.
+    expect(mockedLog.mock.calls[0]).toHaveLength(2);
   });
 
   it('cancelar no escribe nada y cierra', () => {

@@ -10,7 +10,7 @@ import {
   historyStats,
   type HistoryDay,
   type HistoryRange,
-  type HistorySession,
+  type PracticeMark,
 } from '../lib/practice-history';
 import PracticeChart from '../components/PracticeChart';
 import './repertoire.css';
@@ -25,11 +25,12 @@ import './history.css';
  * y qué tal salió.
  *
  * Tres decisiones de lectura:
- *   · **Por día local, no por sesión.** La base guarda sesiones porque F4 lo
- *     exige para el historial por tune; a la persona le importa el día. El día se
- *     compone con la fecha local (ver `practice-history.ts`).
- *   · **La métrica de la gráfica son tunes ensayadas**, no sesiones: cada toque
- *     de «Practise» abre una sesión, así que contar sesiones mediría el gesto.
+ *   · **Por día**, que ya viene local de la base: desde #56 una marca es la tune
+ *     y el día (`pr_practice.day`), no una línea dentro de una sesión. La pantalla
+ *     no convierte instantes ni compone husos.
+ *   · **La métrica de la gráfica son tunes ensayadas.** Cada marca es una tune
+ *     tocada; no hay «sesiones» que contar, y contarlas mediría el gesto en vez
+ *     del trabajo.
  *   · **Los días sin ensayo se pintan con cero.** El hueco es el dato: un rango
  *     de siete barras llenas y tres vacías dice más que una lista de días con
  *     actividad.
@@ -45,7 +46,7 @@ export default function History() {
    */
   const [nowMs, setNowMs] = createSignal(Date.now());
   const [range, setRange] = createSignal<HistoryRange>(DEFAULT_HISTORY_RANGE);
-  const [sessions, setSessions] = createSignal<HistorySession[]>([]);
+  const [marks, setMarks] = createSignal<PracticeMark[]>([]);
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
 
@@ -55,7 +56,7 @@ export default function History() {
     const at = Date.now();
     setNowMs(at);
     try {
-      setSessions(await fetchPracticeHistory({ nowMs: at, range: value }));
+      setMarks(await fetchPracticeHistory({ nowMs: at, range: value }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -69,7 +70,7 @@ export default function History() {
     void load(range());
   });
 
-  const days = createMemo(() => buildHistoryDays(sessions()));
+  const days = createMemo(() => buildHistoryDays(marks()));
   const stats = createMemo(() => historyStats(days(), { nowMs: nowMs(), range: range() }));
   const points = createMemo(() => historySeries(days(), { nowMs: nowMs(), range: range() }));
 
@@ -131,10 +132,6 @@ export default function History() {
               <small>practices</small>
             </div>
             <div class="figure">
-              <b>{stats().sessions}</b>
-              <small>sessions</small>
-            </div>
-            <div class="figure">
               <b>{activeLabel()}</b>
               <small>active days</small>
             </div>
@@ -183,10 +180,6 @@ function HistoryDayBlock(props: { day: HistoryDay; nowMs: number }) {
         <h2>{dayLabel(props.day.key, props.nowMs)}</h2>
         <p>
           {props.day.practices} {props.day.practices === 1 ? 'practice' : 'practices'}
-          <Show when={props.day.sessions > 1}>
-            <span class="sub-sep">·</span>
-            {props.day.sessions} sessions
-          </Show>
           <Show when={props.day.avgQuality !== null}>
             <span class="sub-sep">·</span>avg {props.day.avgQuality!.toFixed(1)}
           </Show>

@@ -1,13 +1,27 @@
+import { parseLocalDay } from './format';
 import { isLadderStatus, type LadderStatus, type RepertoireRow } from './repertoire-model';
 
 export interface PracticeCandidate {
   id: string;
   /** Solo peldaños: el backlog nunca llega aquí (#50). */
   status: LadderStatus;
-  addedAt: string;                 // ISO
-  lastPracticedAt: string | null;  // ISO o null si nunca se ensayó
+  addedAt: string;                 // ISO: un instante
+  lastPracticedDay: string | null; // `YYYY-MM-DD` local, o null si nunca se ensayó
   rhythm: string | null;           // p. ej. 'Reel', 'Jig'
   favorite: boolean;
+}
+
+/**
+ * Instante de referencia del candidato: su último ensayo —a medianoche **local**
+ * del día, con `parseLocalDay`— y, si no hay, su alta.
+ *
+ * La fecha del ensayo es un día local, no una marca de tiempo: `Date.parse` la
+ * leería como UTC medianoche y en Madrid movería el día una hora, que a las
+ * 23:30 es el día de al lado. El alta sí es un instante y se lee tal cual.
+ */
+function lastTouchMs(candidate: PracticeCandidate): number {
+  if (candidate.lastPracticedDay) return parseLocalDay(candidate.lastPracticedDay);
+  return Date.parse(candidate.addedAt);
 }
 
 export interface UrgencyTargets {
@@ -65,8 +79,7 @@ export function urgencyOf(
   nowMs: number,
   recentIds?: ReadonlySet<string>,
 ): number {
-  const lastTouchMs = Date.parse(candidate.lastPracticedAt ?? candidate.addedAt);
-  const days = Math.max(0, (nowMs - lastTouchMs) / 86_400_000);
+  const days = Math.max(0, (nowMs - lastTouchMs(candidate)) / 86_400_000);
   
   const T = targets.byStatus[candidate.status];
   let urgency = days / T;
@@ -228,8 +241,8 @@ export function buildPracticeList(
         .filter(c => KNOWN_STATUSES.includes(c.status) && !chosenIds.has(c.id))
         .sort((a, b) => {
           if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;
-          const aDays = (nowMs - Date.parse(a.lastPracticedAt ?? a.addedAt)) / 86_400_000;
-          const bDays = (nowMs - Date.parse(b.lastPracticedAt ?? b.addedAt)) / 86_400_000;
+          const aDays = (nowMs - lastTouchMs(a)) / 86_400_000;
+          const bDays = (nowMs - lastTouchMs(b)) / 86_400_000;
           if (bDays !== aDays) return bDays - aDays;
           return byCodeUnit(a.id, b.id);
         });
@@ -317,7 +330,7 @@ export function toCandidates(rows: readonly RepertoireRow[]): PracticeCandidate[
       id: row.id,
       status: row.status,
       addedAt: row.added_at,
-      lastPracticedAt: row.last_practiced_at,
+      lastPracticedDay: row.last_practiced_day,
       rhythm: row.custom_rhythm?.trim() || row.tune.rhythm || null,
       favorite: row.favorite,
     });

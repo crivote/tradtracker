@@ -34,7 +34,10 @@ const REPERTOIRE_SELECT = [
   'custom_abc',
   'notes',
   'added_at',
-  'last_practiced_at',
+  // Último día ensayado (`YYYY-MM-DD` local, migración 017). La antigüedad de la
+  // tune es una resta de días locales: el instante lo mantiene el trigger, pero
+  // el cliente lee el día, que es lo que no lleva husos.
+  'last_practiced_day',
   // Reloj del banco de trabajo (#52): el trigger solo lo mueve al cambiar de
   // peldaño. Sin esta columna en el `select`, el taller no puede medir el dwell.
   'status_changed_at',
@@ -479,7 +482,7 @@ function batches<T>(items: T[], size: number): T[][] {
  *      significa «otra pestaña lo insertó a la vez»: se reintenta fila a fila
  *      ignorando los duplicados, porque el resultado final es el mismo. Otro
  *      código se lanza.
- *   5. `user_id`, `status_changed_at` y `last_practiced_at` **no** se escriben:
+ *   5. `user_id`, `status_changed_at` y `last_practiced_day` **no** se escriben:
  *      los pone la base (default `auth.uid()` y trigger).
  */
 export async function importSessionTunes(

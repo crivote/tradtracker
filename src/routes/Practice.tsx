@@ -37,12 +37,7 @@ import {
   type PracticePlan,
   type PracticePrefs,
 } from '../lib/practice-storage';
-import {
-  addSessionMarks,
-  createSessionWithMarks,
-  fetchSessionMarks,
-  unmarkSessionTune,
-} from '../lib/practice';
+import { fetchDayMarks, markPracticeDay, unmarkPractice } from '../lib/practice';
 import { openPractice } from '../lib/practice-mark';
 import PlayTrigger from '../components/PlayTrigger';
 import './repertoire.css';
@@ -63,13 +58,13 @@ import './practice.css';
  *   · **New list** es la única acción que la sustituye: borra la guardada y
  *     genera otra sin marcas. El objetivo diario solo decide el tamaño de la
  *     **próxima** lista; cambiarlo no toca la actual.
- *   · La lista lleva **su** sesión (`sessionId` en la caché). La primera marca
- *     la abre y la deja escrita ahí mismo, así que una recarga posterior lee las
- *     marcas de esa sesión y no de «la última sesión abierta de hoy». Esa
- *     heurística era el bug: repartía las marcas en sesiones de una línea y solo
- *     se veía la última.
- *   · Desmarcar es **una sola operación** de la capa de datos: borra la línea y
- *     recalcula `last_practiced_at`. Aquí no se puede olvidar la segunda mitad.
+ *   · Las marcas se preguntan **por día** (`pr_practice` desde #56): una marca
+ *     es la tune y el día, y el `unique (user_id, repertoire_id, day)` hace que
+ *     marcar dos veces actualice en vez de duplicar. La lista ya no necesita
+ *     «adoptar» ninguna sesión; una recarga lee lo marcado hoy y ya está.
+ *   · Desmarcar es **una sola operación** de la capa de datos: borra la fila del
+ *     día y recalcula la fecha del último ensayo. Aquí no se puede olvidar la
+ *     segunda mitad.
  */
 
 /** El almacenamiento del navegador, tal y como lo pide `practice-storage`. */
@@ -111,10 +106,12 @@ export default function Practice() {
   const dateKey = todayKeyFor(nowMs);
 
   const [rows, setRows] = createSignal<RepertoireRow[]>([]);
-  /** La lista viva, con la sesión que le pertenece. `null` mientras carga. */
+  /**
+   * La lista viva. No lleva identidad de sesión: lo marcado se pregunta por día.
+   * `null` mientras carga.
+   */
   const [plan, setPlan] = createSignal<PracticePlan | null>(null);
   const [prefs, setPrefs] = createSignal<PracticePrefs>(DEFAULT_PREFS);
-  const [sessionId, setSessionId] = createSignal<string | null>(null);
   const [marked, setMarked] = createSignal<ReadonlySet<string>>(new Set<string>());
   /**
    * Capa optimista por encima de las filas (id → favorita). Las filas **no** se
@@ -125,7 +122,7 @@ export default function Practice() {
   const [loading, setLoading] = createSignal(true);
   const [error, setError] = createSignal<string | null>(null);
   const [notice, setNotice] = createSignal<string | null>(null);
-  /** Una escritura en vuelo: evita que un doble toque abra dos sesiones. */
+  /** Una escritura en vuelo: evita que un doble toque escriba dos veces. */
   const [busy, setBusy] = createSignal(false);
   /**
    * «New list» es destructivo —la lista actual no se puede recuperar—, así que
@@ -134,6 +131,13 @@ export default function Practice() {
    */
   const [armed, setArmed] = createSignal(false);
   let disarmTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * El día que se está ensayando. Se compone con `todayKeyFor` —nunca con
+   * `toISOString()`— y se pregunta **en el momento del gesto**: una pestaña
+   * abierta desde ayer no debe desmarcar la marca de hoy.
+   */
+  const dayKey = () => todayKeyFor(Date.now());
 
   const listIds = () => plan()?.ids ?? [];
   const overflow = () => plan()?.overflow ?? 0;
@@ -189,7 +193,7 @@ export default function Practice() {
       source,
       built.entries.map((entry) => entry.candidate.id),
     ).map((row) => row.id);
-    return { createdAt, ids, overflow: built.overflow, sessionId: null };
+    return { createdAt, ids, overflow: built.overflow };
   };
 
   /**
@@ -203,19 +207,6 @@ export default function Practice() {
       writePlan(storage(), next);
       recordRecentList(storage(), { date: todayKeyFor(next.createdAt), ids: [...next.ids] });
     });
-  };
-
-  /**
-   * Deja escrita la sesión en cuanto la primera marca la abre. Es lo que hace
-   * que una recarga posterior sepa de qué sesión leer las marcas: sin esto se
-   * volvería a «la última sesión abierta de hoy», que es justo el bug.
-   */
-  const attachSession = (id: string) => {
-    const current = plan();
-    if (!current || current.sessionId === id) return;
-    const next: PracticePlan = { ...current, sessionId: id };
-    setPlan(next);
-    tryPersist(() => writePlan(storage(), next));
   };
 
   const load = async () => {
@@ -251,18 +242,14 @@ export default function Practice() {
       }
       setPlan(current);
 
-      // 3. Las marcas son las de la sesión **de esta lista**, por id.
-      setSessionId(null);
+      // 3. Las marcas son las de **hoy**, por día y sin adivinar nada: el
+      //    `unique` por (usuario, tune, día) es lo que antes daba la sesión.
       setMarked(new Set<string>());
-      const openSessionId = current.sessionId;
-      if (!openSessionId) return; // sin primera marca no hay sesión que leer
-
-      setSessionId(openSessionId);
       try {
-        setMarked(new Set(await fetchSessionMarks(openSessionId)));
+        setMarked(new Set(await fetchDayMarks(dayKey())));
       } catch (marksError) {
-        // La sesión existe pero sus marcas no se pudieron leer. Se avisa y se
-        // sigue: marcar volverá a colgar de la misma sesión.
+        // Las marcas no se pudieron leer. Se avisa y se sigue: marcar escribirá
+        // igual, y lo que se marque aquí se verá al recargar.
         setNotice(messageOf(marksError));
       }
     } catch (loadError) {
@@ -329,7 +316,8 @@ export default function Practice() {
 
     persistPlan(fresh);
     setPlan(fresh);
-    setSessionId(null);
+    // Sin marcas **en la lista nueva**: lo ya ensayado hoy sigue siendo una
+    // marca del día en la base, pero esta cola empieza limpia.
     setMarked(new Set<string>());
     setNotice(null);
   };
@@ -346,23 +334,16 @@ export default function Practice() {
     });
 
   /**
-   * Marca una fila. Sin sesión, la primera marca la **crea**; con sesión, la
-   * cuelga de la que ya está abierta.
+   * Marca una fila **de hoy**. El upsert de `pr_practice` crea la marca o
+   * actualiza la que ya hubiera: no hay sesión que abrir ni que adoptar.
    */
-  const markOne = async (row: RepertoireRow, position: number) => {
+  const markOne = async (row: RepertoireRow) => {
     if (busy() || marked().has(row.id)) return;
 
     setBusy(true);
     setNotice(null);
     try {
-      const openSession = sessionId();
-      if (openSession) {
-        await addSessionMarks(openSession, [{ repertoireId: row.id, position }]);
-      } else {
-        const created = await createSessionWithMarks([{ repertoireId: row.id, position }]);
-        setSessionId(created);
-        attachSession(created);
-      }
+      await markPracticeDay([row.id]);
       addMark(row.id);
     } catch (markError) {
       setNotice(messageOf(markError));
@@ -372,31 +353,24 @@ export default function Practice() {
   };
 
   /**
-   * «Mark all»: una sola tanda con **las que faltan** respecto de la sesión. Con
-   * todo marcado no escribe nada, así que pulsarlo dos veces no duplica nada.
+   * «Mark all»: una sola tanda con **las que faltan**. Con todo marcado no
+   * escribe nada, así que pulsarlo dos veces no duplica nada.
    */
   const markAll = async () => {
     if (busy()) return;
 
     const already = marked();
     const pending = listRows()
-      .map((row, position) => ({ repertoireId: row.id, position }))
-      .filter((mark) => !already.has(mark.repertoireId));
+      .map((row) => row.id)
+      .filter((id) => !already.has(id));
 
     if (pending.length === 0) return;
 
     setBusy(true);
     setNotice(null);
     try {
-      const openSession = sessionId();
-      if (openSession) {
-        await addSessionMarks(openSession, pending);
-      } else {
-        const created = await createSessionWithMarks(pending);
-        setSessionId(created);
-        attachSession(created);
-      }
-      setMarked((previous) => new Set([...previous, ...pending.map((mark) => mark.repertoireId)]));
+      await markPracticeDay(pending);
+      setMarked((previous) => new Set([...previous, ...pending]));
     } catch (markError) {
       setNotice(messageOf(markError));
     } finally {
@@ -407,38 +381,26 @@ export default function Practice() {
   /**
    * Valorar una fila desde la lista del día.
    *
-   * Abre el mismo popup del resto de la app, pero **atado a la sesión de la
-   * lista**: si la fila ya estaba marcada, la valoración actualiza esa línea en
-   * vez de abrir un ensayo nuevo; si no lo estaba, la marca y la valora en el
-   * mismo toque. Guardar desde aquí adopta la sesión cuando la lista aún no tenía
-   * ninguna, que es lo mismo que hace la primera marca.
+   * Abre el mismo popup del resto de la app. Ya no lleva sesión: el día es la
+   * identidad de la marca, así que valorar una fila ya marcada **actualiza** esa
+   * marca (`unique` por tune y día) y no hay dos ensayos del mismo toque. Si no
+   * estaba marcada, este toque la crea con su valoración.
    */
-  const rateOne = (row: RepertoireRow, position: number) => {
-    openPractice(
-      {
-        repertoireId: row.id,
-        title: displayTitle(row),
-        sessionId: sessionId(),
-        position,
-      },
-      (usedSession) => {
-        if (!sessionId()) {
-          setSessionId(usedSession);
-          attachSession(usedSession);
-        }
-        addMark(row.id);
-      },
-    );
+  const rateOne = (row: RepertoireRow) => {
+    openPractice({ repertoireId: row.id, title: displayTitle(row) }, () => {
+      addMark(row.id);
+    });
   };
 
   const unmarkOne = async (row: RepertoireRow) => {
-    const openSession = sessionId();
-    if (!openSession || !marked().has(row.id)) return;
+    if (!marked().has(row.id)) return;
 
     setNotice(null);
+    const day = dayKey();
     try {
-      // Borra la línea y recalcula `last_practiced_at`: una sola operación.
-      await unmarkSessionTune(openSession, row.id);
+      // Borra la marca del día y recalcula la fecha del último ensayo: una sola
+      // operación, para que la fecha pueda retroceder.
+      await unmarkPractice(row.id, day);
       dropMark(row.id);
     } catch (unmarkError) {
       setNotice(messageOf(unmarkError));
@@ -605,7 +567,7 @@ export default function Practice() {
                       type="button"
                       class="practice-row__rate"
                       aria-label={`Rate ${displayTitle(row)}`}
-                      onClick={() => rateOne(row, index())}
+                      onClick={() => rateOne(row)}
                     >
                       <span aria-hidden="true">★</span> Rate
                     </button>
@@ -620,7 +582,7 @@ export default function Practice() {
                           : `Mark ${displayTitle(row)}`
                       }
                       onClick={() =>
-                        marked().has(row.id) ? void unmarkOne(row) : void markOne(row, index())
+                        marked().has(row.id) ? void unmarkOne(row) : void markOne(row)
                       }
                     >
                       {marked().has(row.id) ? 'Marked ✓' : 'Mark'}

@@ -85,7 +85,7 @@ function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
     customAbc: null,
     notes: null,
     added_at: '2026-09-01T10:00:00Z',
-    last_practiced_at: null,
+    last_practiced_day: null,
     status_changed_at: null,
     tune: {
       id: 'tune-a',
