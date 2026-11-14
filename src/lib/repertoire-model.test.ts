@@ -92,6 +92,19 @@ describe('mapRepertoireRow', () => {
     expect(() => mapRepertoireRow({ ...baseRow, pr_tunes: null })).toThrow(/without its tune/);
   });
 
+  it('carries the approximate learning day through as learnedOn (019)', () => {
+    const row = mapRepertoireRow({ ...baseRow, learned_on: '2019-04-12', pr_tunes: tune });
+    expect(row.learnedOn).toBe('2019-04-12');
+  });
+
+  it('leaves learnedOn null when the column is missing, never added_at (019)', () => {
+    // Una fila anterior a la migración 019 o un doble de test: «no se sabe».
+    // Sustituirlo por `added_at` diría que la tune se aprendió el día que entró
+    // en la app, que es exactamente el dato falso que la columna evita.
+    const row = mapRepertoireRow({ ...baseRow, pr_tunes: tune });
+    expect(row.learnedOn).toBeNull();
+  });
+
   it('carries the row’s own ABC through as customAbc (#38)', () => {
     const row = mapRepertoireRow({
       ...baseRow,

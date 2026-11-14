@@ -111,6 +111,17 @@ export interface RepertoireRow {
    * sustituye por `added_at` ni por un cero.
    */
   status_changed_at: string | null;
+  /**
+   * Día aproximado en que se **aprendió** la tune (columna `learned_on`,
+   * migración 019), `YYYY-MM-DD` local.
+   *
+   * No es `added_at` y no se sustituye por él: `added_at` dice cuándo entró en
+   * tuneshed, y hay tunes que se sabían desde años antes (importaciones, el
+   * histórico de Folk Companion). Sin este campo la app no puede distinguir una
+   * tune recién aprendida de una que lleva diez años en el repertorio.
+   * `null` = no se sabe, que es un estado legítimo.
+   */
+  learnedOn: string | null;
   tune: TuneRecord;
   /** Fondo elegido; null si la tune no tiene imagen todavía. */
   image: ChosenImage | null;
@@ -242,6 +253,10 @@ export function mapRepertoireRow(
     // migración 017 o un `undefined` son lo mismo —nunca ensayada—, no `NaN`.
     last_practiced_day: typeof row.last_practiced_day === 'string' ? row.last_practiced_day : null,
     status_changed_at: typeof row.status_changed_at === 'string' ? row.status_changed_at : null,
+    // Día aproximado de aprendizaje (migración 019). Tolerante por la misma
+    // razón que las anteriores: `undefined` y `null` son «no se sabe», nunca
+    // `added_at`, que dice otra cosa.
+    learnedOn: typeof row.learned_on === 'string' ? row.learned_on : null,
     // El autor viaja en la relación embebida (#44) y se normaliza aquí: una fila
     // anterior a la migración 010, un doble de test o un `composer` vacío son lo
     // mismo —no hay autor— y la fila que lo lea no puede recibir `undefined`.

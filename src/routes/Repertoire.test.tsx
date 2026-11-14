@@ -484,10 +484,16 @@ describe('cajón del alta (Add a tune)', () => {
     fireEvent.input(within(drawer).getByLabelText('Search the tune catalogue'), {
       target: { value: 'christmas' },
     });
+    // El día aproximado de aprendizaje, tal y como lo escribiría el dueño en una
+    // ingesta de tunes que ya sabía (019).
+    fireEvent.change(within(drawer).getByLabelText('Learned around (optional)'), {
+      target: { value: '2019-04-12' },
+    });
     fireEvent.click(await within(drawer).findByRole('button', { name: 'Add' }));
 
     await waitFor(() => expect(mockedAddCatalogueTune).toHaveBeenCalled());
-    // El peldaño va como segundo argumento: el alta ya no nace siempre en el backlog.
+    // El peldaño va como segundo argumento y el día de aprendizaje como tercero
+    // (vacío si no se rellenó): el alta ya no nace siempre en el backlog.
     expect(mockedAddCatalogueTune).toHaveBeenCalledWith(
       {
         tuneId: 1234,
@@ -496,7 +502,8 @@ describe('cajón del alta (Add a tune)', () => {
         meter: null,
         composer: 'Tommy Coen',
       },
-      'learning'
+      'learning',
+      '2019-04-12'
     );
 
     // Y se dice dónde ha caído, con la puerta a esa pantalla.
@@ -524,7 +531,8 @@ describe('cajón del alta (Add a tune)', () => {
     await waitFor(() =>
       expect(mockedAddCatalogueTune).toHaveBeenCalledWith(
         expect.objectContaining({ tuneId: 7 }),
-        'to_learn'
+        'to_learn',
+        ''
       )
     );
   });

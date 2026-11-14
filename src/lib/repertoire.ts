@@ -41,6 +41,10 @@ const REPERTOIRE_SELECT = [
   // Reloj del banco de trabajo (#52): el trigger solo lo mueve al cambiar de
   // peldaño. Sin esta columna en el `select`, el taller no puede medir el dwell.
   'status_changed_at',
+  // Día aproximado de aprendizaje (migración 019): distingue una tune que se
+  // sabía antes de entrar de una recién aprendida. Es del usuario, no del
+  // catálogo, y `added_at` no lo puede suplir.
+  'learned_on',
   // Fondo del tune (#31): las doce columnas de la migración 005.
   'image_source',
   'image_id',
@@ -203,11 +207,32 @@ export async function ensureTune(tune: CatalogueTune): Promise<string> {
  */
 export async function addCatalogueTune(
   tune: CatalogueTune,
-  status: TuneStatus = 'to_learn'
+  status: TuneStatus = 'to_learn',
+  learnedOn?: string | null
 ): Promise<string> {
   const tuneId = await ensureTune(tune);
-  await addToRepertoire(tuneId, status);
+  await addToRepertoire(tuneId, status, learnedOn);
   return tuneId;
+}
+
+/**
+ * Día de aprendizaje (`YYYY-MM-DD`) o nada.
+ *
+ * El campo es **aproximado** y opcional: vacío, con espacios o con otra forma
+ * que no sea una fecha ISO de día se guarda como `null`, no como cadena rota.
+ * No se completa con `added_at`: «no se sabe cuándo la aprendí» es una respuesta
+ * y el alta de hoy lo único que dice es cuándo entró en la app.
+ */
+export function normalizeLearnedOn(value: string | null | undefined): string | null {
+  const text = (value ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const [year, month, day] = text.split('-').map(Number);
+  const parsed = new Date(year, month - 1, day);
+  if (Number.isNaN(parsed.getTime())) return null;
+  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
+    return null;
+  }
+  return text;
 }
 
 /**
@@ -216,9 +241,13 @@ export async function addCatalogueTune(
  */
 export async function addToRepertoire(
   tuneId: string,
-  status: TuneStatus = 'to_learn'
+  status: TuneStatus = 'to_learn',
+  learnedOn?: string | null
 ): Promise<void> {
-  const { error } = await supabase.from('pr_repertoire').insert({ tune_id: tuneId, status });
+  const learned = normalizeLearnedOn(learnedOn);
+  const { error } = await supabase
+    .from('pr_repertoire')
+    .insert({ tune_id: tuneId, status, ...(learned ? { learned_on: learned } : {}) });
   if (error) {
     if (error.code === '23505') throw new Error('That tune is already in your repertoire.');
     throw new Error(`Could not add the tune: ${error.message}`);

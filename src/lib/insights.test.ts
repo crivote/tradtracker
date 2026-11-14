@@ -49,6 +49,7 @@ function row(overrides: Partial<RepertoireRow> & { id: string }): RepertoireRow 
     customAbc: null,
     notes: null,
     added_at: '2020-01-01T00:00:00+00:00',
+    learnedOn: null,
     last_practiced_day: null,
     status_changed_at: null,
     tune: {

@@ -92,11 +92,18 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
 | D3 | Multiusuario público desde v1, RLS completa desde el primer esquema |
 | D4 | **Identidad propia**: `pr_tunes.id` uuid + `origin` + `origin_ref`. Sin esquema prefijado `ts:`/`loc:` |
 
-## Esquema (migraciones `001`–`018`)
+## Esquema (migraciones `001`–`019`)
 
 - **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `composer` (010), `created_by`, `created_at`. Único `(origin, origin_ref)`.
   RLS: lectura para autenticados; alta/edición/borrado solo del creador.
-- **`pr_repertoire`** — lo personal. `user_id`, `tune_id → pr_tunes`, overrides (`custom_title/rhythm/key/abc`), `status`, `rating`, `image_path`, `notes`, marcas de tiempo, `shelved` (006) y `favorite` (008). Único `(user_id, tune_id)`.
+  - **`meta jsonb`** (019, `{}` por defecto, nunca `NULL`): lo que el catálogo de TheSession no trae y no
+    merece una columna por campo — `trivia`, `structure` (`AABB`), `modes_played[]` (todas las tonalidades
+    de la tune; `key` guarda la primera) y `tradition[]`. Vacío significa «sin datos».
+- **`pr_repertoire`** — lo personal. `user_id`, `tune_id → pr_tunes`, overrides (`custom_title/rhythm/key/abc`), `status`, `rating`, `image_path`, `notes`, marcas de tiempo, `shelved` (006) y `favorite` (008) y `learned_on` (019). Único `(user_id, tune_id)`.
+  - **`learned_on date`** (019): día aproximado en que se **aprendió** la tune, `NULL` = no se sabe. No es
+    `added_at` —que dice cuándo entró en tuneshed— y no se rellena con él: hay tunes que se sabían años antes
+    (importaciones; el histórico de Folk Companion). Lo escribe el cliente desde el cajón del alta; ningún
+    trigger lo toca, y el `update` que lo rellena **no** mueve `status_changed_at` ni crea evento de peldaño.
   - **`status` es una escalera de cinco peldaños**, no el enum viejo: `to_learn` (backlog, el valor por defecto),
     `learning`, `shaky` (011), `playing_along`, `solo_ready`, `mastered` (013). Lo impone el CHECK: `'aparcada'` y
     el vocabulario anterior devuelven **400**.

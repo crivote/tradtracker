@@ -566,6 +566,15 @@ export default function TuneDetail() {
                     <dt class="text-gray-500">Meter</dt>
                     <dd class="text-gray-200">{item().tune.meter ?? '—'}</dd>
                   </div>
+                  {/* Fecha aproximada de aprendizaje (migración 019). Se queda
+                      fuera del bloque de overrides porque no es un override del
+                      catálogo: es un dato del dueño que el catálogo no tiene. */}
+                  <div class="flex items-baseline justify-between gap-3 sm:justify-start">
+                    <dt class="text-gray-500">Learned</dt>
+                    <dd class="text-gray-200" title="Approximate: you filled this in">
+                      {item().learnedOn ? formatDate(item().learnedOn) : '—'}
+                    </dd>
+                  </div>
                 </dl>
 
                 {/*

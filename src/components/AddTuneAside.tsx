@@ -20,6 +20,7 @@ import {
   searchCatalogue,
 } from '../lib/catalogue-db';
 import { normalizeTitle } from '../lib/format';
+import { todayKeyFor } from '../lib/practice-storage';
 import ImportFromSession from './ImportFromSession';
 
 /**
@@ -66,6 +67,16 @@ export default function AddTuneAside(props: AddTuneAsideProps) {
   let searchBox: HTMLInputElement | undefined;
 
   const [level, setLevel] = createSignal<TuneStatus>('to_learn');
+  /**
+   * Día aproximado de aprendizaje para las altas de esta sesión de cajón.
+   *
+   * Vacío por defecto a propósito: la mayoría de las altas son tunes nuevas, y
+   * un valor por defecto («hoy») convertiría el campo en ruido y en un dato
+   * falso. Se mantiene entre altas porque el caso que lo pide es una ingesta en
+   * bloque de tunes que ya se sabían —el histórico de Folk Companion es
+   * exactamente eso—, igual que el nivel.
+   */
+  const [learnedOn, setLearnedOn] = createSignal('');
   const [query, setQuery] = createSignal('');
   const [results, setResults] = createSignal<CatalogueEntry[]>([]);
   const [searching, setSearching] = createSignal(false);
@@ -195,7 +206,8 @@ export default function AddTuneAside(props: AddTuneAsideProps) {
           meter: entry.meter,
           composer: meta.get(entry.tuneId)?.composer ?? null,
         },
-        level()
+        level(),
+        learnedOn()
       );
       setAddedHere((previous) => new Set([...previous, entry.tuneId]));
       setAdded({ title: normalizeTitle(entry.name), status: level() });
@@ -249,6 +261,20 @@ export default function AddTuneAside(props: AddTuneAsideProps) {
               <Show when={props.slots.free > 0}> · {props.slots.free} free</Show>
             </p>
           </Show>
+
+          {/* Fecha aproximada de aprendizaje: para las tunes que ya se sabían
+              antes de entrar aquí. Es opcional y aproximada, así que se pide un
+              día y no se rellena sola — «no lo sé» es una respuesta frecuente y
+              el alta de hoy no es la fecha en que se aprendió la tune. */}
+          <label for="add-learned">Learned around (optional)</label>
+          <input
+            id="add-learned"
+            type="date"
+            value={learnedOn()}
+            max={todayKeyFor(Date.now())}
+            onChange={(event) => setLearnedOn(event.currentTarget.value)}
+          />
+          <p class="hint">Only for tunes you already played before adding them.</p>
 
           <Show when={added()}>
             {(last) => (

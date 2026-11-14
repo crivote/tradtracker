@@ -21,7 +21,7 @@ vi.mock('./catalogue-db', () => ({
 }));
 
 import { lookupCatalogueMeta } from './catalogue-db';
-import { ensureTune, importSessionTunes } from './repertoire';
+import { addToRepertoire, ensureTune, importSessionTunes, normalizeLearnedOn } from './repertoire';
 import { supabase } from './supabase';
 import type { SessionTune } from './thesession-import';
 
@@ -314,5 +314,47 @@ describe('ensureTune escribe el autor en el alta desde el catálogo (#44)', () =
     await ensureTune({ tuneId: 12, name: 'Otra trad tune' });
 
     expect(inserted.map((row) => row.composer)).toEqual([null, null]);
+  });
+});
+
+describe('normalizeLearnedOn (migración 019)', () => {
+  it('acepta un día ISO y lo devuelve tal cual', () => {
+    expect(normalizeLearnedOn('2019-04-12')).toBe('2019-04-12');
+  });
+
+  it('vacío, nulo o solo espacios es «no se sabe», nunca una cadena rota', () => {
+    expect(normalizeLearnedOn('')).toBeNull();
+    expect(normalizeLearnedOn('   ')).toBeNull();
+    expect(normalizeLearnedOn(null)).toBeNull();
+    expect(normalizeLearnedOn(undefined)).toBeNull();
+  });
+
+  it('rechaza lo que no es un día real: un 31 de febrero no es una fecha', () => {
+    expect(normalizeLearnedOn('2024-02-31')).toBeNull();
+    expect(normalizeLearnedOn('2024-13-01')).toBeNull();
+    expect(normalizeLearnedOn('12/04/2019')).toBeNull();
+    expect(normalizeLearnedOn('2019-04-12T10:00:00Z')).toBeNull();
+  });
+});
+
+describe('addToRepertoire — día de aprendizaje (migración 019)', () => {
+  it('envía `learned_on` cuando se indica un día', async () => {
+    const fake = fakeClient();
+    install(fake);
+
+    await addToRepertoire('tune-uuid', 'to_learn', '2019-04-12');
+
+    expect(fake.repertoireInserts.flat()).toContainEqual(
+      expect.objectContaining({ tune_id: 'tune-uuid', learned_on: '2019-04-12' })
+    );
+  });
+
+  it('no escribe la clave cuando el campo va vacío: «no se sabe» es la ausencia, no `\'\'`', async () => {
+    const fake = fakeClient();
+    install(fake);
+
+    await addToRepertoire('tune-uuid', 'to_learn', '   ');
+
+    expect(fake.repertoireInserts.flat()[0]).not.toHaveProperty('learned_on');
   });
 });

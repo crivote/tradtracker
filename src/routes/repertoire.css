@@ -1350,7 +1350,11 @@
   margin-top: 0;
 }
 .repertoire-home .drawer-body select,
-.repertoire-home .drawer-body input[type="search"] {
+.repertoire-home .drawer-body input[type="search"],
+/* El día de aprendizaje es el tercer control del cajón y comparte el mismo
+   marco que el selector y el buscador: un control con estilo propio al lado de
+   otros dos iguales se lee como de otra pantalla. */
+.repertoire-home .drawer-body input[type="date"] {
   width: 100%;
   font: inherit;
   font-size: 13.5px;
@@ -1362,7 +1366,8 @@
   outline: none;
 }
 .repertoire-home .drawer-body select:focus,
-.repertoire-home .drawer-body input[type="search"]:focus {
+.repertoire-home .drawer-body input[type="search"]:focus,
+.repertoire-home .drawer-body input[type="date"]:focus {
   border-color: var(--accent);
 }
 .repertoire-home .drawer .rung-def {
