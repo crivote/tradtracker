@@ -996,6 +996,209 @@
   color: var(--muted);
 }
 
+/* ── panel de estado del repertorio (#22) ─────────────────────────
+   Cuatro cifras y cuatro gráficas, en el mismo papel que el resto de la
+   pantalla: las variables salen de `.repertoire-home` y aquí no se declara ni un
+   color oscuro. En `/` va justo bajo la cabecera (cifras + histograma); en
+   `/history`, tras la lista de días (ritmo, composición y revisitas).
+
+   Las gráficas miden entre 120 y 160 px de alto: son una lectura de un vistazo,
+   no un panel de analista, y cuatro lienzos grandes a la vez empujan la lista de
+   días fuera de la pantalla. El ancho lo pone el contenedor (`max-width`), no el
+   canvas: Chart.js se adapta al padre (`maintainAspectRatio: false`). */
+.repertoire-home .insights {
+  max-width: 1260px;
+  margin: 0 auto 26px;
+}
+
+.repertoire-home .insights-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+}
+
+.repertoire-home .insights-stats .stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 14px 12px;
+  background: var(--paper);
+}
+
+.repertoire-home .insights-stats .stat b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 24px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.repertoire-home .insights-stats .stat small {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* La tarjeta de cada gráfica: el título manda y la gráfica va debajo, sin caja
+   propia —la caja la pone la tarjeta—. */
+.repertoire-home .insight-card {
+  margin: 14px 0 0;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.38);
+  padding: 12px 14px 11px;
+}
+
+.repertoire-home .insight-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.repertoire-home .insight-head h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 15px;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+}
+
+.repertoire-home .insight-head .insight-note {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* 140 px: dentro de la banda 120–160 que fija el corte. */
+.repertoire-home .insight-chart {
+  position: relative;
+  height: 140px;
+  margin-top: 10px;
+}
+
+.repertoire-home .insight-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.repertoire-home .insight-delta {
+  margin: 9px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.repertoire-home .insight-delta b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Sin historial no hay cifra: la frase va en cursiva y sin número que leer. */
+.repertoire-home .insight-delta--none {
+  font-family: var(--display);
+  font-style: italic;
+  color: var(--faint);
+}
+
+.repertoire-home .insight-foot {
+  margin: 9px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.repertoire-home .insight-foot b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.repertoire-home .insight-foot--note {
+  color: var(--faint);
+}
+
+/* Las tres cifras de las revisitas: la de en medio —la que cumple— en tinta. */
+.repertoire-home .insight-counts {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 22px;
+  margin: 10px 0 0;
+  padding: 9px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.repertoire-home .insight-counts li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.repertoire-home .insight-counts b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.repertoire-home .insight-counts small {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.repertoire-home .insight-counts .is-in-band b {
+  color: var(--accent);
+}
+
+/* Texto de vacío: nunca un canvas en blanco. Misma voz que el resto de huecos
+   de la pantalla (cursiva de la display, tinta apagada). */
+.repertoire-home .insights-empty {
+  margin: 8px 0 0;
+  font-family: var(--display);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--faint);
+}
+
+.repertoire-home .insights .notice {
+  margin: 0 0 12px;
+}
+
+/* En `/history` las tres tarjetas van después de los días: el ritmo a lo ancho
+   —es una serie de hasta noventa días— y las dos semanales en pareja. */
+.repertoire-home .history-insights {
+  max-width: 1260px;
+  margin: 26px auto 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.repertoire-home .history-insights .insight-card {
+  margin: 0;
+}
+
+.repertoire-home .history-insights .insight-card--pace {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 820px) {
+  .repertoire-home .history-insights {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── cajón del alta (Add a tune): papel sobre velo, a la derecha ──
    El alta dejó de ser un panel en línea: empujaba la escalera hacia abajo y
    competía con la pantalla que se estaba mirando, y añadir una tune es una

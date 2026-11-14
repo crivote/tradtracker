@@ -50,6 +50,21 @@ vi.mock('../lib/tags-db', async (importOriginal) => {
   };
 });
 
+/**
+ * El panel de estado (#22) tiene su propia carga y su propio canvas. Aquí solo
+ * se prueba que la sección está montada en su sitio; cada gráfica tiene su
+ * fichero, y `drawChart` va simulado porque jsdom no tiene canvas.
+ */
+vi.mock('../lib/insights-data', () => ({
+  INSIGHT_ROW_LIMIT: 5000,
+  fetchInsightMarks: vi.fn(async () => []),
+  fetchInsightEvents: vi.fn(async () => []),
+}));
+
+vi.mock('../lib/charts', () => ({
+  drawChart: vi.fn(() => ({ destroy: vi.fn() })),
+}));
+
 import { addCatalogueTune, fetchRepertoire, saveFavorite, saveStatus } from '../lib/repertoire';
 import { lookupCatalogueMeta, searchCatalogue } from '../lib/catalogue-db';
 import {
@@ -389,6 +404,27 @@ describe('home: la biblioteca (#29)', () => {
     // Las otras bandas no vienen: el ámbito es el de la URL, no el de la home.
     expect(screen.queryByText('Cooley’s Reel')).toBeNull();
     expect(document.querySelector('.level-list h1')!.textContent).toBe('Solo-ready');
+  });
+
+  it('el panel de estado va justo bajo la cabecera, sin mover las bandas', async () => {
+    renderHome();
+
+    const panel = await waitFor(() => {
+      const node = document.querySelector('.insights');
+      expect(node).toBeTruthy();
+      return node as HTMLElement;
+    });
+
+    // Cuatro cifras y el histograma, no una pantalla nueva en medio.
+    await waitFor(() => expect(panel.querySelectorAll('.insights-stats .stat')).toHaveLength(4));
+    expect(panel.querySelector('.insight-card--overdue')).toBeTruthy();
+
+    // Va **después** de la cabecera y **antes** de la primera banda: las cartas no
+    // se han movido de sitio.
+    const header = document.querySelector('.page-head') as HTMLElement;
+    expect(header.compareDocumentPosition(panel)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    const firstBand = document.querySelector('.band') as HTMLElement;
+    expect(panel.compareDocumentPosition(firstBand)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it('la carta de la home no enseña el peldaño y la búsqueda es una puerta (#9)', async () => {

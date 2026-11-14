@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onMount } from 'solid-js';
 import { A } from '@solidjs/router';
 import {
   DEFAULT_HISTORY_RANGE,
@@ -12,7 +12,25 @@ import {
   type HistoryRange,
   type PracticeMark,
 } from '../lib/practice-history';
+import { fetchRepertoire } from '../lib/repertoire';
+import type { RepertoireRow } from '../lib/repertoire-model';
+import { readPrefs } from '../lib/practice-storage';
+import {
+  compositionByWeek,
+  revisits,
+  type InsightEvent,
+  type InsightMark,
+} from '../lib/insights';
+import { fetchInsightEvents, fetchInsightMarks } from '../lib/insights-data';
+import {
+  aliveInRange,
+  ladderHistorySince,
+  paceSeries,
+} from '../lib/insights-view';
 import PracticeChart from '../components/PracticeChart';
+import PaceChart from '../components/insights/PaceChart';
+import CompositionChart from '../components/insights/CompositionChart';
+import RevisitsChart from '../components/insights/RevisitsChart';
 import './repertoire.css';
 import './history.css';
 
@@ -73,6 +91,58 @@ export default function History() {
   const days = createMemo(() => buildHistoryDays(marks()));
   const stats = createMemo(() => historyStats(days(), { nowMs: nowMs(), range: range() }));
   const points = createMemo(() => historySeries(days(), { nowMs: nowMs(), range: range() }));
+
+  /**
+   * El panel (#22) es otra lectura de las mismas marcas y se carga **una vez al
+   * montar**: ni el rango ni el cambio de día lo vuelven a pedir. El rango elige
+   * la serie del ritmo —esa sí se recalcula en memoria— y no las otras dos, que
+   * son semanales por definición.
+   *
+   * Las filas hacen falta aquí porque la composición y las revisitas comparan
+   * cada marca con el peldaño de su tune, y esta pantalla no las traía. Se piden
+   * en el mismo viaje que las marcas.
+   */
+  const COMPOSITION_WEEKS = 8;
+
+  const [insightMarks, setInsightMarks] = createSignal<InsightMark[]>([]);
+  const [insightEvents, setInsightEvents] = createSignal<InsightEvent[]>([]);
+  const [insightRows, setInsightRows] = createSignal<RepertoireRow[]>([]);
+  const [insightsLoading, setInsightsLoading] = createSignal(true);
+  const [insightsError, setInsightsError] = createSignal<string | null>(null);
+
+  const loadInsights = async () => {
+    setInsightsLoading(true);
+    setInsightsError(null);
+    try {
+      const [insightMarksResult, insightEventsResult, rows] = await Promise.all([
+        fetchInsightMarks(),
+        fetchInsightEvents(),
+        fetchRepertoire(),
+      ]);
+      setInsightMarks(insightMarksResult);
+      setInsightEvents(insightEventsResult);
+      setInsightRows(rows);
+    } catch {
+      setInsightsError('Could not load the statistics.');
+    } finally {
+      setInsightsLoading(false);
+    }
+  };
+
+  onMount(() => {
+    void loadInsights();
+  });
+
+  /** El plan del propio usuario: la línea que el ritmo se mide contra. */
+  const dailyTarget = readPrefs(window.localStorage).dailyTarget;
+
+  const pace = createMemo(() => paceSeries(insightMarks(), { nowMs: nowMs(), range: range() }));
+  const alive = createMemo(() => aliveInRange(insightMarks(), nowMs(), 14));
+  const composition = createMemo(() =>
+    compositionByWeek(insightRows(), insightEvents(), COMPOSITION_WEEKS, nowMs())
+  );
+  const revisitSummary = createMemo(() => revisits(insightMarks(), insightRows()));
+  const ladderSince = createMemo(() => ladderHistorySince(insightEvents()));
 
   const rangeLabel = (value: HistoryRange) => `${value} days`;
 
@@ -165,6 +235,33 @@ export default function History() {
             <section class="history-days" aria-label="Practices by day">
               <For each={days()}>{(day) => <HistoryDayBlock day={day} nowMs={nowMs()} />}</For>
             </section>
+          </Show>
+
+          {/* Panel de estado (#22), después de los días: ritmo, composición y
+              revisitas. Tres preguntas distintas de las de la lista —cuánto,
+              cómo se reparte y con qué hueco— y las tres con la misma marca. */}
+          <Show when={insightsError()}>
+            <p class="notice notice-error" role="alert">
+              {insightsError()}
+            </p>
+          </Show>
+
+          <Show when={!insightsError()}>
+            <Show
+              when={!insightsLoading()}
+              fallback={<p class="notice">Loading the statistics…</p>}
+            >
+              <section class="history-insights" aria-label="Repertoire status">
+                <PaceChart
+                  points={pace()}
+                  range={range()}
+                  dailyTarget={dailyTarget}
+                  alive={alive()}
+                />
+                <CompositionChart weeks={composition()} ladderSince={ladderSince()} />
+                <RevisitsChart summary={revisitSummary()} />
+              </section>
+            </Show>
           </Show>
         </Show>
       </Show>
