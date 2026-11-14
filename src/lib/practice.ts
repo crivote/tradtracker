@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { parseLocalDay } from './format';
 import { todayKeyFor } from './practice-storage';
 
 /**
@@ -53,6 +54,104 @@ function localDayOf(instant: Date): string {
 
 /** Las columnas del `onConflict`: el único que hace del día la unidad. */
 const PRACTICE_CONFLICT = 'user_id,repertoire_id,day';
+
+/**
+ * Una fila de `pr_practice` tal y como la compone el cliente: la tune, el día
+ * local y el instante del ensayo. `user_id` no viaja —lo pone la base— y
+ * `quality`/`comment` tampoco, para no pisar una valoración previa.
+ */
+export interface PracticeRow {
+  repertoire_id: string;
+  day: string;
+  practiced_at: string;
+}
+
+/**
+ * El cuerpo de una tanda, compartido por los dos gestos que escriben varias
+ * marcas de golpe: «Mark all» de la lista del día (`markPracticeDay`) y la
+ * tanda pasada con fecha del listado (`registerPracticeDay`).
+ *
+ * Un id repetido haría que el `ON CONFLICT` tocara la misma fila dos veces y
+ * PostgREST lo rechazaría (21000), así que se deduplica aquí, conservando el
+ * orden de primera aparición: el recuento que devuelve cada gesto es el de
+ * filas que viajaron, no el de ids tecleados.
+ */
+function buildPracticeRows(
+  day: string,
+  repertoireIds: readonly string[],
+  practicedAt: string,
+): PracticeRow[] {
+  return [...new Set(repertoireIds)].map((repertoireId) => ({
+    repertoire_id: repertoireId,
+    day,
+    practiced_at: practicedAt,
+  }));
+}
+
+/**
+ * Las filas de una tanda **pasada** (#58): una por tune, con el **mediodía
+ * local** del día elegido.
+ *
+ * El mediodía no es capricho: la hora es un dato aproximado —el dueño recuerda
+ * el día, no la hora— y el mediodía local cae dentro del día en cualquier huso
+ * razonable, mientras que una medianoche UTC se leería como el día anterior o
+ * el siguiente en cuanto se formatee en local. Por eso nunca se usa
+ * `Date.parse(day)` ni `new Date('YYYY-MM-DD')`, que son UTC medianoche.
+ *
+ * Pura: sin red, sin `Date.now()`. Un día ilegible se rechaza en vez de
+ * inventarse uno, porque una marca con la fecha equivocada es peor que ninguna.
+ */
+export function practiceRowsForDay(
+  day: string,
+  repertoireIds: readonly string[],
+): PracticeRow[] {
+  const midnight = parseLocalDay(day);
+  if (Number.isNaN(midnight)) throw new Error('The practice day must be YYYY-MM-DD.');
+
+  // Del día ya validado salen sus componentes locales; el mediodía se compone
+  // con el constructor local, que es el único que respeta el día del dueño.
+  const parsed = new Date(midnight);
+  const noon = new Date(
+    parsed.getFullYear(),
+    parsed.getMonth(),
+    parsed.getDate(),
+    12,
+    0,
+    0,
+    0,
+  );
+  return buildPracticeRows(day, repertoireIds, noon.toISOString());
+}
+
+/**
+ * Registra una tanda de ensayos **de un día pasado** (#58), en bloque y con
+ * fecha, para lo que ocurrió y no se apuntó.
+ *
+ * No es «marcar todo hoy»: una marca con la fecha de hoy para media biblioteca
+ * corrompería el espaciado, así que el día entra por parámetro y manda. El
+ * `unique (user_id, repertoire_id, day)` hace que una tune ya marcada ese día
+ * se actualice en vez de duplicarse, y el trigger de la base recalcula
+ * `last_practiced_day` por su cuenta.
+ *
+ * El cuerpo no lleva `quality` ni `comment`: registrar no puntúa y el
+ * `DO UPDATE` no debe borrar una valoración puesta antes. Devuelve cuántas
+ * filas viajaron —un upsert no distingue alta de actualización—, que es el
+ * recuento que el aviso enseña.
+ */
+export async function registerPracticeDay(
+  day: string,
+  repertoireIds: readonly string[],
+): Promise<number> {
+  const rows = practiceRowsForDay(day, repertoireIds);
+  if (rows.length === 0) return 0;
+
+  const { error } = await supabase
+    .from('pr_practice')
+    .upsert(rows, { onConflict: PRACTICE_CONFLICT });
+
+  if (error) throw new Error(`Could not save the practice: ${error.message}`);
+  return rows.length;
+}
 
 /**
  * Apunta un ensayo de un tune del repertorio (#10, unidad de día en #56).
@@ -136,13 +235,9 @@ export async function markPracticeDay(
 
   const instant = options.practicedAt ?? new Date();
   const day = localDayOf(instant);
-  // Un id repetido en el cuerpo haría que el `ON CONFLICT` tocara la misma fila
-  // dos veces y PostgREST lo rechazara (21000): la lista se deduplica antes.
-  const rows = [...new Set(repertoireIds)].map((repertoireId) => ({
-    repertoire_id: repertoireId,
-    day,
-    practiced_at: instant.toISOString(),
-  }));
+  // La composición es la misma que la de una tanda pasada (#58), compartida en
+  // `buildPracticeRows`; aquí el instante es el del ensayo, no un mediodía.
+  const rows = buildPracticeRows(day, repertoireIds, instant.toISOString());
 
   const { error } = await supabase
     .from('pr_practice')

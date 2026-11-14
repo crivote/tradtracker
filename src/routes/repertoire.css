@@ -375,6 +375,50 @@
   outline-offset: 2px;
 }
 
+/* ── tanda pasada con fecha (#58) ────────────────────────────────
+   Reutiliza la caja de `.tag-panel` —el panel es el mismo tipo de objeto— y
+   añade solo lo que el `<input type="date">` y el aviso necesitan. Sobre papel:
+   ni paleta oscura ni utilidades de Tailwind. */
+.repertoire-home .past-practice {
+  align-items: center;
+  gap: 18px;
+}
+.repertoire-home .past-practice-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.repertoire-home .past-practice-field label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.repertoire-home .past-practice-field input[type="date"] {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 2px 0;
+}
+.repertoire-home .past-practice-field input[type="date"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* El aviso ocupa su propia línea: es una frase, no una etiqueta del campo. */
+.repertoire-home .past-practice-hint {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.repertoire-home .past-practice-hint--error {
+  color: var(--accent);
+}
+
 .repertoire-home .search-results {
   max-width: 1260px;
   margin: 0 auto;
@@ -427,6 +471,17 @@
   flex: 1;
 }
 .repertoire-home .sortbar select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 2px 0;
+}
+/* Filtro de texto de la tabla (#58): el mismo tratamiento que el selector de
+   orden —la barra es una sola línea de papel—, no un campo con caja. */
+.repertoire-home .sortbar input[type="search"] {
   font: inherit;
   font-size: 12px;
   color: var(--ink);

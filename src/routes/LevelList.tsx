@@ -14,6 +14,7 @@ import {
   displayTitle,
   learningSlots,
   levelText,
+  matchesQuery,
   parseScope,
   rowInvariants,
   rungOf,
@@ -29,7 +30,9 @@ import {
   type SortKey,
   type TuneStatus,
 } from '../lib/repertoire';
-import { readPrefs } from '../lib/practice-storage';
+import { readPrefs, todayKeyFor } from '../lib/practice-storage';
+import { registerPracticeDay } from '../lib/practice';
+import { formatDay, parseLocalDay } from '../lib/format';
 import { createRepertoireStore } from '../lib/repertoire-store';
 import { facetTree } from '../lib/tags';
 import { addTuneTags, loadVocabulary, type TagVocabulary } from '../lib/tags-db';
@@ -85,6 +88,11 @@ export default function LevelList() {
    * Un peldaño excluye las aparcadas —aparcar no cambia el peldaño, pero las
    * saca de rotación—, así que la lista cuadra con su recuento en la home; el
    * cajón hace lo contrario y solo trae las aparcadas.
+   *
+   * El filtro de texto (#58) se aplica al **pool del ámbito** y antes de
+   * ordenar: es la misma regla de coincidencia que la búsqueda (`matchesQuery`),
+   * no una segunda. Con el término vacío devuelve siempre `true`, así que el
+   * conjunto y el orden no cambian.
    */
   const tableRows = createMemo(() => {
     const current = scope();
@@ -93,6 +101,7 @@ export default function LevelList() {
     else if (current === SHELVED_SCOPE) pool = pool.filter((row) => row.shelved);
     else if (current !== null)
       pool = pool.filter((row) => row.status === current && !row.shelved);
+    pool = pool.filter((row) => matchesQuery(row, query()));
     return sortRepertoire(pool, sortKey(), sortDirection());
   });
 
@@ -134,6 +143,40 @@ export default function LevelList() {
   const [vocabulary, setVocabulary] = createSignal<TagVocabulary | null>(null);
 
   /**
+   * Filtro de texto de la tabla (#58). Local a propósito: el repertorio ya está
+   * cargado y la consulta es de la pantalla, no del servidor.
+   */
+  const [query, setQuery] = createSignal('');
+
+  /**
+   * La tanda pasada (#58): registrar en bloque lo que ocurrió y no se apuntó.
+   *
+   * La fecha **arranca vacía** y es obligatoria: poner «hoy» por defecto
+   * convertiría el gesto en el «marcar todo hoy» que corrompe el espaciado. La
+   * hora no se elige —el módulo puro pone el mediodía local—, y el día de hoy se
+   * avisa pero no se bloquea: es consejo, no puerta.
+   */
+  const [practicePanelOpen, setPracticePanelOpen] = createSignal(false);
+  const [practiceDay, setPracticeDay] = createSignal('');
+  const [practiceError, setPracticeError] = createSignal<string | null>(null);
+  const [savingPractice, setSavingPractice] = createSignal(false);
+
+  /** Hoy local, la única forma admitida de decir «hoy» en esta pantalla. */
+  const today = () => todayKeyFor(Date.now());
+  const dayUnreadable = () => Number.isNaN(parseLocalDay(practiceDay()));
+  /** Comparar textos `YYYY-MM-DD` es comparar días: no hace falta huso. */
+  const dayIsFuture = () => !dayUnreadable() && practiceDay() > today();
+  const dayIsToday = () => practiceDay() === today();
+
+  /** Qué se puede registrar: un día real, no futuro y con filas marcadas. */
+  const canRecord = () =>
+    practiceDay() !== '' &&
+    !dayUnreadable() &&
+    !dayIsFuture() &&
+    listedSelection().length > 0 &&
+    !savingPractice();
+
+  /**
    * La selección que cuenta es la que **se está pintando**: si el ámbito cambia
    * con filas marcadas, las que ya no se ven no viajan al «Apply» ni suman en
    * «N selected».
@@ -172,11 +215,58 @@ export default function LevelList() {
     );
   };
 
+  /** Cierra el panel de la tanda pasada y deja la fecha y el error limpios. */
+  const closePracticePanel = () => {
+    setPracticePanelOpen(false);
+    setPracticeDay('');
+    setPracticeError(null);
+  };
+
   const clearSelection = () => {
     setSelectedIds([]);
     setDraftTags([]);
     setTagPanelOpen(false);
     setTagError(null);
+    // El panel de la tanda pasada vive de la selección: limpiarla lo cierra y
+    // limpia el día, para que no quede una fecha armada sobre otra tanda.
+    closePracticePanel();
+  };
+
+  /** Abre o cierra el panel de la tanda; abrirlo cierra el de etiquetas. */
+  const togglePracticePanel = () => {
+    if (practicePanelOpen()) {
+      closePracticePanel();
+      return;
+    }
+    setTagPanelOpen(false);
+    setDraftTags([]);
+    setPracticePanelOpen(true);
+  };
+
+  /**
+   * Registrar la tanda pasada (#58). Un solo viaje —el adaptador compone y
+   * escribe—, aviso con las filas que viajaron y el día, selección limpia y
+   * recarga. Si falla, el error se pinta y la selección **no** se limpia: se
+   * reintenta sin volver a marcar.
+   */
+  const recordPastPractice = async () => {
+    if (!canRecord()) return;
+    const day = practiceDay();
+    const ids = listedSelection();
+
+    setSavingPractice(true);
+    setPracticeError(null);
+    setNotice(null);
+    try {
+      const written = await registerPracticeDay(day, ids);
+      setNotice(`${written} ${written === 1 ? 'mark' : 'marks'} recorded on ${formatDay(day)}`);
+      clearSelection();
+      await store.reload();
+    } catch (cause) {
+      setPracticeError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSavingPractice(false);
+    }
   };
 
   const toggleDraftTag = (tagId: number, next: boolean) => {
@@ -288,6 +378,16 @@ export default function LevelList() {
               ))}
             </select>
             <span class="spacer" />
+            {/* Filtro de texto (#58): acota el pool del ámbito, no lo sustituye.
+                La regla de coincidencia es `matchesQuery`, la de `/search`. */}
+            <input
+              type="search"
+              class="table-search"
+              aria-label="Filter the list by title"
+              placeholder="Filter by title"
+              value={query()}
+              onInput={(event) => setQuery(event.currentTarget.value)}
+            />
           </div>
 
           {/* Etiquetar en bloque (#48). La barra solo existe con algo marcado —un
@@ -303,17 +403,88 @@ export default function LevelList() {
                   class="tag-toggle"
                   aria-expanded={tagPanelOpen()}
                   aria-controls="bulk-tag-panel"
-                  onClick={() => setTagPanelOpen((open) => !open)}
+                  onClick={() => {
+                    // Un solo panel abierto a la vez: son la misma caja y dos
+                    // apiladas se leen como un fallo de pintado.
+                    if (!tagPanelOpen()) closePracticePanel();
+                    setTagPanelOpen((open) => !open);
+                  }}
                 >
                   Tag selection
                 </button>
               </Show>
+              {/* Registrar en bloque una tanda **pasada** (#58): con fecha, nunca
+                  «todo hoy». Vive aquí porque la selección ya existe aquí. */}
+              <button
+                type="button"
+                class="tag-toggle"
+                aria-expanded={practicePanelOpen()}
+                aria-controls="past-practice-panel"
+                onClick={togglePracticePanel}
+              >
+                Record past practice
+              </button>
               <button type="button" class="tag-clear" onClick={clearSelection}>
                 Clear
               </button>
             </div>
           </Show>
 
+          {/* El panel de la tanda pasada: misma caja que el de etiquetas, con la
+              fecha obligatoria y vacía al abrir. */}
+          <Show when={practicePanelOpen() && listedSelection().length > 0}>
+            <div class="tag-panel past-practice" id="past-practice-panel">
+              <div class="past-practice-field">
+                <label for="past-practice-day">Day</label>
+                <input
+                  type="date"
+                  id="past-practice-day"
+                  max={today()}
+                  value={practiceDay()}
+                  onInput={(event) => {
+                    setPracticeDay(event.currentTarget.value);
+                    setPracticeError(null);
+                  }}
+                />
+              </div>
+              {/* Hoy se avisa y se deja guardar: el aviso es consejo, no puerta. */}
+              <Show when={dayIsToday()}>
+                <p class="past-practice-hint" role="status">
+                  That is today — today already has its own list. A past batch is for a day that
+                  has already happened.
+                </p>
+              </Show>
+              {/* Un día futuro o ilegible sí bloquea: no hay nada que registrar. */}
+              <Show when={practiceDay() !== '' && (dayUnreadable() || dayIsFuture())}>
+                <p class="past-practice-hint past-practice-hint--error" role="alert">
+                  {dayUnreadable()
+                    ? 'That day cannot be read — pick a real day (YYYY-MM-DD).'
+                    : 'That day is in the future — a past batch records what already happened.'}
+                </p>
+              </Show>
+              <div class="tag-actions">
+                <button
+                  type="button"
+                  class="tag-apply"
+                  disabled={!canRecord()}
+                  onClick={() => void recordPastPractice()}
+                >
+                  {savingPractice()
+                    ? 'Recording…'
+                    : `Record ${listedSelection().length} ${
+                        listedSelection().length === 1 ? 'mark' : 'marks'
+                      }`}
+                </button>
+                <button
+                  type="button"
+                  class="tag-clear"
+                  onClick={closePracticePanel}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </Show>
           <Show when={tagPanelOpen() && listedSelection().length > 0 && tagGroups()}>
             {(groups) => (
               <div class="tag-panel" id="bulk-tag-panel">
@@ -355,6 +526,12 @@ export default function LevelList() {
               {tagError()}
             </p>
           </Show>
+          {/* El fallo de la tanda pasada, con el mismo trato que el de etiquetas. */}
+          <Show when={practiceError()}>
+            <p class="notice notice-error" role="alert">
+              {practiceError()}
+            </p>
+          </Show>
           <Show when={notice()}>
             <p class="notice" role="status">
               {notice()}
@@ -364,7 +541,11 @@ export default function LevelList() {
           <Show when={!store.loading()} fallback={<p class="notice">Loading the list…</p>}>
             <Show
               when={tableRows().length > 0}
-              fallback={<p class="band-empty">Nothing at this level yet.</p>}
+              fallback={
+                <p class="band-empty">
+                  {query().trim() === '' ? 'Nothing at this level yet.' : 'Nothing matches that filter.'}
+                </p>
+              }
             >
               <RepertoireTable
                 rows={tableRows()}

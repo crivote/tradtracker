@@ -36,6 +36,7 @@ vi.mock('../lib/catalogue-db', () => ({
 
 vi.mock('../lib/practice', () => ({
   logPractice: vi.fn(async () => undefined),
+  registerPracticeDay: vi.fn(async () => 0),
 }));
 
 vi.mock('../lib/tags-db', async (importOriginal) => {
@@ -75,6 +76,8 @@ import {
   removeTuneTag,
 } from '../lib/tags-db';
 import { readPrefs } from '../lib/practice-storage';
+import { registerPracticeDay } from '../lib/practice';
+import { formatDay } from '../lib/format';
 import Repertoire from './Repertoire';
 import Learning from './Learning';
 import LevelList from './LevelList';
@@ -90,6 +93,7 @@ const mockedFetchVocabulary = vi.mocked(fetchVocabulary);
 const mockedFetchTuneTags = vi.mocked(fetchTuneTags);
 const mockedAddTuneTags = vi.mocked(addTuneTags);
 const mockedRemoveTuneTag = vi.mocked(removeTuneTag);
+const mockedRegisterPracticeDay = vi.mocked(registerPracticeDay);
 
 /**
  * Vocabulario mínimo para el panel de etiquetas (#48): las tres facetas y
@@ -266,6 +270,10 @@ beforeEach(() => {
   mockedAddTuneTags.mockResolvedValue(2);
   mockedRemoveTuneTag.mockReset();
   mockedRemoveTuneTag.mockResolvedValue(undefined);
+  // La tanda pasada (#58) escribe a través del adaptador: aquí solo se comprueba
+  // qué viaja. Dos filas por defecto, como una selección de dos.
+  mockedRegisterPracticeDay.mockReset();
+  mockedRegisterPracticeDay.mockResolvedValue(2);
   // El tope del taller vive en `localStorage` (#52): una prueba que lo sube
   // dejaría el valor puesto para la siguiente, que espera el de fábrica.
   localStorage.removeItem('tt-practice-prefs');
@@ -985,6 +993,181 @@ describe('etiquetado en bloque desde la tabla (#48)', () => {
     await waitFor(() => expect(screen.queryByText('Drowsy Maggie')).toBeNull());
     expect(screen.queryByText('1 selected')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Tag selection' })).toBeNull();
+  });
+});
+
+/**
+ * Tanda pasada con fecha (#58): registrar en bloque lo que ocurrió y no se
+ * apuntó. El gesto vive en la barra de selección del listado —no hay ruta ni
+ * buscador nuevos— y el filtro de texto es la misma regla que `/search`
+ * (`matchesQuery`, sin simular): aquí se prueba qué se pinta y qué viaja.
+ */
+describe('tanda pasada con fecha desde la tabla (#58)', () => {
+  beforeEach(() => {
+    mockedFetch.mockResolvedValue(TABLE_ROWS as any);
+  });
+
+  async function ready(count = TABLE_ROWS.length) {
+    await waitFor(() => expect(rowTitles().length).toBe(count));
+  }
+
+  /** Un día local a `daysAgo` días de hoy, sin pasar por UTC. */
+  function localDay(daysAgo = 0): string {
+    const date = new Date();
+    date.setDate(date.getDate() - daysAgo);
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${date.getFullYear()}-${month}-${day}`;
+  }
+
+  const filterBox = () => screen.getByLabelText('Filter the list by title') as HTMLInputElement;
+  const dayBox = () => screen.getByLabelText('Day') as HTMLInputElement;
+  const recordButton = () =>
+    screen.getByRole('button', { name: /^Record \d+ marks?$/ }) as HTMLButtonElement;
+
+  it('con el filtro vacío la tabla es la misma de siempre, en el mismo orden', async () => {
+    renderLevel('all');
+    await ready();
+
+    const before = rowTitles();
+    expect(before).toEqual(['Drowsy Maggie', 'Cooley’s Reel', 'The Cameron Highlanders']);
+    expect(filterBox().value).toBe('');
+
+    // Vaciar un filtro que había acotado devuelve el conjunto y el orden.
+    fireEvent.input(filterBox(), { target: { value: 'cooley' } });
+    await waitFor(() => expect(rowTitles()).toEqual(['Cooley’s Reel']));
+    fireEvent.input(filterBox(), { target: { value: '' } });
+
+    await waitFor(() => expect(rowTitles()).toEqual(before));
+  });
+
+  it('un término acota la tabla a las filas que coinciden con el título', async () => {
+    renderLevel('all');
+    await ready();
+
+    fireEvent.input(filterBox(), { target: { value: 'maggie' } });
+
+    await waitFor(() => expect(rowTitles()).toEqual(['Drowsy Maggie']));
+    // Y el filtro no reordena: sigue siendo una tabla ordenada por urgencia.
+    const sorted = document.querySelector('.table-wrap th[aria-sort]')!;
+    expect(sorted.textContent).toContain('Last played');
+  });
+
+  it('con filas marcadas aparece «Record past practice»; sin selección no hay barra ni botón', async () => {
+    renderLevel('all');
+    await ready();
+
+    expect(screen.queryByRole('button', { name: 'Record past practice' })).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+
+    const trigger = screen.getByRole('button', { name: 'Record past practice' });
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(trigger.getAttribute('aria-controls')).toBe('past-practice-panel');
+
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(document.querySelector('#past-practice-panel')).toBeTruthy();
+  });
+
+  it('la fecha arranca vacía y sin ella no se puede guardar', async () => {
+    renderLevel('all');
+    await ready();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record past practice' }));
+
+    // Vacía, obligatoria: nada de «hoy» por defecto.
+    expect(dayBox().value).toBe('');
+    expect(recordButton().disabled).toBe(true);
+    // Y sin día no se escribe: el adaptador no se llamó.
+    fireEvent.click(recordButton());
+    expect(mockedRegisterPracticeDay).not.toHaveBeenCalled();
+  });
+
+  it('con un día de hace tres días registra la tanda en UNA llamada y avisa del recuento', async () => {
+    renderLevel('all');
+    await ready();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+    fireEvent.click(screen.getByLabelText('Cooley’s Reel'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record past practice' }));
+
+    const day = localDay(3);
+    fireEvent.input(dayBox(), { target: { value: day } });
+    expect(recordButton().disabled).toBe(false);
+    fireEvent.click(recordButton());
+
+    await waitFor(() =>
+      expect(mockedRegisterPracticeDay).toHaveBeenCalledWith(day, ['row-drowsy', 'row-cooley'])
+    );
+    expect(mockedRegisterPracticeDay).toHaveBeenCalledTimes(1);
+
+    // Aviso con las filas que viajaron y el día; después, selección limpia,
+    // panel cerrado y recarga de la lista.
+    await waitFor(() =>
+      expect(screen.getByText(`2 marks recorded on ${formatDay(day)}`)).toBeTruthy()
+    );
+    expect(screen.queryByText(/selected/)).toBeNull();
+    expect(document.querySelector('#past-practice-panel')).toBeNull();
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+  });
+
+  it('elegir el día de hoy avisa pero no bloquea', async () => {
+    renderLevel('all');
+    await ready();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record past practice' }));
+    fireEvent.input(dayBox(), { target: { value: localDay(0) } });
+
+    expect(
+      screen.getByText(
+        'That is today — today already has its own list. A past batch is for a day that has already happened.'
+      )
+    ).toBeTruthy();
+    // El aviso es consejo: se puede guardar igual.
+    expect(recordButton().disabled).toBe(false);
+  });
+
+  it('un día futuro bloquea y lo dice', async () => {
+    renderLevel('all');
+    await ready();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record past practice' }));
+    fireEvent.input(dayBox(), { target: { value: localDay(-5) } });
+
+    expect(
+      screen.getByText('That day is in the future — a past batch records what already happened.')
+    ).toBeTruthy();
+    expect(recordButton().disabled).toBe(true);
+    expect(mockedRegisterPracticeDay).not.toHaveBeenCalled();
+  });
+
+  it('si el guardado falla, se pinta el error y la selección sigue en pie', async () => {
+    mockedRegisterPracticeDay.mockRejectedValue(new Error('Could not save the practice: boom'));
+    renderLevel('all');
+    await ready();
+
+    fireEvent.click(screen.getByLabelText('Drowsy Maggie'));
+    fireEvent.click(screen.getByLabelText('Cooley’s Reel'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record past practice' }));
+    fireEvent.input(dayBox(), { target: { value: localDay(3) } });
+    fireEvent.click(recordButton());
+
+    const alert = await waitFor(() => {
+      const node = screen.getByText('Could not save the practice: boom');
+      expect(node.getAttribute('role')).toBe('alert');
+      return node;
+    });
+    expect(alert).toBeTruthy();
+
+    // Nada se limpia: las dos filas siguen marcadas y el día sigue puesto, para
+    // reintentar sin volver a marcar.
+    expect(screen.getByText('2 selected')).toBeTruthy();
+    expect((screen.getByLabelText('Drowsy Maggie') as HTMLInputElement).checked).toBe(true);
+    expect(dayBox().value).toBe(localDay(3));
   });
 });
 

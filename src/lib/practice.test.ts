@@ -103,7 +103,9 @@ import {
   fetchDayMarks,
   logPractice,
   markPracticeDay,
+  practiceRowsForDay,
   recomputeLastPractice,
+  registerPracticeDay,
   unmarkPractice,
 } from './practice';
 import { todayKeyFor } from './practice-storage';
@@ -279,6 +281,76 @@ describe('recomputeLastPractice', () => {
     await expect(recomputeLastPractice('row-a')).rejects.toThrow(
       'Could not recompute the practice date: function not found',
     );
+  });
+});
+
+describe('practiceRowsForDay: la tanda pasada, con fecha (#58)', () => {
+  it('compone una fila por tune con el mediodía LOCAL del día, no la medianoche UTC', () => {
+    const rows = practiceRowsForDay('2026-11-12', ['a', 'b']);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.repertoire_id)).toEqual(['a', 'b']);
+    expect(rows.every((row) => row.day === '2026-11-12')).toBe(true);
+    // Mediodía local: la hora es aproximada y así el instante cae dentro del
+    // día en cualquier huso. `new Date('2026-11-12')` sería UTC medianoche.
+    expect(rows[0].practiced_at).toBe(new Date(2026, 10, 12, 12, 0, 0, 0).toISOString());
+    expect(rows[0].practiced_at).not.toBe(new Date('2026-11-12').toISOString());
+  });
+
+  it('deduplica los ids y conserva el orden de primera aparición', () => {
+    const rows = practiceRowsForDay('2026-11-12', ['a', 'a', 'b']);
+
+    expect(rows.map((row) => row.repertoire_id)).toEqual(['a', 'b']);
+  });
+
+  it('sin tunes no hay filas', () => {
+    expect(practiceRowsForDay('2026-11-12', [])).toEqual([]);
+  });
+
+  it('un día ilegible se rechaza en vez de inventarse uno', () => {
+    expect(() => practiceRowsForDay('12/11/2026', ['a'])).toThrow(
+      'The practice day must be YYYY-MM-DD.',
+    );
+    expect(() => practiceRowsForDay('', ['a'])).toThrow('The practice day must be YYYY-MM-DD.');
+  });
+});
+
+describe('registerPracticeDay: escribir la tanda en un solo viaje (#58)', () => {
+  it('hace un único upsert con el conflicto del día y sin valoración', async () => {
+    const written = await registerPracticeDay('2026-11-12', ['a', 'b']);
+
+    expect(written).toBe(2);
+    expect(h.upsertBodies).toHaveLength(1);
+    expect(h.upsertBodies[0]).toEqual([
+      {
+        repertoire_id: 'a',
+        day: '2026-11-12',
+        practiced_at: new Date(2026, 10, 12, 12, 0, 0, 0).toISOString(),
+      },
+      {
+        repertoire_id: 'b',
+        day: '2026-11-12',
+        practiced_at: new Date(2026, 10, 12, 12, 0, 0, 0).toISOString(),
+      },
+    ]);
+    expect(h.upsertOptions[0]).toEqual({ onConflict: 'user_id,repertoire_id,day' });
+    // El `DO UPDATE` no puede pisar una valoración puesta antes: el cuerpo no
+    // lleva `quality` ni `comment`.
+    expect(h.upsertBodies[0][0].quality).toBeUndefined();
+    expect(h.upsertBodies[0][0].comment).toBeUndefined();
+  });
+
+  it('un error del upsert se lanza con el mismo texto que la marca del día', async () => {
+    h.upsertResult = { data: null, error: { message: 'nope' } };
+
+    await expect(registerPracticeDay('2026-11-12', ['a'])).rejects.toThrow(
+      'Could not save the practice: nope',
+    );
+  });
+
+  it('sin filas devuelve 0 y no toca la red', async () => {
+    await expect(registerPracticeDay('2026-11-12', [])).resolves.toBe(0);
+    expect(h.upsertBodies).toEqual([]);
   });
 });
 
