@@ -86,6 +86,7 @@ const VOCABULARY = {
 };
 
 function makeRow(overrides: Record<string, any> = {}) {
+  const { versions, ...rest } = overrides;
   return {
     id: 'row-a',
     status: 'learning',
@@ -106,8 +107,15 @@ function makeRow(overrides: Record<string, any> = {}) {
       meter: '6/8',
       key: null,
       abc: null,
+      // Tonalidades por versión (migración 021). El mock devuelve la fila cruda,
+      // así que aquí se imita lo que hace `mapRepertoireRow`: `keys` normalizadas.
+      pr_tune_settings: versions ?? [],
+      keys: (versions ?? []).map((version: { setting_ref: string; key: string }) => ({
+        settingRef: version.setting_ref,
+        key: version.key,
+      })),
     },
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -548,5 +556,35 @@ describe('TuneDetail', () => {
     await waitFor(() => expect(screen.getByText('Could not add the tags: boom')).toBeTruthy());
     expect(screen.getByText('Could not add the tags: boom').getAttribute('role')).toBe('alert');
     expect(mockedSaveStatus).not.toHaveBeenCalled();
+  });
+
+  /**
+   * La tonalidad ya no es de la tune (migración 021): la ficha enseña la del
+   * catálogo y, si hay varias, las lista. Una sola no se repite.
+   */
+  it('lists every catalogue key when the tune is played in more than one', async () => {
+    mockedFetch.mockResolvedValue(
+      makeRow({
+        versions: [
+          { setting_ref: '1', key: 'Edorian' },
+          { setting_ref: '2', key: 'Eminor' },
+        ],
+      }) as any
+    );
+
+    renderAt('/repertoire/row-a');
+
+    expect(await screen.findByText('Catalogue: Edorian, Eminor')).toBeTruthy();
+  });
+
+  it('does not repeat a single catalogue key', async () => {
+    mockedFetch.mockResolvedValue(
+      makeRow({ versions: [{ setting_ref: '1', key: 'Edorian' }] }) as any
+    );
+
+    renderAt('/repertoire/row-a');
+
+    await screen.findByText('Edorian');
+    expect(screen.queryByText(/Catalogue:/)).toBeNull();
   });
 });

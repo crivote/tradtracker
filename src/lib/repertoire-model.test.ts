@@ -16,6 +16,10 @@ import {
   displayKey,
   displayRhythm,
   displayTitle,
+  // Tonalidades desde los settings (migración 021, #61).
+  catalogueKeys,
+  preferredKey,
+  settingRefNumber,
   addedAge,
   groupIntoBands,
   levelText,
@@ -173,6 +177,7 @@ function makeRow(input: {
   name?: string;
   custom_title?: string | null;
   custom_rhythm?: string | null;
+  custom_key?: string | null;
   rhythm?: string | null;
   meter?: string | null;
   composer?: string | null;
@@ -184,13 +189,22 @@ function makeRow(input: {
   status?: TuneStatus;
   shelved?: boolean;
   key?: string | null;
+  /**
+   * Versiones del catálogo tal y como las devuelve el embed de PostgREST
+   * (`pr_tune_settings`). Se pasan crudas a propósito: lo que se prueba es la
+   * normalización del modelo, no el builder.
+   */
+  versions?: { setting_ref: string; key: string }[];
+  /** `pr_repertoire.preferred_setting`, en cualquiera de los dos formatos. */
+  preferred?: string | null;
   stats?: RepertoireStats;
 }): RepertoireRow {
-  const { name, key, rhythm, meter, composer, stats, ...overrides } = input;
+  const { name, key, rhythm, meter, composer, stats, versions, preferred, ...overrides } = input;
   return mapRepertoireRow(
     {
       ...baseRow,
       added_at: '2026-06-01T12:00:00Z',
+      ...(preferred === undefined ? {} : { preferred_setting: preferred }),
       ...overrides,
       pr_tunes: {
         ...tune,
@@ -199,11 +213,71 @@ function makeRow(input: {
         meter: meter === undefined ? tune.meter : meter,
         composer: composer === undefined ? null : composer,
         key: key === undefined ? tune.key : key,
+        pr_tune_settings: versions ?? [],
       },
     },
     stats ?? null
   );
 }
+
+/**
+ * La tonalidad ya no es de la tune: es de cada versión (migración 021). El
+ * orden de preferencia es override del dueño → tono de su versión elegida →
+ * primer tono del catálogo → la columna antigua, que sigue viva hasta la 023.
+ */
+describe('tonalidades desde los settings', () => {
+  const versions = [
+    { setting_ref: '19275', key: 'Edorian' },
+    { setting_ref: '12342', key: 'Eminor' },
+    // Repetida a propósito: el catálogo puede traer varias en el mismo tono.
+    { setting_ref: '999', key: 'Edorian' },
+  ];
+
+  it('prefiere el tono de la versión que el dueño eligió', () => {
+    const row = makeRow({ id: 'x', versions, preferred: 'setting12342' });
+    expect(preferredKey(row)).toBe('Eminor');
+    expect(displayKey(row)).toBe('Eminor');
+  });
+
+  it('cruza los dos formatos del id de setting', () => {
+    expect(settingRefNumber('setting19275')).toBe('19275');
+    expect(settingRefNumber(' 19275 ')).toBe('19275');
+    expect(settingRefNumber('n2')).toBe('n2');
+    expect(settingRefNumber(null)).toBeNull();
+    expect(settingRefNumber('')).toBeNull();
+  });
+
+  it('sin preferencia usa el primer tono del catálogo, no la columna antigua', () => {
+    const row = makeRow({ id: 'x', versions, key: 'Gmajor' });
+    expect(displayKey(row)).toBe('Edorian');
+  });
+
+  it('el tono escrito a mano manda sobre todo lo demás', () => {
+    const row = makeRow({ id: 'x', versions, preferred: '19275', custom_key: 'D' });
+    expect(displayKey(row)).toBe('D');
+  });
+
+  it('cae a la columna antigua cuando el catálogo no trae versiones', () => {
+    expect(displayKey(makeRow({ id: 'x', key: 'Gmajor' }))).toBe('Gmajor');
+    expect(displayKey(makeRow({ id: 'x' }))).toBe('—');
+  });
+
+  it('ignora una preferencia que no existe en el catálogo', () => {
+    const row = makeRow({ id: 'x', versions, preferred: 'setting404' });
+    expect(preferredKey(row)).toBeNull();
+    expect(displayKey(row)).toBe('Edorian');
+  });
+
+  it('lista las tonalidades sin repetir', () => {
+    expect(catalogueKeys(makeRow({ id: 'x', versions }))).toEqual(['Edorian', 'Eminor']);
+    expect(catalogueKeys(makeRow({ id: 'x' }))).toEqual([]);
+  });
+
+  it('la carta omite la tonalidad en vez de pintar un guion', () => {
+    expect(cardKey(makeRow({ id: 'x' }))).toBeNull();
+    expect(cardKey(makeRow({ id: 'x', versions }))).toBe('Edorian');
+  });
+});
 
 describe('collationKey', () => {
   it('lowercases and strips diacritics so comparisons stay comparable', () => {

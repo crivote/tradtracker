@@ -8,6 +8,7 @@ import {
   STATUS_STYLES,
   applyPatchToDrafts,
   bandFor,
+  catalogueKeys,
   customDrafts,
   displayKey,
   displayRhythm,
@@ -560,6 +561,13 @@ export default function TuneDetail() {
                     </dt>
                     <dd class="text-gray-200" title={flags().key ? 'Custom value' : undefined}>
                       {displayKey(item())}
+                      {/* Las tonalidades del catálogo (migración 021). Con una
+                          sola no se pinta lista: repetirla no informa de nada. */}
+                      <Show when={catalogueKeys(item()).length > 1}>
+                        <span class="block text-xs text-gray-500">
+                          Catalogue: {catalogueKeys(item()).join(', ')}
+                        </span>
+                      </Show>
                     </dd>
                   </div>
                   <div class="flex items-baseline justify-between gap-3 sm:justify-start">

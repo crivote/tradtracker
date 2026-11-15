@@ -61,7 +61,10 @@ const REPERTOIRE_SELECT = [
   'image_focal_y',
   'image_zoom',
   'image_chosen_at',
-  'pr_tunes!inner(id,origin,origin_ref,name,rhythm,meter,key,abc,composer)',
+  // Tonalidades por versión (migración 021): la fuente de la tonalidad ya no es
+  // `pr_tunes.key`, sino los settings. Viene embebida para que la lista y la
+  // ficha no hagan una consulta por fila.
+  'pr_tunes!inner(id,origin,origin_ref,name,rhythm,meter,key,abc,composer,pr_tune_settings(key,setting_ref))',
 ].join(',');
 
 /** Columnas de la vista de agregados (#29); una fila por fila de repertorio. */

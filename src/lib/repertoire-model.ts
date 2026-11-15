@@ -40,7 +40,18 @@ export interface TuneRecord {
   name: string;
   rhythm: string | null;
   meter: string | null;
+  /**
+   * `pr_tunes.key`: **de salida** (migración 021). La tonalidad ya no es de la
+   * tune, es de cada versión. Se conserva en el tipo mientras la columna exista
+   * y solo como último recurso de `displayKey`; la fuente es `keys`.
+   */
   key: string | null;
+  /**
+   * Las tonalidades de sus versiones (migración 021, `pr_tune_settings`), en el
+   * orden en que llegaron. `[]` = el catálogo no tiene versiones de esta tune
+   * (183 de 23.448), no un error.
+   */
+  keys: TuneKey[];
   abc: string | null;
   /**
    * Autor de la pieza (#44, migración 010), tal y como lo trae el catálogo.
@@ -48,6 +59,14 @@ export interface TuneRecord {
    * subtexto de la fila **omite** la parte del autor: nunca «trad.» ni un guion.
    */
   composer: string | null;
+}
+
+/** Una versión del catálogo con su tonalidad: lo que guarda `pr_tune_settings`. */
+export interface TuneKey {
+  /** Id de setting de TheSession, **numérico** (`19275`). */
+  settingRef: string;
+  /** Tonalidad del vocabulario de TheSession (`Dmajor`, `Edorian`…). */
+  key: string;
 }
 
 /**
@@ -273,7 +292,11 @@ export function mapRepertoireRow(
     // El autor viaja en la relación embebida (#44) y se normaliza aquí: una fila
     // anterior a la migración 010, un doble de test o un `composer` vacío son lo
     // mismo —no hay autor— y la fila que lo lea no puede recibir `undefined`.
-    tune: { ...(embedded as TuneRecord), composer: toTextOrNull(embedded.composer) },
+    tune: {
+      ...(embedded as TuneRecord),
+      composer: toTextOrNull(embedded.composer),
+      keys: mapTuneKeys(embedded.pr_tune_settings),
+    },
     image: mapImageRow(row),
     practice_count: aggregates.practice_count,
     avg_quality: aggregates.avg_quality,
@@ -302,7 +325,70 @@ export function displayRhythm(item: RepertoireRow): string {
 }
 
 export function displayKey(item: RepertoireRow): string {
-  return item.custom_key?.trim() || item.tune.key || '—';
+  return item.custom_key?.trim() || preferredKey(item) || tuneKeys(item)[0]?.key || item.tune.key || '—';
+}
+
+/**
+ * Las versiones de la tune, tolerantes a `undefined`: un doble de test devuelve
+ * la fila cruda sin pasar por `mapRepertoireRow`, y la vista no puede reventar
+ * por eso. `[]` es «sin versiones» en los dos casos.
+ */
+export function tuneKeys(item: RepertoireRow): TuneKey[] {
+  return Array.isArray(item.tune.keys) ? item.tune.keys : [];
+}
+
+/**
+ * El id de setting llega en dos formatos: `preferred_setting` guarda
+ * `setting19275` (corte #59) y el volcado de tonalidades, `19275`. Se comparan
+ * por el número; un ABC propio sin `S:` (`n2`) se queda tal cual.
+ */
+export function settingRefNumber(ref: string | null | undefined): string | null {
+  const value = (ref ?? '').trim();
+  if (!value) return null;
+  const match = /^(?:setting)?(\d+)$/i.exec(value);
+  return match ? match[1] : value;
+}
+
+/**
+ * Las versiones del catálogo, sin repetir tonalidad y en el orden en que
+ * llegaron. Es lo que la ficha enseña como «se toca en D, G y E dorian»; una
+ * sola tonalidad no necesita lista.
+ */
+export function catalogueKeys(item: RepertoireRow): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const version of tuneKeys(item)) {
+    if (seen.has(version.key)) continue;
+    seen.add(version.key);
+    out.push(version.key);
+  }
+  return out;
+}
+
+/**
+ * La tonalidad de la versión que el dueño prefiere (#59), si esa versión sigue
+ * en el catálogo. `null` cuando no hay preferencia o su id no casa: la ficha
+ * cae entonces al primer tono del catálogo, no a un valor inventado.
+ */
+export function preferredKey(item: RepertoireRow): string | null {
+  const preferred = settingRefNumber(item.preferredSetting);
+  if (!preferred) return null;
+  return tuneKeys(item).find((version) => version.settingRef === preferred)?.key ?? null;
+}
+
+/** Normaliza el embed de `pr_tune_settings`: array, `null` o ausente. */
+function mapTuneKeys(raw: unknown): TuneKey[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: TuneKey[] = [];
+  for (const item of raw) {
+    const settingRef = settingRefNumber(item?.setting_ref);
+    const key = typeof item?.key === 'string' ? item.key.trim() : '';
+    if (!settingRef || !key || seen.has(settingRef)) continue;
+    seen.add(settingRef);
+    out.push({ settingRef, key });
+  }
+  return out;
 }
 
 /**
@@ -1270,6 +1356,6 @@ export function capRows<T>(rows: readonly T[], limit: number): T[] {
  * `key not set` en vez de un guion. La tabla sigue usando `displayKey`.
  */
 export function cardKey(row: RepertoireRow): string | null {
-  const key = (row.custom_key?.trim() || row.tune.key || '').trim();
+  const key = (row.custom_key?.trim() || preferredKey(row) || tuneKeys(row)[0]?.key || row.tune.key || '').trim();
   return key.length > 0 ? key : null;
 }
