@@ -28,6 +28,16 @@ vi.mock('../lib/tradtube', async (importOriginal) => {
 });
 
 /*
+ * Las versiones de ABC se piden a TheSession: en `jsdom` eso sería una salida a
+ * internet en cada prueba. Se sustituye solo `loadVersions` —lo puro se queda
+ * real— y cada caso decide qué devuelve.
+ */
+vi.mock('../lib/abc-source', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/abc-source')>();
+  return { ...actual, loadVersions: vi.fn() };
+});
+
+/*
  * El reproductor de YouTube no existe en `jsdom`. El doble no simula el vídeo:
  * crea el `<iframe>` que crearía YouTube (para que el desmontaje se pruebe de
  * verdad) y devuelve un mando con espías, de modo que los eventos del player se
@@ -39,9 +49,15 @@ vi.mock('../lib/video-player', async (importOriginal) => {
 });
 
 import { startEngine, stopEngine } from '../lib/player-engine';
+import { loadVersions } from '../lib/abc-source';
 import { fetchSegments, type TuneSegment } from '../lib/tradtube';
-import { VIDEO_RATES, mountVideoPlayer, type VideoPlayerHandle } from '../lib/video-player';
-import { resetPlayerForTests, videoRateChanged, videoStateChanged } from '../lib/player-store';
+import { mountVideoPlayer, type VideoPlayerHandle } from '../lib/video-player';
+import {
+  resetPlayerForTests,
+  toggleLoop,
+  videoRateChanged,
+  videoStateChanged,
+} from '../lib/player-store';
 import type { RepertoireRow } from '../lib/repertoire-model';
 import PlayTrigger from './PlayTrigger';
 import { PlayerDock } from './PlayerDock';
@@ -50,11 +66,13 @@ const mockedStart = vi.mocked(startEngine);
 const mockedStop = vi.mocked(stopEngine);
 const mockedSegments = vi.mocked(fetchSegments);
 const mockedMount = vi.mocked(mountVideoPlayer);
+const mockedVersions = vi.mocked(loadVersions);
 
 type FakePlayer = VideoPlayerHandle & {
   play: ReturnType<typeof vi.fn>;
   pause: ReturnType<typeof vi.fn>;
   setRate: ReturnType<typeof vi.fn>;
+  seek: ReturnType<typeof vi.fn>;
   destroy: ReturnType<typeof vi.fn>;
 };
 
@@ -68,6 +86,7 @@ function fakePlayer(host: HTMLElement): FakePlayer {
     play: vi.fn(),
     pause: vi.fn(),
     setRate: vi.fn(),
+    seek: vi.fn(),
     destroy: vi.fn(() => iframe.remove()),
   };
 }
@@ -83,6 +102,7 @@ function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
     custom_rhythm: null,
     custom_key: null,
     customAbc: null,
+    preferredSetting: null,
     notes: null,
     added_at: '2026-09-01T10:00:00Z',
     learnedOn: null,
@@ -140,9 +160,11 @@ beforeEach(() => {
   resetPlayerForTests();
   mockedStart.mockResolvedValue({ result: 'ok', durationSec: 52 });
   mockedSegments.mockResolvedValue(new Map());
+  // Sin versiones de red por defecto: cada caso que las quiera las declara.
+  mockedVersions.mockResolvedValue({ versions: [], origin: 'none' });
   mockedMount.mockImplementation(async ({ host }) => {
     player = fakePlayer(host);
-    return { handle: player, rates: VIDEO_RATES };
+    return player;
   });
 });
 
@@ -164,7 +186,7 @@ describe('apertura y cierre', () => {
     );
     expect(mockedStart).toHaveBeenCalledTimes(1);
     // Ritmo, tonalidad, procedencia, instrumento y duración real del motor.
-    expect(dock()!.textContent).toContain('Jig · D · ABC · Fiddle · 0:52');
+    await waitFor(() => expect(dock()!.textContent).toContain('Jig · D · ABC · Fiddle · 0:52'));
     // Un solo dock aunque haya varias filas.
     expect(document.querySelectorAll('.player-dock')).toHaveLength(1);
   });
@@ -192,30 +214,56 @@ describe('apertura y cierre', () => {
   });
 });
 
-describe('vídeo', () => {
-  it('abre el iframe y para el sintetizador: nunca dos fuentes a la vez', async () => {
-    mockedSegments.mockResolvedValue(new Map([['55', [segment()]]]));
+describe('vídeo por defecto (#59)', () => {
+  const withVideo = () =>
+    mockedSegments.mockResolvedValue(new Map([['55', [segment({ startSec: 12 })]]]));
+
+  it('con segmento disponible suena el vídeo, no el sintetizador', async () => {
+    withVideo();
     render(() => <Harness />);
     await openDock();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
-    const video = await screen.findByRole('button', { name: 'Play video' });
-
-    mockedStop.mockClear();
-    fireEvent.click(video);
-
     await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+    expect(mockedStart).not.toHaveBeenCalled();
     expect(mockedStop).toHaveBeenCalled();
-    // El dock sigue ahí: se cierra el vídeo, no el reproductor.
+  });
+
+  it('sin segmento suena el sintetizador, como antes', async () => {
+    render(() => <Harness />);
+    await openDock();
+
+    await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
+    expect(document.querySelector('.player-dock__video')).toBeNull();
+  });
+
+  it('con el segmento caído se suena y el control de vídeo queda deshabilitado', async () => {
+    mockedSegments.mockResolvedValue(new Map([['55', [segment({ unavailable: true })]]]));
+    render(() => <Harness />);
+    await openDock();
+
+    await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
+    const control = screen.getByRole('button', { name: 'Play video' }) as HTMLButtonElement;
+    expect(control.disabled).toBe(true);
+  });
+
+  it('el botón ABC del panel devuelve al sintetizador y desmonta el iframe', async () => {
+    withVideo();
+    render(() => <Harness />);
+    await openDock();
+    await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play with ABC' }));
+
+    await waitFor(() => expect(mockedStart).toHaveBeenCalledTimes(1));
+    expect(document.querySelector('.player-dock__video iframe')).toBeNull();
     expect(dock()).not.toBeNull();
   });
 
   it('el ✕ del marco desmonta el iframe y deja el dock abierto', async () => {
-    mockedSegments.mockResolvedValue(new Map([['55', [segment()]]]));
+    withVideo();
     render(() => <Harness />);
     await openDock();
-    fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Play video' }));
     await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
 
     fireEvent.click(screen.getByRole('button', { name: 'Close video' }));
@@ -235,14 +283,12 @@ describe('vídeo', () => {
   });
 });
 
-describe('vídeo: velocidad propia y control desde el dock', () => {
-  /** Abre el vídeo y espera a que el player esté montado (▶ habilitado). */
+describe('vídeo: velocidad por pasos del 5 % y mandos del tune', () => {
+  /** Abre la tune; el vídeo se abre solo y el player tarda en estar listo. */
   const openVideoPanel = async () => {
-    mockedSegments.mockResolvedValue(new Map([['55', [segment()]]]));
+    mockedSegments.mockResolvedValue(new Map([['55', [segment({ startSec: 12 })]]]));
     render(() => <Harness />);
     await openDock();
-    fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Play video' }));
     await waitFor(() => {
       const button = screen.getByRole('button', { name: 'Play video' }) as HTMLButtonElement;
       expect(button.disabled).toBe(false);
@@ -268,31 +314,37 @@ describe('vídeo: velocidad propia y control desde el dock', () => {
     expect(mockedStart).not.toHaveBeenCalled();
   });
 
-  it('la velocidad recorre los escalones en % y los aplica en caliente', async () => {
+  it('la velocidad se mueve de cinco en cinco y se aplica en caliente', async () => {
     await openVideoPanel();
     expect(screen.getByText('100%')).toBeTruthy();
+    // A 100 % no hay paso hacia arriba: es el techo del dominio.
+    expect((screen.getByRole('button', { name: 'Faster video' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Slower video' }));
+    expect(screen.getByText('95%')).toBeTruthy();
+    expect(player.setRate).toHaveBeenLastCalledWith(0.95);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Slower video' }));
+    expect(screen.getByText('90%')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Faster video' }));
-    expect(screen.getByText('125%')).toBeTruthy();
-    expect(player.setRate).toHaveBeenLastCalledWith(1.25);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Slower video' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Slower video' }));
-    expect(screen.getByText('75%')).toBeTruthy();
-    expect(player.setRate).toHaveBeenLastCalledWith(0.75);
+    expect(screen.getByText('95%')).toBeTruthy();
+    expect(player.setRate).toHaveBeenLastCalledWith(0.95);
   });
 
-  it('en los extremos, el botón sin escalón queda deshabilitado', async () => {
+  it('en los extremos, el botón sin paso queda deshabilitado', async () => {
     await openVideoPanel();
     const slower = screen.getByRole('button', { name: 'Slower video' }) as HTMLButtonElement;
     const faster = screen.getByRole('button', { name: 'Faster video' }) as HTMLButtonElement;
 
-    for (let step = 0; step < 3; step += 1) fireEvent.click(slower);
-    expect(screen.getByText('25%')).toBeTruthy();
+    for (let step = 0; step < 10; step += 1) fireEvent.click(slower);
+    expect(screen.getByText('50%')).toBeTruthy();
     expect(slower.disabled).toBe(true);
 
-    for (let step = 0; step < 7; step += 1) fireEvent.click(faster);
-    expect(screen.getByText('200%')).toBeTruthy();
+    for (let step = 0; step < 10; step += 1) fireEvent.click(faster);
+    expect(screen.getByText('100%')).toBeTruthy();
     expect(faster.disabled).toBe(true);
   });
 
@@ -300,10 +352,44 @@ describe('vídeo: velocidad propia y control desde el dock', () => {
     await openVideoPanel();
     const sent = player.setRate.mock.calls.length;
 
-    videoRateChanged(1.5);
+    videoRateChanged(0.55);
 
-    await waitFor(() => expect(screen.getByText('150%')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('55%')).toBeTruthy());
     expect(player.setRate).toHaveBeenCalledTimes(sent);
+  });
+
+  it('«Tune start» vuelve al inicio del segmento, no al del vídeo', async () => {
+    await openVideoPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to tune start' }));
+
+    expect(player.seek).toHaveBeenCalledWith(12);
+    // Parado sigue parado: el botón no arranca la reproducción por su cuenta.
+    expect(player.play).not.toHaveBeenCalled();
+  });
+
+  it('el check de loop reinicia el tune al llegar al final', async () => {
+    await openVideoPanel();
+    videoStateChanged('playing');
+
+    const loop = screen.getByRole('checkbox', { name: 'Loop' }) as HTMLInputElement;
+    fireEvent.click(loop);
+    expect(loop.checked).toBe(true);
+
+    videoStateChanged('ended');
+
+    expect(player.seek).toHaveBeenCalledWith(12);
+    expect(player.play).toHaveBeenCalledTimes(1);
+  });
+
+  it('sin loop, el final del segmento no vuelve a arrancar nada', async () => {
+    await openVideoPanel();
+    videoStateChanged('playing');
+
+    videoStateChanged('ended');
+
+    expect(player.seek).not.toHaveBeenCalled();
+    expect(player.play).not.toHaveBeenCalled();
   });
 
   it('cerrar el vídeo destruye el player y su iframe sale del DOM', async () => {
@@ -341,7 +427,9 @@ describe('vídeo: velocidad propia y control desde el dock', () => {
     expect(bar.disabled).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'Show video' }));
-    expect(document.querySelector('.player-dock__video')!.classList.contains('is-collapsed')).toBe(false);
+    expect(document.querySelector('.player-dock__video')!.classList.contains('is-collapsed')).toBe(
+      false
+    );
   });
 
   it('con el dock plegado, el ▶ de la barra sigue gobernando el vídeo', async () => {
@@ -360,15 +448,48 @@ describe('vídeo: velocidad propia y control desde el dock', () => {
     mockedSegments.mockResolvedValue(new Map([['55', [segment()]]]));
     render(() => <Harness />);
     await openDock();
-    fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Play video' }));
 
     // El iframe plano de siempre sigue ahí: el vídeo no desaparece.
     await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
-    const button = screen.getByRole('button', { name: 'Video controls unavailable' }) as HTMLButtonElement;
+    const button = screen.getByRole('button', {
+      name: 'Video controls unavailable',
+    }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     // Y no hay barra de velocidad que mienta: sin player no hay nada que mover.
     expect(screen.queryByRole('button', { name: 'Faster video' })).toBeNull();
+  });
+});
+
+describe('versiones de ABC (#59)', () => {
+  const TWO = [
+    { id: 'setting1', label: '1 · G', abc: 'X: 1\nT: Kesh, The\nM:6/8\nL:1/8\nK:G\nGAB cde|\n' },
+    { id: 'setting2', label: '2 · D', abc: 'X: 2\nT: Kesh, The\nM:6/8\nL:1/8\nK:D\nDEF GAB|\n' },
+  ];
+
+  it('el selector aparece cuando hay más de una versión y la elegida es la que suena', async () => {
+    mockedVersions.mockResolvedValue({ versions: TWO, origin: 'thesession' });
+    render(() => <Harness />);
+    await openDock();
+    fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
+
+    const select = (await screen.findByRole('combobox')) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBe(2));
+
+    fireEvent.change(select, { target: { value: 'setting2' } });
+
+    await waitFor(() =>
+      expect(mockedStart).toHaveBeenCalledWith(
+        expect.objectContaining({ abc: expect.stringContaining('DEF GAB|') })
+      )
+    );
+  });
+
+  it('con una sola versión no hay selector que enseñar', async () => {
+    render(() => <Harness />);
+    await openDock();
+    fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
+
+    expect(screen.queryByRole('combobox')).toBeNull();
   });
 });
 
@@ -410,14 +531,14 @@ describe('estados que no pueden reproducir', () => {
 });
 
 describe('bandeja', () => {
-  it('el tempo se mueve en pasos de cuatro y el instrumento recorre la rueda', async () => {
+  it('el tempo se mueve en pasos de diez y el instrumento recorre la rueda', async () => {
     render(() => <Harness />);
     await openDock();
     fireEvent.click(screen.getByRole('button', { name: 'Show player controls' }));
 
-    // Jig arranca en 108; un paso arriba son 112.
+    // Jig arranca en 108; un paso arriba son 118 (#59: antes 4, ahora 10).
     fireEvent.click(screen.getByRole('button', { name: 'Faster' }));
-    expect(screen.getByLabelText('Beats per minute').textContent).toBe('112');
+    expect(screen.getByLabelText('Beats per minute').textContent).toBe('118');
 
     const instrument = screen.getByRole('button', { name: /^Instrument:/ });
     const first = instrument.textContent;

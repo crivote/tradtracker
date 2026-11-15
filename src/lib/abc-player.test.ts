@@ -76,8 +76,10 @@ describe('the player constants', () => {
     expect(LOOP_GAP_MS).toBe(1000);
   });
 
-  it('moves the tempo in steps of four beats', () => {
-    expect(TEMPO_STEP).toBe(4);
+  it('moves the tempo in steps of ten beats', () => {
+    // #59: cuatro pulsos por toque obligaban a veinte pulsaciones para cruzar el
+    // rango útil; diez dejan el mando en la mitad y siguen siendo audibles.
+    expect(TEMPO_STEP).toBe(10);
     // El paso nunca puede sacar del margen a un tempo que ya estaba dentro.
     expect(clampTempo(DEFAULT_TEMPO + TEMPO_STEP)).toBeLessThanOrEqual(MAX_TEMPO);
     expect(clampTempo(MIN_TEMPO + TEMPO_STEP)).toBeGreaterThanOrEqual(MIN_TEMPO);

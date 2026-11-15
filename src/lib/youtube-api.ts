@@ -21,6 +21,8 @@ export interface YoutubePlayerLike {
   pauseVideo(): void;
   setPlaybackRate(rate: number): void;
   getAvailablePlaybackRates(): number[];
+  /** `allowSeekAhead` en `true` evita el búfer muerto tras el salto. */
+  seekTo(seconds: number, allowSeekAhead: boolean): void;
   destroy(): void;
 }
 

@@ -1,19 +1,25 @@
-import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
+import { For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { hasVideoControl, pickSegment } from '../lib/player-model';
 import { TEMPO_STEP } from '../lib/abc-player';
 import { fallbackEmbedUrl, mountVideoPlayer, type VideoPlayerHandle } from '../lib/video-player';
 import type { TuneSegment } from '../lib/tradtube';
 import {
   attachVideo,
+  canPickSetting,
+  canSeekVideo,
   canShiftVideoRate,
+  chooseSetting,
   close,
   closeVideo,
   currentInstrumentLabel,
   currentPlayable,
   currentSegments,
+  currentSetting,
+  currentSettingError,
   currentStatus,
   currentTempo,
   currentTitle,
+  currentVersions,
   currentVideoRateLabel,
   cycleInstrument,
   detachVideo,
@@ -30,9 +36,11 @@ import {
   play,
   playLabel,
   reserve,
+  seekToTuneStart,
   setSink,
   shiftTempo,
   shiftVideoRate,
+  switchToAbc,
   toggleLoop,
   togglePanel,
   toggleScore,
@@ -44,7 +52,7 @@ import {
 import './player-dock.css';
 
 /**
- * El vídeo del dock (#53): el reproductor de YouTube **y su barra de velocidad**.
+ * El vídeo del dock (#53): el reproductor de YouTube **y sus controles**.
  *
  * El `<div>` de `ref` es el nodo que YouTube sustituye por su iframe. El player
  * se destruye al desmontar —sale del DOM con su sonido— y el store deja de
@@ -52,8 +60,10 @@ import './player-dock.css';
  * el dock lo dice con el ▶ deshabilitado: se degrada a lo que había, pero no se
  * finge un control que no existe.
  *
- * La velocidad vive **aquí dentro** y no en la bandeja porque con el vídeo
- * abierto la bandeja no se pinta: un control escondido no es un control.
+ * Los controles viven **aquí dentro** y no en la bandeja porque con el vídeo
+ * abierto la bandeja no se pinta: un control escondido no es un control. Desde
+ * #59 el vídeo es lo que suena por defecto, así que este panel lleva también la
+ * vuelta al inicio del tune, el loop y la puerta de salida al sintetizador.
  */
 function VideoPanel(props: { segment: TuneSegment }) {
   let host!: HTMLDivElement;
@@ -78,11 +88,11 @@ function VideoPanel(props: { segment: TuneSegment }) {
       .then((mounted) => {
         // Se cerró el vídeo mientras la API cargaba: el player no debe quedar vivo.
         if (!alive) {
-          mounted.handle.destroy();
+          mounted.destroy();
           return;
         }
-        handle = mounted.handle;
-        attachVideo(mounted.handle, mounted.rates);
+        handle = mounted;
+        attachVideo(mounted);
       })
       .catch(() => {
         if (alive) videoUncontrolled();
@@ -121,30 +131,62 @@ function VideoPanel(props: { segment: TuneSegment }) {
         </button>
       </div>
 
-      {/* Sin player no hay velocidad que cambiar: la barra no se pinta. */}
+      {/* Sin player no hay velocidad ni salto que gobernar: la barra no se pinta. */}
       <Show when={!isVideoUncontrolled()}>
-        <div class="player-dock__speed" role="group" aria-label="Video speed">
-          <span class="player-dock__speed-caption">Speed</span>
+        <div class="player-dock__video-controls">
           <button
             type="button"
-            class="player-dock__step"
-            aria-label="Slower video"
-            disabled={!canShiftVideoRate(-1)}
-            onClick={() => shiftVideoRate(-1)}
+            class="player-dock__toggle"
+            aria-label="Back to tune start"
+            disabled={!canSeekVideo()}
+            onClick={seekToTuneStart}
           >
-            <span aria-hidden="true">−</span>
+            <span aria-hidden="true">⟲</span> Tune start
           </button>
-          <output class="player-dock__speed-value" aria-live="polite">
-            {currentVideoRateLabel()}
-          </output>
+
+          <div class="player-dock__speed" role="group" aria-label="Video speed">
+            <span class="player-dock__speed-caption">Speed</span>
+            <button
+              type="button"
+              class="player-dock__step"
+              aria-label="Slower video"
+              disabled={!canShiftVideoRate(-1)}
+              onClick={() => shiftVideoRate(-1)}
+            >
+              <span aria-hidden="true">−</span>
+            </button>
+            <output class="player-dock__speed-value" aria-live="polite">
+              {currentVideoRateLabel()}
+            </output>
+            <button
+              type="button"
+              class="player-dock__step"
+              aria-label="Faster video"
+              disabled={!canShiftVideoRate(1)}
+              onClick={() => shiftVideoRate(1)}
+            >
+              <span aria-hidden="true">+</span>
+            </button>
+          </div>
+
+          {/* El loop es el del tune, no el del `<iframe>`: lo cumple el store al
+              llegar al final del segmento. La misma señal gobierna el del ABC. */}
+          <label class="player-dock__check">
+            <input
+              type="checkbox"
+              checked={isLooping()}
+              onChange={() => toggleLoop()}
+            />
+            Loop
+          </label>
+
           <button
             type="button"
-            class="player-dock__step"
-            aria-label="Faster video"
-            disabled={!canShiftVideoRate(1)}
-            onClick={() => shiftVideoRate(1)}
+            class="player-dock__toggle"
+            aria-label="Play with ABC"
+            onClick={switchToAbc}
           >
-            <span aria-hidden="true">+</span>
+            ABC
           </button>
         </div>
       </Show>
@@ -347,11 +389,9 @@ export function PlayerDock() {
                 Score
               </button>
 
-              {/*
-                Sin segmento de TradTube, el control **no existe**: no se pinta
-                deshabilitado. Con segmento pero caído, sí se pinta y se
-                deshabilita, porque ahí sí hay algo que el usuario debe saber.
-              */}
+              {/* Sin segmento de TradTube, el control **no existe**: no se pinta
+                  deshabilitado. Con segmento pero caído, sí se pinta y se
+                  deshabilita, porque ahí sí hay algo que el usuario debe saber. */}
               <Show when={hasVideoControl(currentSegments())}>
                 <button
                   type="button"
@@ -365,6 +405,30 @@ export function PlayerDock() {
                 </button>
               </Show>
             </div>
+
+            {/*
+              El selector de versión solo existe cuando hay entre qué elegir: una
+              lista desplegable de un elemento es ruido. La preferida se guarda
+              en la fila (no en este navegador) y si el guardado falla se dice.
+            */}
+            <Show when={canPickSetting()}>
+              <div class="player-dock__versions">
+                <label class="player-dock__versions-field">
+                  <span>Version</span>
+                  <select
+                    value={currentSetting() ?? undefined}
+                    onChange={(event) => chooseSetting(event.currentTarget.value)}
+                  >
+                    <For each={currentVersions()}>
+                      {(version) => <option value={version.id}>{version.label}</option>}
+                    </For>
+                  </select>
+                </label>
+                <Show when={currentSettingError()}>
+                  {(text) => <span class="player-dock__versions-error">{text()}</span>}
+                </Show>
+              </div>
+            </Show>
           </Show>
 
           {/*

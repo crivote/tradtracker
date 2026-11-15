@@ -32,6 +32,9 @@ const REPERTOIRE_SELECT = [
   // ABC propio de la fila (#38): sin esta columna en el `select`, el
   // reproductor no puede respetar la cadena `custom_abc > pr_tunes.abc`.
   'custom_abc',
+  // Versión preferida del ABC (#59, migración 020): sin esta columna en el
+  // `select`, la elección de versión no sobrevive a la recarga.
+  'preferred_setting',
   'notes',
   'added_at',
   // Último día ensayado (`YYYY-MM-DD` local, migración 017). La antigüedad de la
@@ -460,6 +463,28 @@ export async function saveFavorite(repertoireId: string, favorite: boolean): Pro
 
   if (error) throw new Error(`Could not save the favourite: ${error.message}`);
   if (!data?.id) throw new Error('Could not save the favourite: that tune is not yours.');
+}
+
+/**
+ * La versión de ABC preferida de una tune (#59). Escribe el id de setting tal
+ * cual —`setting4521` o `n2`— y `null` para volver a «la primera».
+ *
+ * Verifica que la fila era del usuario igual que la favorita: un UPDATE que no
+ * toca ninguna fila responde sin error y la preferencia se perdería en silencio.
+ */
+export async function savePreferredSetting(
+  repertoireId: string,
+  setting: string | null
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .update({ preferred_setting: setting })
+    .eq('id', repertoireId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not save the ABC version: ${error.message}`);
+  if (!data?.id) throw new Error('Could not save the ABC version: that tune is not yours.');
 }
 
 /* ── import del tunebook de The Session (#32, corte 2) ─────────────── */
