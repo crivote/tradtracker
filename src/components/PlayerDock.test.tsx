@@ -637,6 +637,53 @@ describe('vídeo preferido (#64)', () => {
     await waitFor(() => expect(mockedSaveMedia).toHaveBeenLastCalledWith('row-a', null));
   });
 
+  it('reabrir sin recargar no vuelve al primer vídeo: la foto vieja de la fila no pisa el pin', async () => {
+    twoVideos();
+    render(() => <Harness />);
+    await openDock();
+    await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Video' }), {
+      target: { value: 'm-2' },
+    });
+    await waitFor(() => expect(mockedSaveMedia).toHaveBeenCalledWith('row-a', 'm-2'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close player' }));
+    await waitFor(() => expect(dock()).toBeNull());
+
+    // El componente vuelve a empujar la fila de antes de fijar (`Harness` no
+    // recarga su lista): el store tiene que recordar la elección.
+    await openDock();
+    await waitFor(() => {
+      const last = mockedMount.mock.calls.at(-1)?.[0] as { segment: TuneSegment } | undefined;
+      expect(last?.segment.mediaId).toBe('m-2');
+    });
+  });
+
+  it('soltar el pin sí devuelve el primero, también al reabrir', async () => {
+    twoVideos();
+    render(() => <Harness />);
+    await openDock();
+    await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Video' }), {
+      target: { value: 'm-2' },
+    });
+    await waitFor(() => expect(mockedSaveMedia).toHaveBeenCalledWith('row-a', 'm-2'));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpin this video' }));
+    await waitFor(() => expect(mockedSaveMedia).toHaveBeenLastCalledWith('row-a', null));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close player' }));
+    await waitFor(() => expect(dock()).toBeNull());
+
+    await openDock();
+    await waitFor(() => {
+      const last = mockedMount.mock.calls.at(-1)?.[0] as { segment: TuneSegment } | undefined;
+      expect(last?.segment.mediaId).toBe('m-1');
+    });
+  });
+
   it('un vídeo fijado que se cae no deja la tune muda y el panel lo dice', async () => {
     mockedSegments.mockResolvedValue(
       new Map([

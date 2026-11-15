@@ -105,8 +105,24 @@ const [videoFallback, setVideoFallback] = createSignal(false);
  */
 let lastVideoEvent: VideoEvent | null = null;
 
-/** El ABC ya resuelto de la versión en curso; la red solo se toca si hace falta. */
+/**
+ * El ABC ya resuelto de la versión en curso; la red solo se toca si hace falta.
+ */
 let abcText: string | null = null;
+/**
+ * Preferencias de vídeo que este store ya conoce, por fila del repertorio.
+ *
+ * Hace falta porque **la fila que empuja un componente es una foto** del momento
+ * en que se cargó su lista: tras fijar el pin, esa foto sigue diciendo «sin
+ * preferencia» hasta que la pantalla se recarga, y reabrir la tune devolvería el
+ * primer vídeo (medido en producción el 2026-11-15). El `Map` distingue «no sé»
+ * de «sin preferencia» —`has()`, no `??`—, porque soltar el pin es una elección
+ * tan válida como ponerlo y se representa con `null`.
+ *
+ * Es caché de sesión, no una segunda fuente de verdad: la que manda sigue siendo
+ * `pr_repertoire.preferred_media`.
+ */
+const mediaPrefs = new Map<string, string | null>();
 /** El blanco de `renderAbc`. Lo pone el dock. */
 let sink: HTMLElement | null = null;
 /** El nodo de la partitura, para volver a dibujarla al cambiar de versión. */
@@ -282,13 +298,25 @@ export function pause(): void {
 }
 
 /**
+ * Normaliza la fila que llega de un componente con lo que este store ya sabe de
+ * su preferencia de vídeo. La foto vieja no puede pisar una elección hecha
+ * después en la misma sesión.
+ */
+function withKnownMedia(row: RepertoireRow): RepertoireRow {
+  if (!mediaPrefs.has(row.id)) return row;
+  const known = mediaPrefs.get(row.id) ?? null;
+  return known === row.preferredMedia ? row : { ...row, preferredMedia: known };
+}
+
+/**
  * El disparador ubicuo: carta, fila de tabla, ficha y lista de ensayo.
  *
  * Sobre la misma tune que ya está en el dock, alterna (es el gesto natural:
  * pulsar ▶ otra vez para). Sobre otra, para lo que hubiera y empieza de cero,
  * en `idle` y con el tempo del ritmo de esa tune.
  */
-export function openFrom(row: RepertoireRow): void {
+export function openFrom(source: RepertoireRow): void {
+  const row = withKnownMedia(source);
   if (track()?.id === row.id && state() !== 'closed') {
     void play();
     return;
@@ -589,11 +617,13 @@ export function chooseMedia(mediaId: string | null): void {
   if (previous === mediaId) return;
 
   setTrack({ ...row, preferredMedia: mediaId });
+  mediaPrefs.set(row.id, mediaId);
   setMediaError(null);
 
   void savePreferredMedia(row.id, mediaId).catch(() => {
     if (track()?.id !== row.id) return;
     setTrack({ ...row, preferredMedia: previous });
+    mediaPrefs.set(row.id, previous);
     setMediaError('could not save');
   });
 }
@@ -791,6 +821,7 @@ export const currentInstrumentLabel = () => INSTRUMENT_LABELS[instrument()];
 /** Solo para pruebas: deja el módulo como recién cargado. */
 export function resetPlayerForTests(): void {
   close();
+  mediaPrefs.clear();
   setInstrument(DEFAULT_PREFS.instrument);
   setTempo(tempoFor(null));
 }
