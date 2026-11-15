@@ -12,7 +12,7 @@
  * Lo que **no** vive aquí: qué se pinta y en qué orden. Eso es del modelo puro
  * (`repertoire-model.ts`) y de cada pantalla.
  */
-import { createSignal, type Accessor } from 'solid-js';
+import { createSignal, onCleanup, onMount, type Accessor } from 'solid-js';
 import {
   displayTitle,
   fetchRepertoire,
@@ -22,6 +22,7 @@ import {
   type TuneStatus,
 } from './repertoire';
 import { openPractice } from './practice-mark';
+import { REPERTOIRE_CHANGED } from './add-tune';
 
 export interface RepertoireStore {
   rows: Accessor<RepertoireRow[]>;
@@ -84,8 +85,19 @@ export function createRepertoireStore(): RepertoireStore {
   };
 
   /**
+   * El alta vive en el menú principal (#65) y no conoce la pantalla que hay
+   * debajo: publica el cambio y cada pantalla montada recarga. Sin esto, añadir
+   * una tune desde `/history` o `/search` dejaría el repertorio viejo en la
+   * pestaña del navegador hasta la siguiente recarga.
+   */
+  onMount(() => {
+    const onChange = () => void reload();
+    window.addEventListener(REPERTOIRE_CHANGED, onChange);
+    onCleanup(() => window.removeEventListener(REPERTOIRE_CHANGED, onChange));
+  });
+
+  /**
    * «Practise» abre el popup de ensayo, el mismo en toda la aplicación.
-   *
    * Antes escribía en silencio y la valoración solo se podía poner en la ficha:
    * apuntar desde la carta o el taller era un clic a ciegas. El gesto no cambia
    * de nombre porque no cambia de intención; lo que cambia es que ahora pregunta

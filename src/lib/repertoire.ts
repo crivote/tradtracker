@@ -5,7 +5,7 @@ import type {
   RepertoireStats,
   TuneStatus,
 } from './repertoire-model';
-import { mapRepertoireRow, mapStatsRow } from './repertoire-model';
+import { mapRepertoireRow, mapStatsRow, slotsFor, type LearningSlots } from './repertoire-model';
 import { lookupCatalogueMeta } from './catalogue-db';
 import {
   repertoireRowsFor,
@@ -109,6 +109,57 @@ export async function fetchRepertoire(): Promise<RepertoireRow[]> {
   if (error) throw new Error(`Could not load your repertoire: ${error.message}`);
   const rows = (data ?? []) as unknown as Array<Record<string, any>>;
   return rows.map((row) => mapRepertoireRow(row, stats.get(row.id) ?? null));
+}
+
+/**
+ * Lo que el cajón del alta necesita saber **antes** de abrirse (#65), en una
+ * sola consulta ligera: qué tunes ya están en el repertorio —para no ofrecer un
+ * alta que ya existe— y cuánto ocupa el banco de trabajo —para avisar del tope—.
+ *
+ * No se usa `fetchRepertoire`: el cajón no pinta filas ni necesita agregados, y
+ * traer el repertorio entero con sus settings para dos recuentos es pagar 20
+ * veces lo que cuesta. Tampoco se pagina: hoy son 479 filas y el tope de
+ * PostgREST es 1 000; si algún día se alcanza, el aviso lo dice en vez de
+ * ofrecer duplicados en silencio.
+ */
+export interface AddTuneContext {
+  /** `origin_ref` de los tunes que ya están en el repertorio. */
+  refs: Set<string>;
+  /** Ocupación del banco de trabajo contra el tope que tenga el usuario. */
+  slots: LearningSlots;
+}
+
+export async function fetchAddTuneContext(learningLimit: number): Promise<AddTuneContext> {
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .select('status,shelved,pr_tunes!inner(origin,origin_ref)');
+
+  if (error) throw new Error(`Could not check your repertoire: ${error.message}`);
+
+  const rows = (data ?? []) as unknown as Array<{
+    status?: unknown;
+    shelved?: unknown;
+    pr_tunes?: { origin?: unknown; origin_ref?: unknown } | null;
+  }>;
+
+  if (rows.length >= 1000) {
+    console.warn(
+      `[add-tune] ${rows.length} rows is the PostgREST cap — the duplicate check ` +
+        'is reading a truncated repertoire.',
+    );
+  }
+
+  const refs = new Set<string>();
+  let learning = 0;
+  for (const row of rows) {
+    const tune = row.pr_tunes ?? null;
+    if (tune?.origin === 'thesession' && tune.origin_ref != null) {
+      refs.add(String(tune.origin_ref));
+    }
+    if (row.shelved !== true && row.status === 'learning') learning += 1;
+  }
+
+  return { refs, slots: slotsFor(learning, learningLimit) };
 }
 
 /**

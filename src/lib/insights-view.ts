@@ -12,10 +12,11 @@
 import { daysSinceDay } from './format';
 import type { InsightEvent, InsightMark } from './insights';
 import {
-  practiceStreak,
   rangeStartKey,
   seriesFromCounts,
+  streakSummary,
   type HistoryPoint,
+  type StreakSummary,
 } from './practice-history';
 
 /**
@@ -72,18 +73,19 @@ const STREAK_WINDOW_MAX = 400;
  * Días consecutivos con algún ensayo, contados desde hoy (o desde ayer, si hoy
  * todavía no hay nada) hacia atrás.
  *
- * La cuenta la hace `practiceStreak` sobre una serie **con sus ceros**, así que
+ * La cuenta la hace `streakSummary` sobre una serie **con sus ceros**, así que
  * el hueco corta la racha en vez de saltarse un día. La ventana empieza en el
  * día más antiguo del que hay marca: así una racha larga no se corta por el
- * rango que el usuario tenga elegido en otra pantalla.
+ * rango que el usuario tenga elegido en otra pantalla — y la mejor racha que se
+ * enseña es la de toda la historia, no la de la última semana.
  */
-export function streakFromMarks(marks: readonly InsightMark[], nowMs: number): number {
+export function streakFromMarks(marks: readonly InsightMark[], nowMs: number): StreakSummary {
   const counts = tunesPerDay(marks);
   const days = [...counts.keys()].sort();
   const earliest = days[0];
   const since = earliest === undefined ? 0 : (daysSinceDay(earliest, nowMs) ?? 0);
   const span = Math.min(STREAK_WINDOW_MAX, Math.max(7, since + 1));
-  return practiceStreak(seriesFromCounts(counts, { nowMs, range: span }));
+  return streakSummary(seriesFromCounts(counts, { nowMs, range: span }));
 }
 
 /**

@@ -7,10 +7,17 @@
  *   · **Columnas, no pantallas.** Se piden exactamente las columnas que el
  *     modelo consume y en camelCase salen del adaptador (`fromValue`), como en
  *     el resto de la capa de datos: la vista nunca nombra una columna.
- *   · **Tope a la vista.** 5 000 filas es el techo de estas dos tablas hoy
- *     (134 marcas, 426 eventos el 2026-11-13). Si algún día se alcanza, la carga
- *     se corta y **se avisa**: devolver lo cargado sin decirlo convertiría una
- *     serie recortada en una serie completa, que es peor que no pintarla.
+ *   · **Tope a la vista, y es el del servidor.** `max_rows` de PostgREST en este
+ *     proyecto es **1 000** (medido el 2026-11-15 en `/v1/projects/<ref>/postgrest`
+ *     y confirmado por la respuesta: pedir 5 000 devolvía 1 000). El cliente
+ *     pide ese mismo número, así que puede avisar cuando la carga se corta;
+ *     antes pedía 5 000, el servidor devolvía 1 000 y el aviso —que comparaba
+ *     contra 5 000— no saltaba nunca.
+ *   · **Se piden las filas más recientes, no las más antiguas.** Con el tope
+ *     delante, el orden decide qué se pierde: ascendente dejaba fuera justo el
+ *     presente (las 1 000 más viejas llegaban hasta 2024-09-16, y `alive · 14
+ *     days` salía a 0 con 153 marcas recientes en la base). Descendente, lo que
+ *     se corta es lo más viejo, que es lo que menos pesa en el panel.
  *
  * No se pagina en silencio. Un panel de estado que suma de menos y no lo dice
  * miente con más autoridad que uno vacío.
@@ -18,8 +25,11 @@
 import type { InsightEvent, InsightMark } from './insights';
 import { supabase } from './supabase';
 
-/** Tope de filas de cada consulta. Al alcanzarlo se devuelve lo cargado. */
-export const INSIGHT_ROW_LIMIT = 5000;
+/**
+ * Tope de filas de cada consulta: el `max_rows` real de PostgREST en este
+ * proyecto. Al alcanzarlo se devuelve lo cargado **y se avisa**.
+ */
+export const INSIGHT_ROW_LIMIT = 1000;
 
 /** Columnas de la marca: el día, el instante real y la tune. Nada más. */
 const MARK_COLUMNS = 'day,practiced_at,repertoire_id';
@@ -60,9 +70,10 @@ function warnTruncated(table: string, rows: number): void {
  *
  * `practiced_at` es el instante real del ensayo (lo escribe el cliente al
  * apuntar, también en una marca retroactiva), y es lo único con lo que se pueden
- * medir huecos de horas entre dos pasadas. Se ordena por él para que las
- * revisitas no dependan del orden en que PostgREST devuelva las filas; el modelo
- * las vuelve a ordenar por tune de todos modos.
+ * medir huecos de horas entre dos pasadas. Se ordena **de la más reciente a la
+ * más antigua** por él: con el tope de 1 000 delante, es lo que garantiza que lo
+ * que llega es el presente —el modelo reordena después por tune donde lo
+ * necesita (revisitas)—.
  *
  * Una fila sin día, sin tune o sin instante no es una marca: se descarta en vez
  * de rellenar el hueco con un valor inventado.
@@ -71,7 +82,7 @@ export async function fetchInsightMarks(): Promise<InsightMark[]> {
   const { data, error } = await supabase
     .from('pr_practice')
     .select(MARK_COLUMNS)
-    .order('practiced_at', { ascending: true })
+    .order('practiced_at', { ascending: false })
     .limit(INSIGHT_ROW_LIMIT);
 
   if (error) throw new Error(`Could not load the practice marks: ${error.message}`);

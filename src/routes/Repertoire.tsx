@@ -9,22 +9,27 @@ import {
   capForColumns,
   capRows,
   groupIntoBands,
-  learningSlots,
   shelvedCount,
   statusCounts,
   type BandGroup,
   type RepertoireRow,
 } from '../lib/repertoire';
-import { readPrefs } from '../lib/practice-storage';
 import { createRepertoireStore } from '../lib/repertoire-store';
 import { preloadCatalogue } from '../lib/catalogue-db';
-import { overdueDelta, overdueHistogram, type InsightEvent, type InsightMark } from '../lib/insights';
+import {
+  overdueDelta,
+  overdueHistogram,
+  overdueTrend,
+  type InsightEvent,
+  type InsightMark,
+} from '../lib/insights';
 import { fetchInsightEvents, fetchInsightMarks } from '../lib/insights-data';
 import { aliveInRange, streakFromMarks } from '../lib/insights-view';
 import TuneCard from '../components/TuneCard';
-import AddTuneAside from '../components/AddTuneAside';
 import StatStrip from '../components/insights/StatStrip';
 import OverdueHistogram from '../components/insights/OverdueHistogram';
+import OverdueTrendChart from '../components/insights/OverdueTrendChart';
+import LevelShare, { type LevelShareEntry } from '../components/insights/LevelShare';
 import './repertoire.css';
 
 /**
@@ -150,31 +155,40 @@ function BandView(props: {
 
 export default function Repertoire() {
   const store = createRepertoireStore();
-  const [addOpen, setAddOpen] = createSignal(false);
 
   const counts = createMemo(() => statusCounts(store.rows()));
-  const backlogTotal = createMemo(() => backlogCount(store.rows()));
   const shelvedTotal = createMemo(() => shelvedCount(store.rows()));
-  const slots = createMemo(() =>
-    learningSlots(store.rows(), readPrefs(window.localStorage).learningSlots)
-  );
+
+  /**
+   * El reparto por nivel del donut (#65): los mismos recuentos que la línea de
+   * texto que sustituye, y cada fila es la puerta que esa línea tenía. El
+   * backlog y las aparcadas no se pintan como bandas en esta pantalla, pero sí
+   * cuentan en el donut: es el reparto **del repertorio entero**, y esconder 122
+   * tunes en el backlog convertiría el gráfico en un tercio de la verdad.
+   */
+  const share = createMemo<LevelShareEntry[]>(() => {
+    const c = counts();
+    return [
+      { key: 'to_learn', label: 'To learn', count: c.to_learn, href: listingHref(BACKLOG_SCOPE) },
+      { key: 'learning', label: 'Learning', count: c.learning, href: '/learning' },
+      { key: 'shaky', label: 'Shaky', count: c.shaky, href: listingHref('shaky') },
+      {
+        key: 'playing_along',
+        label: 'Playing along',
+        count: c.playing_along,
+        href: listingHref('playing_along'),
+      },
+      { key: 'solo_ready', label: 'Solo-ready', count: c.solo_ready, href: listingHref('solo_ready') },
+      { key: 'mastered', label: 'Mastered', count: c.mastered, href: listingHref('mastered') },
+      { key: 'shelved', label: 'Shelved', count: shelvedTotal(), href: listingHref(SHELVED_SCOPE) },
+    ];
+  });
 
   /**
    * Las bandas de la **biblioteca**: `learning` no está —tiene pantalla propia— y
    * el backlog tampoco, porque no es un peldaño. Ver `LIBRARY_BANDS`.
    */
   const groups = createMemo(() => groupIntoBands(store.rows(), store.now(), LIBRARY_BANDS));
-
-  /** Los tunes que ya están en el repertorio, por `origin_ref` (ids de TheSession). */
-  const ownedRefs = createMemo(
-    () =>
-      new Set(
-        store
-          .rows()
-          .filter((row) => row.tune.origin === 'thesession' && row.tune.origin_ref)
-          .map((row) => row.tune.origin_ref!)
-      )
-  );
 
   /**
    * El panel de estado (#22): sus dos consultas —marcas y eventos de escalera—
@@ -214,6 +228,15 @@ export default function Repertoire() {
   const overdue = createMemo(() =>
     overdueDelta(store.rows(), insightMarks(), insightEvents(), insightsNow())
   );
+  /**
+   * La tendencia (#65): ventana de 30 días, recortada por la propia función al
+   * primer día con historia de escalera. Se piden 30 y no 90 porque PostgREST
+   * corta las marcas en 1 000 y la serie empieza en cualquier caso a finales de
+   * octubre: pedir más días no añadiría puntos, añadiría la ilusión de ellos.
+   */
+  const trend = createMemo(() =>
+    overdueTrend(store.rows(), insightMarks(), insightEvents(), insightsNow(), 30)
+  );
   const alive = createMemo(() => aliveInRange(insightMarks(), insightsNow(), 14));
   const streak = createMemo(() => streakFromMarks(insightMarks(), insightsNow()));
 
@@ -227,55 +250,18 @@ export default function Repertoire() {
 
   return (
     <div class="repertoire-home">
+      {/* La cabecera ya no lleva herramientas (#65): la búsqueda está en el menú
+          principal y el alta también, así que repetirlas aquí era duplicarlas —
+          dos puertas al mismo sitio—. Lo que había en la línea de recuentos vive
+          ahora en el donut, donde el peso de cada nivel se ve. */}
       <header class="page-head">
-        <div>
-          <h1>Repertoire</h1>
-          <p class="sub">
-            <Show when={!store.loading()} fallback="Loading…">
-              <b>{tuneCountLabel(store.rows().length)}</b>
-              {' · '}
-              {/* Cada cifra que no es una banda de esta pantalla es su puerta: el
-                  backlog y las aparcadas no se pintan aquí, y `learning` tiene
-                  pantalla propia. Si no fueran puertas, los números sobrarían. */}
-              <A class="shelved-link" href={listingHref(BACKLOG_SCOPE)}>
-                {backlogTotal()} to learn
-              </A>
-              {' · '}
-              <A class="shelved-link" href="/learning">
-                {counts().learning} learning
-              </A>
-              {' · '}
-              {counts().shaky} shaky · {counts().playing_along} playing along ·{' '}
-              {counts().solo_ready} solo-ready · {counts().mastered} mastered
-              <Show when={shelvedTotal() > 0}>
-                {' · '}
-                <A class="shelved-link" href={listingHref(SHELVED_SCOPE)}>
-                  {shelvedTotal()} shelved
-                </A>
-              </Show>
-            </Show>
-          </p>
-        </div>
-        <div class="head-tools">
-          {/* La búsqueda vive en /search: cruza todos los peldaños y filtra por
-              ritmo. La home no busca — dos buscadores con reglas distintas en la
-              misma app es justo lo que hay que evitar. */}
-          <A class="search search--door" href="/search">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" />
-              <path d="M20 20l-3.5-3.5" />
-            </svg>
-            Search tunes
-          </A>
-          <button type="button" class="add" onClick={() => setAddOpen(true)}>
-            Add a tune
-          </button>
-        </div>
+        <h1>Repertoire</h1>
       </header>
 
-      {/* Panel de estado (#22): las cuatro cifras y el histograma, en papel y
-          justo bajo la cabecera. Las bandas de debajo no se mueven ni se
-          reordenan: el panel es un resumen, no otra pantalla. */}
+      {/* Panel de estado (#22/#65): el reparto por nivel, las cuatro cifras y la
+          pareja histograma + tendencia, en papel y justo bajo la cabecera. Las
+          bandas de debajo no se mueven ni se reordenan: el panel es un resumen,
+          no otra pantalla. */}
       <section class="insights" aria-label="Repertoire status">
         <Show when={insightsError()}>
           <p class="notice notice-error" role="alert">
@@ -288,8 +274,12 @@ export default function Repertoire() {
             when={!insightsLoading() && !store.loading()}
             fallback={<p class="notice">Loading the figures…</p>}
           >
+            <LevelShare entries={share()} total={store.rows().length} />
             <StatStrip histogram={histogram()} alive={alive()} streak={streak()} />
-            <OverdueHistogram histogram={histogram()} delta={overdue()} nowMs={insightsNow()} />
+            <div class="insights-charts">
+              <OverdueHistogram histogram={histogram()} delta={overdue()} nowMs={insightsNow()} />
+              <OverdueTrendChart trend={trend()} />
+            </div>
           </Show>
         </Show>
       </section>
@@ -327,15 +317,6 @@ export default function Repertoire() {
             {(group) => <BandView group={group} now={store.now()} onPractise={store.practise} />}
           </For>
         </Show>
-      </Show>
-
-      <Show when={addOpen()}>
-        <AddTuneAside
-          existingRefs={ownedRefs()}
-          slots={slots()}
-          onAdded={store.reload}
-          onClose={() => setAddOpen(false)}
-        />
       </Show>
     </div>
   );

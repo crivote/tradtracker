@@ -227,6 +227,49 @@ export function practiceStreak(points: readonly HistoryPoint[]): number {
   return streak;
 }
 
+/** Las tres rachas que pide una cifra motivadora (#65). */
+export interface StreakSummary {
+  /** Días seguidos hasta hoy (o hasta ayer, si hoy aún no hay ensayo). */
+  current: number;
+  /** La racha más larga de la ventana. */
+  best: number;
+  /**
+   * La racha anterior a la actual: la que se rompió. Sin racha en curso, es la
+   * última que hubo —lo que se quiere ver es contra qué se compite—.
+   */
+  previous: number;
+}
+
+/**
+ * Las tres rachas de una serie con sus ceros.
+ *
+ * `current` es `practiceStreak` tal cual —la misma cuenta que el historial, no
+ * una segunda definición—; `best` y `previous` salen de las tiradas de días
+ * consecutivos con ensayo. Es la cifra que motiva: una racha de 3 sin saber que
+ * la mejor fue 27 informa poco.
+ */
+export function streakSummary(points: readonly HistoryPoint[]): StreakSummary {
+  const runs: number[] = [];
+  let run = 0;
+  for (const point of points) {
+    if (point.practices > 0) {
+      run += 1;
+      continue;
+    }
+    if (run > 0) runs.push(run);
+    run = 0;
+  }
+  if (run > 0) runs.push(run);
+
+  const current = practiceStreak(points);
+  const best = runs.reduce((max, length) => Math.max(max, length), 0);
+  // Con racha en curso, la actual es la última tirada; sin ella, la última
+  // tirada es la que se rompió.
+  const previous = current > 0 ? (runs.length > 1 ? runs[runs.length - 2] : 0) : (runs.at(-1) ?? 0);
+
+  return { current, best, previous };
+}
+
 /**
  * Serie diaria del rango a partir de un **recuento por día**: siempre hay un
  * punto por día, con o sin ensayo, del más antiguo a hoy.

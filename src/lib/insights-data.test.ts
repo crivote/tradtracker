@@ -67,15 +67,18 @@ beforeEach(() => {
 });
 
 describe('fetchInsightMarks', () => {
-  it('pide solo las tres columnas que el modelo consume, por instante y con tope', async () => {
+  it('pide solo las tres columnas que el modelo consume, de la más reciente a la más antigua y con el tope del servidor', async () => {
     h.result = { data: [], error: null };
 
     await fetchInsightMarks();
 
     expect(h.fromCalls).toEqual(['pr_practice']);
     expect(h.selects).toEqual(['day,practiced_at,repertoire_id']);
-    expect(h.orders).toEqual([{ col: 'practiced_at', ascending: true }]);
+    // Con el tope delante, ascendente se quedaba con el pasado remoto y dejaba
+    // el presente fuera: `alive · 14 days` marcaba 0 con repertorio activo.
+    expect(h.orders).toEqual([{ col: 'practiced_at', ascending: false }]);
     expect(h.limits).toEqual([INSIGHT_ROW_LIMIT]);
+    expect(INSIGHT_ROW_LIMIT).toBe(1000);
   });
 
   it('mapea la fila a la marca, sin inventar el día ni el instante', async () => {

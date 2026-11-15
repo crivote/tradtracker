@@ -16,6 +16,7 @@ import {
   historyStats,
   practiceStreak,
   rangeStartKey,
+  streakSummary,
   type PracticeMark,
 } from './practice-history';
 import { todayKeyFor } from './practice-storage';
@@ -151,6 +152,39 @@ describe('practiceStreak', () => {
 
   it('un hueco antes de ayer corta la cuenta', () => {
     expect(practiceStreak(points(5, 0, 2, 1))).toBe(2);
+  });
+});
+
+describe('streakSummary (#65)', () => {
+  const points = (...counts: number[]) =>
+    counts.map((practices, index) => ({
+      key: `k${index}`,
+      label: '',
+      practices,
+      isToday: index === counts.length - 1,
+    }));
+
+  it('trae la racha en curso, la mejor y la anterior a la actual', () => {
+    // Tiradas: 5, 2 y 3 (la actual): la mejor es la primera y la anterior, la
+    // de en medio — un caso donde «mejor» y «anterior» no coinciden.
+    expect(streakSummary(points(1, 1, 1, 1, 1, 0, 1, 1, 0, 2, 2, 2))).toEqual({
+      current: 3,
+      best: 5,
+      previous: 2,
+    });
+  });
+
+  it('sin racha en curso, la «anterior» es la última que hubo', () => {
+    expect(streakSummary(points(1, 1, 1, 0, 0, 0))).toEqual({
+      current: 0,
+      best: 3,
+      previous: 3,
+    });
+  });
+
+  it('una sola tirada no tiene anterior, y sin días no hay nada', () => {
+    expect(streakSummary(points(0, 2, 2))).toEqual({ current: 2, best: 2, previous: 0 });
+    expect(streakSummary([])).toEqual({ current: 0, best: 0, previous: 0 });
   });
 });
 

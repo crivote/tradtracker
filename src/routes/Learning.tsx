@@ -15,7 +15,6 @@ import { LEARNING_SLOTS_MAX, LEARNING_SLOTS_MIN, readPrefs, writePrefs } from '.
 import { createRepertoireStore } from '../lib/repertoire-store';
 import PlayTrigger from '../components/PlayTrigger';
 import { useTuneHref } from '../lib/tune-back';
-import AddTuneAside from '../components/AddTuneAside';
 import './repertoire.css';
 import './learning.css';
 
@@ -44,7 +43,6 @@ export default function Learning() {
   const store = createRepertoireStore();
   // La ficha vuelve al banco de trabajo, no a la home.
   const tuneHref = useTuneHref();
-  const [addOpen, setAddOpen] = createSignal(false);
 
   /** El tope vive en las preferencias del navegador, junto al objetivo diario. */
   const [limit, setLimit] = createSignal(readPrefs(window.localStorage).learningSlots);
@@ -52,16 +50,6 @@ export default function Learning() {
   const bench = createMemo(() => workbenchRows(store.rows(), store.now()));
   const backlogTotal = createMemo(() => backlogCount(store.rows()));
   const band = bandFor('learning');
-
-  const ownedRefs = createMemo(
-    () =>
-      new Set(
-        store
-          .rows()
-          .filter((row) => row.tune.origin === 'thesession' && row.tune.origin_ref)
-          .map((row) => row.tune.origin_ref!)
-      )
-  );
 
   /**
    * Bajar el tope por debajo de lo que ya hay **no mueve filas**: la cabecera
@@ -117,9 +105,6 @@ export default function Learning() {
               +
             </button>
           </div>
-          <button type="button" class="add" onClick={() => setAddOpen(true)}>
-            Add a tune
-          </button>
         </div>
       </header>
 
@@ -183,15 +168,6 @@ export default function Learning() {
             </For>
           </ul>
         </Show>
-      </Show>
-
-      <Show when={addOpen()}>
-        <AddTuneAside
-          existingRefs={ownedRefs()}
-          slots={slots()}
-          onAdded={store.reload}
-          onClose={() => setAddOpen(false)}
-        />
       </Show>
     </div>
   );

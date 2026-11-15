@@ -26,6 +26,10 @@ export const INSIGHT_PALETTE = {
   noRecord: '#8c8577',
   /** `sinEstado` en la composición: semanas anteriores al primer evento. */
   unknown: '#cfc6b4',
+  /** El backlog en el donut de niveles: por debajo de la escalera, sin tinta. */
+  backlog: '#cfc6b4',
+  /** Las aparcadas en el donut: conservan peldaño pero están fuera. */
+  shelved: '#a49a89',
   /** Rampa de los cinco peldaños, de abajo arriba de la escalera. */
   bands: {
     learning: '#b98a6a',

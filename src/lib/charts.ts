@@ -16,10 +16,12 @@
  * peldaños—.
  */
 import {
+  ArcElement,
   BarController,
   BarElement,
   CategoryScale,
   Chart,
+  DoughnutController,
   Legend,
   LineController,
   LineElement,
@@ -30,11 +32,11 @@ import {
 } from 'chart.js';
 
 /**
- * Lo que aceptan las cuatro gráficas: barras y, en el ritmo, una línea encima
- * para el plan del día. Se declara aquí para que la instancia y los componentes
- * hablen del mismo tipo.
+ * Lo que aceptan las gráficas del panel: barras y, encima, una línea para la
+ * tendencia y el plan del día; y el donut del reparto por nivel (#65). Se
+ * declara aquí para que la instancia y los componentes hablen del mismo tipo.
  */
-export type InsightChartConfig = ChartConfiguration<'bar' | 'line'>;
+export type InsightChartConfig = ChartConfiguration<'bar' | 'line' | 'doughnut'>;
 
 /** Registro perezoso: la primera gráfica paga el registro, no el import. */
 let registered = false;
@@ -47,6 +49,8 @@ function registerComponents(): void {
     LineController,
     LineElement,
     PointElement,
+    DoughnutController,
+    ArcElement,
     CategoryScale,
     LinearScale,
     Tooltip,

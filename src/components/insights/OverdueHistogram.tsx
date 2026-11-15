@@ -4,23 +4,28 @@ import { previousSundayLabel } from '../../lib/insights-view';
 import type { InsightChartConfig } from '../../lib/charts';
 import ChartCanvas from './ChartCanvas';
 import { INSIGHT_PALETTE } from './palette';
-import { pctText, sharePct, signedPpText } from './format';
+import { pctText, signedPpText } from './format';
 
 /**
  * El histograma del vencimiento (#22): cuántos días lleva cada tune en rotación
  * sin tocarse, y qué se ha pasado ya del intervalo de su peldaño.
  *
- * La barra de **`sin registro` va primera y aparte**, con un hueco de un valor
- * `null` entre ella y los tramos: una tune que nunca se ha tocado no está «de
- * 60+ días», está sin dato, y meterla en el último tramo sería mentir con la
- * forma de la gráfica. Su color también es otro —gris de dato ausente, no tinta
- * de barra—. Los seis tramos se pintan con el universo entero como denominador,
- * así que tramos + `sin registro` suman el 100 % de lo que hay en rotación.
+ * Dos cambios del corte #65, con su porqué:
  *
- * Debajo va el delta contra el domingo de la semana pasada. Si el modelo dice
- * que no hay historial suficiente, no se enseña una cifra: se dice **«No history
- * yet»**, porque un `+0.0 pp` calculado sobre cero observaciones se lee como
- * «todo igual» y no es eso.
+ *   · **`sin registro` sale de la gráfica.** Era la misma cifra de la tarjeta,
+ *     repetida en una barra gris que además desvirtuaba el eje (71 tunes
+ *     ausentes aplastaban los tramos reales). Su sitio es una cifra con su
+ *     denominador; aquí solo va lo que tiene día, y el porcentaje de cada tramo
+ *     se mide sobre esas tunes: los siete tramos suman el 100 % de lo pintado.
+ *     La cabecera dice cuántas quedan fuera, para que el 100 % no engañe.
+ *   · **Dos tramos más**: `61–90` y `90+`. El tramo viejo había acumulado 143
+ *     tunes y una sola barra no distingue «un trimestre sin tocar» de «dos años».
+ *
+ * Debajo va el delta contra el domingo de la semana pasada, en **recuentos sobre
+ * el mismo censo** —las mismas tunes, entonces y hoy—: el pie decía 79.1 % donde
+ * la tarjeta decía 68.9 %, y eran dos denominadores distintos con la misma
+ * palabra. Un recuento no admite doble lectura; el porcentaje de referencia va
+ * en la tarjeta, con su denominador escrito.
  */
 export default function OverdueHistogram(props: {
   histogram: Histogram;
@@ -28,36 +33,18 @@ export default function OverdueHistogram(props: {
   /** Instante de la vista: fecha el domingo con el que se compara. */
   nowMs: number;
 }) {
-  /** Un hueco visual entre `sin registro` y el primer tramo: `null`, no `0`. */
-  const GAP = '';
-
-  const labels = createMemo(() => [
-    'No record',
-    GAP,
-    ...props.histogram.buckets.map((bucket) => bucket.label),
-  ]);
-
-  const data = createMemo<(number | null)[]>(() => [
-    props.histogram.sinRegistro,
-    null,
-    ...props.histogram.buckets.map((bucket) => bucket.count),
-  ]);
-
-  const colors = createMemo(() => [
-    INSIGHT_PALETTE.noRecord,
-    'transparent',
-    ...props.histogram.buckets.map(() => INSIGHT_PALETTE.accent),
-  ]);
+  /** Las que se pueden juzgar: el universo menos las que no tienen registro. */
+  const judged = createMemo(() => Math.max(0, props.histogram.universe - props.histogram.sinRegistro));
 
   const config = createMemo<InsightChartConfig>(() => ({
     type: 'bar',
     data: {
-      labels: labels(),
+      labels: props.histogram.buckets.map((bucket) => bucket.label),
       datasets: [
         {
           label: 'Tunes',
-          data: data(),
-          backgroundColor: colors(),
+          data: props.histogram.buckets.map((bucket) => bucket.count),
+          backgroundColor: props.histogram.buckets.map(() => INSIGHT_PALETTE.accent),
           borderRadius: 2,
           maxBarThickness: 46,
         },
@@ -85,18 +72,9 @@ export default function OverdueHistogram(props: {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            // «N tunes · X %»: el recuento y su peso sobre el universo. El
-            // porcentaje sale del modelo para los tramos y se compone aquí para
-            // `sin registro`, que no lleva uno propio.
+            // «N tunes · X %»: el recuento y su peso sobre las que tienen día.
             label: (item) => {
-              const index = item.dataIndex;
-              if (index === 0) {
-                const count = props.histogram.sinRegistro;
-                return `${count} ${count === 1 ? 'tune' : 'tunes'} · ${pctText(
-                  sharePct(count, props.histogram.universe),
-                )}`;
-              }
-              const bucket = props.histogram.buckets[index - 2];
+              const bucket = props.histogram.buckets[item.dataIndex];
               if (!bucket) return '';
               return `${bucket.count} ${bucket.count === 1 ? 'tune' : 'tunes'} · ${pctText(
                 bucket.pct,
@@ -109,21 +87,27 @@ export default function OverdueHistogram(props: {
   }));
 
   const summary = () =>
-    `Days since the last practice: ${props.histogram.universe} tunes in rotation, ` +
-    `${props.histogram.sinRegistro} with no record, ${props.histogram.overdue} overdue.`;
+    `Days since the last practice: ${judged()} tunes with a record, ` +
+    `${props.histogram.overdue} overdue, ${props.histogram.sinRegistro} without a record.`;
+
+  const deltaText = () =>
+    `${props.delta.previousOverdue} of ${props.delta.census} overdue on ` +
+    `${previousSundayLabel(props.nowMs)} → ${props.delta.currentOverdue} today`;
 
   return (
     <figure class="insight-card insight-card--overdue">
       <figcaption class="insight-head">
         <h2>Days since the last practice</h2>
-        <span class="insight-note">{props.histogram.universe} in rotation</span>
+        <span class="insight-note">
+          {judged()} with a record · {props.histogram.sinRegistro} without
+        </span>
       </figcaption>
 
       <Show
-        when={props.histogram.universe > 0}
+        when={judged() > 0}
         fallback={
           <p class="insights-empty">
-            No tune is in rotation yet, so there is nothing to weigh. Start one from the backlog
+            No tune in rotation has a practice recorded yet, so there is nothing to weigh. Mark one
             and it will show up here.
           </p>
         }
@@ -137,9 +121,11 @@ export default function OverdueHistogram(props: {
           fallback={<p class="insight-delta insight-delta--none">No history yet</p>}
         >
           <p class="insight-delta">
-            <b>{pctText(props.delta.currentPct)}</b> overdue
+            {deltaText()}
+            {' '}
             <span class="sub-sep">·</span>
-            {signedPpText(props.delta.deltaPp)} vs {previousSundayLabel(props.nowMs)}
+            {' '}
+            <b>{signedPpText(props.delta.deltaPp)}</b>
           </p>
         </Show>
       </Show>

@@ -1235,6 +1235,15 @@ export interface LearningSlots {
  */
 export function learningSlots(rows: readonly RepertoireRow[], limit: number): LearningSlots {
   const used = rows.filter((row) => !row.shelved && row.status === 'learning').length;
+  return slotsFor(used, limit);
+}
+
+/**
+ * El mismo recuento a partir de un número ya contado (#65): el cajón del alta
+ * pide la ocupación en una consulta ligera —sin traer las filas del
+ * repertorio— y no hay razón para que normalice el tope por su cuenta.
+ */
+export function slotsFor(used: number, limit: number): LearningSlots {
   const bounded = Number.isFinite(limit) && limit >= 1 ? Math.floor(limit) : 1;
   return {
     used,

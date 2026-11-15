@@ -5,6 +5,8 @@ import { supabaseConfigError } from '../lib/supabase';
 import { PlayerDock } from './PlayerDock';
 import { PracticeMarkHost } from './PracticeMark';
 import { BrandMark } from './BrandMark';
+import AddTuneHost from './AddTuneHost';
+import { openAddTune } from '../lib/add-tune';
 
 /**
  * Armazón de la app y guard de rutas (issue #6): sin sesión no se ve dato alguno,
@@ -85,6 +87,15 @@ export const Layout: ParentComponent = (props) => {
               <A href="/about" class="text-gray-300 hover:text-amber-300">
                 About
               </A>
+              {/* El alta, siempre a mano (#65): el cajón es uno solo y vive en
+                  el armazón, así que su disparador no puede ser de la ruta. */}
+              <button
+                type="button"
+                class="rounded-full bg-[#8a3524] px-3 py-1.5 font-medium text-white hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
+                onClick={openAddTune}
+              >
+                + Add a tune
+              </button>
               <span class="text-gray-500 hidden sm:inline" title={session.session()!.user.email ?? ''}>
                 {session.session()!.user.email}
               </span>
@@ -134,6 +145,10 @@ export const Layout: ParentComponent = (props) => {
         carta o de la tabla.
       */}
       <PracticeMarkHost />
+
+      {/* El alta, una sola vez para toda la app (#65): el botón está en el menú
+          principal y el cajón, aquí, para que ninguna pantalla lo duplique. */}
+      <AddTuneHost />
     </div>
   );
 };

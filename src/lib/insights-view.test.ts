@@ -84,19 +84,33 @@ describe('paceSeries', () => {
 });
 
 describe('streakFromMarks', () => {
-  it('cuenta los días consecutivos desde hoy', () => {
+  it('cuenta los días consecutivos desde hoy, con la mejor y la anterior', () => {
     const marks = [mark('a', 0), mark('b', 1), mark('c', 2)];
-    expect(streakFromMarks(marks, NOW)).toBe(3);
+    expect(streakFromMarks(marks, NOW)).toEqual({ current: 3, best: 3, previous: 0 });
   });
 
   it('un día sin ensayo corta la racha: no se salta el hueco', () => {
+    // Racha de dos (hoy y ayer), hueco en el día 2, y otra de dos antes.
     const marks = [mark('a', 0), mark('b', 1), mark('c', 3), mark('d', 4)];
-    expect(streakFromMarks(marks, NOW)).toBe(2);
+    expect(streakFromMarks(marks, NOW)).toEqual({ current: 2, best: 2, previous: 2 });
   });
 
   it('sin ensayos hoy la racha empieza ayer, y sin nada es cero', () => {
-    expect(streakFromMarks([mark('a', 1), mark('b', 2)], NOW)).toBe(2);
-    expect(streakFromMarks([], NOW)).toBe(0);
+    expect(streakFromMarks([mark('a', 1), mark('b', 2)], NOW)).toEqual({
+      current: 2,
+      best: 2,
+      previous: 0,
+    });
+    expect(streakFromMarks([], NOW)).toEqual({ current: 0, best: 0, previous: 0 });
+  });
+
+  it('la mejor racha es la de toda la ventana, no la última', () => {
+    // Cinco días seguidos hace dos semanas, y luego rachas cortas.
+    const marks = [
+      mark('a', 0),
+      ...Array.from({ length: 5 }, (_, index) => mark(`b${index}`, 14 + index)),
+    ];
+    expect(streakFromMarks(marks, NOW)).toMatchObject({ current: 1, best: 5 });
   });
 });
 

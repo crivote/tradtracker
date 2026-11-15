@@ -130,6 +130,16 @@ export interface OverdueDelta {
   previousPct: number;
   /** Puntos porcentuales: `currentPct - previousPct`. */
   deltaPp: number;
+  /**
+   * Vencidas **hoy** y el domingo, sobre el mismo censo. Son los recuentos que
+   * se enseñan en el pie de la gráfica: con dos porcentajes de denominadores
+   * distintos —el de la tarjeta y el del pie—, la misma palabra «overdue» decía
+   * dos cosas (#65). El recuento no admite doble lectura.
+   */
+  currentOverdue: number;
+  previousOverdue: number;
+  /** Tamaño del censo comparado: las mismas tunes en las dos fotos. */
+  census: number;
   byBand: BandDelta[];
   /**
    * `false` cuando no hay ninguna marca anterior al domingo de la semana
@@ -273,9 +283,10 @@ interface OverdueRange {
 
 /**
  * Los tramos del histograma, en días desde el último ensayo. El primero empieza
- * en 0 —hoy, ayer, anteayer— y el último es abierto: ahí sí cae todo lo que pase
- * de 60. `sinRegistro` **no está aquí**: una tune que nunca se ha tocado no es
- * una tune de hace 60+ días.
+ * en 0 —hoy, ayer, anteayer— y el último es abierto. `61–90` y `90+` existen
+ * porque el tramo viejo había acumulado 143 tunes y una sola barra no dice si
+ * son meses o años (pedido del dueño, #65). `sinRegistro` **no está aquí**: una
+ * tune que nunca se ha tocado no es una tune de hace 60+ días.
  */
 const OVERDUE_RANGES: readonly OverdueRange[] = [
   { key: '0-3', label: '0–3', upTo: 3 },
@@ -283,7 +294,8 @@ const OVERDUE_RANGES: readonly OverdueRange[] = [
   { key: '8-14', label: '8–14', upTo: 14 },
   { key: '15-30', label: '15–30', upTo: 30 },
   { key: '31-60', label: '31–60', upTo: 60 },
-  { key: '60+', label: '60+', upTo: Number.POSITIVE_INFINITY },
+  { key: '61-90', label: '61–90', upTo: 90 },
+  { key: '90+', label: '90+', upTo: Number.POSITIVE_INFINITY },
 ];
 
 /** Índice del tramo de una antigüedad en días (siempre ≥ 0). */
@@ -378,13 +390,16 @@ export function overdueHistogram(
   return {
     universe: universe.length,
     sinRegistro,
-    // El denominador de los tramos es el universo entero: así los seis tramos
-    // más `sinRegistro` suman 100 y el gráfico no esconde lo que no se sabe.
+    // El denominador de los tramos es lo que **tienen registro**, no el universo
+    // entero: `sin registro` ya no se pinta en la gráfica (#65) y una barra que
+    // se mide contra un total que no aparece se lee como si faltaran tunes.
+    // Así los siete tramos suman el 100 % de lo pintado; `sinRegistro` conserva
+    // su participación sobre el universo en la tarjeta.
     buckets: OVERDUE_RANGES.map((range, index) => ({
       key: range.key,
       label: range.label,
       count: counts[index],
-      pct: round1(percentOf(counts[index], universe.length)),
+      pct: round1(percentOf(counts[index], practiced)),
     })),
     byBand: byBand.map((tally) => ({
       band: tally.band,
@@ -398,6 +413,122 @@ export function overdueHistogram(
     // empezar, y ya se cuenta en `sinRegistro`.
     overduePct: round1(percentOf(overdue, practiced)),
   };
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Tendencia del vencimiento (#65)
+ * ──────────────────────────────────────────────────────────────── */
+
+export interface OverdueTrendPoint {
+  /** `YYYY-MM-DD` local del día medido. */
+  key: string;
+  /** `30 Oct`: la misma etiqueta corta que la semana de la composición. */
+  label: string;
+  overdue: number;
+  /** Tunes del censo que ese día se podían juzgar (con peldaño y con ensayo). */
+  judged: number;
+}
+
+export interface OverdueTrend {
+  /** Del día más antiguo al más reciente. */
+  points: OverdueTrendPoint[];
+  /**
+   * `30 Oct`: primer día con estado de escalera conocido, que es donde empieza
+   * la serie. `null` cuando no hay ningún evento `status`, y entonces no hay
+   * tendencia que enseñar.
+   */
+  since: string | null;
+  /** Días pedidos; si la serie es más corta, es que la historia empieza después. */
+  windowDays: number;
+}
+
+/**
+ * Serie diaria de **vencidas** para ver la tendencia: ¿se gana o se pierde
+ * terreno?
+ *
+ * Va aparte del histograma y no encima de él: el eje del histograma son tramos
+ * de antigüedad, no días, y una línea sobre ese eje no sería una tendencia sino
+ * una curva acumulada —otra cosa—. Aquí el eje es el tiempo y la pregunta es
+ * «cuántas se pasaban de su intervalo cada día».
+ *
+ * Cada día se mide **como se medía ese día**, no con la vara de hoy:
+ *
+ *   · El peldaño sale del último evento `status` hasta esa fecha, igual que el
+ *     delta semanal. Una tune que aún no tenía estado conocido entonces no entra
+ *     en el censo de ese día: no se le inventa un pasado.
+ *   · La antigüedad sale del último ensayo **hasta ese día** (el día entra), así
+ *     que una tune tocada el día medido no está vencida.
+ *   · Sin ningún ensayo anterior no se juzga: «sin registro» no es «vencida»,
+ *     igual que en el histograma.
+ *
+ * La serie empieza en el primer evento de escalera (finales de octubre en esta
+ * base): antes de eso no hay peldaño que aplicar, y rellenar hacia atrás con el
+ * de hoy sería una historia inventada. `since` lo dice en la tarjeta.
+ */
+export function overdueTrend(
+  rows: readonly RepertoireRow[],
+  marks: readonly InsightMark[],
+  events: readonly InsightEvent[],
+  nowMs: number,
+  days: number,
+): OverdueTrend {
+  const windowDays = Math.max(1, Math.floor(days));
+  const todayKey = todayKeyFor(nowMs);
+
+  let firstStatus: number | null = null;
+  for (const event of events) {
+    if (event.kind !== 'status') continue;
+    const ms = instantOf(event.at);
+    if (ms === null) continue;
+    if (firstStatus === null || ms < firstStatus) firstStatus = ms;
+  }
+  if (firstStatus === null) return { points: [], since: null, windowDays };
+
+  const firstKey = todayKeyFor(firstStatus);
+  const windowStart = shiftDayKey(todayKey, -(windowDays - 1));
+  const startKey = firstKey > windowStart ? firstKey : windowStart;
+  if (startKey > todayKey) return { points: [], since: null, windowDays };
+
+  const rotation = rows.filter(isRotationRow);
+
+  // Días de ensayo por tune, ascendentes: se avanza un puntero por tune según
+  // avanza el calendario, sin recorrer la lista entera en cada día.
+  const daysByTune = new Map<string, string[]>();
+  for (const mark of marks) {
+    const list = daysByTune.get(mark.repertoireId);
+    if (list) list.push(mark.day);
+    else daysByTune.set(mark.repertoireId, [mark.day]);
+  }
+  for (const list of daysByTune.values()) list.sort();
+
+  const cursor = new Map<string, number>();
+  const points: OverdueTrendPoint[] = [];
+
+  for (let key = startKey; key <= todayKey; key = shiftDayKey(key, 1)) {
+    const bandThen = statusMapAt(events, dayBoundaryAfter(key));
+    let overdue = 0;
+    let judged = 0;
+
+    for (const row of rotation) {
+      const band = bandThen.get(row.id);
+      if (!band) continue;
+      const list = daysByTune.get(row.id);
+      if (!list || list[0] > key) continue;
+
+      let index = cursor.get(row.id) ?? 0;
+      while (index + 1 < list.length && list[index + 1] <= key) index += 1;
+      cursor.set(row.id, index);
+
+      const elapsed = daysBetween(list[index], key);
+      if (elapsed === null) continue;
+      judged += 1;
+      if (elapsed > TARGET_DAYS_BY_BAND[band]) overdue += 1;
+    }
+
+    points.push({ key, label: weekLabel(key), overdue, judged });
+  }
+
+  return { points, since: weekLabel(startKey), windowDays };
 }
 
 /* ────────────────────────────────────────────────────────────────
@@ -513,6 +644,9 @@ export function overdueDelta(
     // redondear: el lector tiene que poder comprobar la cuenta de cabeza. El
     // error máximo es de una décima de punto, y no hay dos cifras que no cuadren.
     deltaPp: round1(currentPct - previousPct),
+    currentOverdue: sumOverdue(current),
+    previousOverdue: sumOverdue(previous),
+    census: sumPracticed(current),
     byBand: LADDER_BANDS.map((band, index) => {
       const now = current[index];
       const then = previous[index];

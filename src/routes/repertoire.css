@@ -45,6 +45,20 @@
   padding: 52px clamp(18px, 4vw, 58px) 90px;
 }
 
+/*
+ * El cajón del alta se monta en el armazón (#65) y no dentro de una ruta: este
+ * contenedor aporta **solo los tokens** de papel —es lo que hace que `.drawer`
+ * y sus reglas, que cuelgan de `.repertoire-home`, se apliquen— y no pinta ni
+ * ocupa nada. Sin él, el cajón abierto desde `/history` o `/search` saldría con
+ * los colores del navegador.
+ */
+.repertoire-home--host {
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  line-height: inherit;
+}
+
 /* ── cabecera ─────────────────────────────────────────────────── */
 .repertoire-home .page-head {
   max-width: 1260px;
@@ -1097,6 +1111,146 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--faint);
+}
+
+/* La nota de una cifra (la racha: mejor y última): texto normal, no versalitas.
+   Va bajo la etiqueta y no la sustituye — la etiqueta dice qué es la cifra. */
+.repertoire-home .insights-stats .stat-note {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── reparto por nivel: donut + leyenda-puerta (#65) ──────────────
+   Sustituye a la línea de recuentos de la cabecera. El donut da la forma —qué
+   pesa y qué no— y la leyenda da la cifra exacta; cada fila es la puerta que
+   tenía el número en la línea de texto.
+   A 1260 px: 190 de donut y el resto de leyenda en dos columnas. Bajo 720 px se
+   apilan. */
+.repertoire-home .level-share {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  align-items: center;
+  gap: 20px;
+  margin: 0 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.38);
+  padding: 12px 16px 12px 12px;
+}
+
+.repertoire-home .level-donut {
+  position: relative;
+  height: 156px;
+}
+
+.repertoire-home .level-total {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  pointer-events: none;
+  text-align: center;
+}
+
+.repertoire-home .level-total b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.repertoire-home .level-total small {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* La leyenda se empaqueta en filas compactas (`flex` con `wrap`) y no en
+   columnas elásticas: con cuatro columnas de 1fr, la etiqueta quedaba a un lado
+   y su cifra al otro, y el ojo tenía que recorrer la fila entera para emparejar
+   cada nivel con su número. Cada fila mide lo que mide su texto. */
+.repertoire-home .level-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 26px;
+}
+
+.repertoire-home .level-legend li {
+  min-width: 190px;
+}
+
+.repertoire-home .level-legend a {
+  display: grid;
+  grid-template-columns: 9px auto 40px 46px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid transparent;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.repertoire-home .level-legend a:hover,
+.repertoire-home .level-legend a:focus-visible {
+  color: var(--accent);
+  border-bottom-color: var(--line);
+}
+
+.repertoire-home .level-legend i {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.repertoire-home .level-legend b {
+  color: var(--ink);
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.repertoire-home .level-legend .pct {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Un nivel vacío sigue en la leyenda —«no hay nada en solo-ready» es
+   información— pero apagado: no compite con los que tienen tunes. */
+.repertoire-home .level-legend li.is-empty a {
+  opacity: 0.45;
+}
+
+/* La pareja del panel: histograma (más ancho) y tendencia. Se apilan cuando no
+   caben dos gráficas legibles, que es lo que pasa por debajo de 900 px. */
+.repertoire-home .insights-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 0 14px;
+  align-items: stretch;
+}
+
+@media (max-width: 900px) {
+  .repertoire-home .insights-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .repertoire-home .level-share {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* La tarjeta de cada gráfica: el título manda y la gráfica va debajo, sin caja

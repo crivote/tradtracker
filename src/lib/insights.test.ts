@@ -15,6 +15,7 @@ import {
   compositionByWeek,
   overdueDelta,
   overdueHistogram,
+  overdueTrend,
   revisits,
   TARGET_DAYS_BY_BAND,
   type InsightEvent,
@@ -113,8 +114,8 @@ describe('TARGET_DAYS_BY_BAND', () => {
 });
 
 describe('overdueHistogram', () => {
-  it('reparte los seis tramos con sus fronteras exactas (3/4, 7/8, 14/15, 30/31, 60/61)', () => {
-    const rows = [3, 4, 7, 8, 14, 15, 30, 31, 60, 61].map((days, index) =>
+  it('reparte los siete tramos con sus fronteras exactas (3/4, 7/8, 14/15, 30/31, 60/61, 90/91)', () => {
+    const rows = [3, 4, 7, 8, 14, 15, 30, 31, 60, 61, 90, 91].map((days, index) =>
       practicedRow(`t${index}`, 'mastered', NOW, days),
     );
 
@@ -126,7 +127,8 @@ describe('overdueHistogram', () => {
       '8-14': 2,
       '15-30': 2,
       '31-60': 2,
-      '60+': 1,
+      '61-90': 2,
+      '90+': 1,
     });
     expect(histogram.buckets.map((bucket) => bucket.label)).toEqual([
       '0–3',
@@ -134,12 +136,13 @@ describe('overdueHistogram', () => {
       '8–14',
       '15–30',
       '31–60',
-      '60+',
+      '61–90',
+      '90+',
     ]);
-    // Diez filas con día, todas en rotación: el universo son diez.
-    expect(histogram.universe).toBe(10);
+    // Doce filas con día, todas en rotación: el universo son doce.
+    expect(histogram.universe).toBe(12);
     expect(histogram.sinRegistro).toBe(0);
-    expect(histogram.buckets.reduce((sum, bucket) => sum + bucket.count, 0)).toBe(10);
+    expect(histogram.buckets.reduce((sum, bucket) => sum + bucket.count, 0)).toBe(12);
   });
 
   it('cuenta el día de hoy en «0–3» y no lo saca del universo', () => {
@@ -166,7 +169,8 @@ describe('overdueHistogram', () => {
       '8-14': 0,
       '15-30': 0,
       '31-60': 0,
-      '60+': 1,
+      '61-90': 0,
+      '90+': 1,
     });
     // Los tramos más `sinRegistro` son el universo entero, sin repetir a nadie.
     expect(
@@ -209,7 +213,7 @@ describe('overdueHistogram', () => {
     }
   });
 
-  it('calcula los porcentajes sobre el universo, y el de vencidas sobre las que tienen día', () => {
+  it('calcula los porcentajes sobre las que tienen día, y el de vencidas sobre las mismas', () => {
     const rows = [
       practicedRow('vieja', 'learning', NOW, 5), // 5 > 2: vencida
       practicedRow('fresca', 'learning', NOW, 1),
@@ -221,8 +225,10 @@ describe('overdueHistogram', () => {
 
     expect(histogram.universe).toBe(4);
     expect(histogram.sinRegistro).toBe(2);
-    // «4–7» tiene una de cuatro filas del universo: 25 %.
-    expect(histogram.buckets.find((bucket) => bucket.key === '4-7')?.pct).toBe(25);
+    // «4–7» tiene una de las **dos con registro** —no del universo de cuatro—:
+    // `sin registro` ya no se pinta en la gráfica (#65) y su denominador no
+    // puede ser un total que el lector no ve.
+    expect(histogram.buckets.find((bucket) => bucket.key === '4-7')?.pct).toBe(50);
     // Vencidas: una de las dos que tienen día (no del universo entero).
     expect(histogram.overdue).toBe(1);
     expect(histogram.overduePct).toBe(50);
@@ -240,8 +246,8 @@ describe('overdueHistogram', () => {
     expect(histogram.sinRegistro).toBe(0);
     expect(histogram.overdue).toBe(0);
     expect(histogram.overduePct).toBe(0);
-    expect(histogram.buckets.map((bucket) => bucket.count)).toEqual([0, 0, 0, 0, 0, 0]);
-    expect(histogram.buckets.map((bucket) => bucket.pct)).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(histogram.buckets.map((bucket) => bucket.count)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(histogram.buckets.map((bucket) => bucket.pct)).toEqual([0, 0, 0, 0, 0, 0, 0]);
     expect(histogram.byBand).toHaveLength(5);
     expect(histogram.byBand.every((band) => band.practiced === 0 && band.overdue === 0)).toBe(true);
   });
@@ -260,6 +266,77 @@ describe('overdueHistogram', () => {
 
     expect(countsByKey(histogram.buckets)['0-3']).toBe(1);
     expect(histogram.overdue).toBe(0);
+  });
+});
+
+describe('overdueTrend (#65)', () => {
+  const NOW_TREND = at(2026, 11, 14);
+
+  it('empieza en el primer evento de escalera y no antes: el pasado sin peldaño no se inventa', () => {
+    const events = [statusEvent('a', 'shaky', '2026-11-04T20:00:00+00:00')];
+    const marks = [mark('a', dayKey(NOW_TREND, 20), '2026-10-25T10:00:00+00:00')];
+
+    const trend = overdueTrend([practicedRow('a', 'shaky', NOW_TREND, 20)], marks, events, NOW_TREND, 30);
+
+    // Del 4 al 14 de noviembre: once días, aunque la ventana pedida sea de 30.
+    expect(trend.points).toHaveLength(11);
+    expect(trend.points[0].key).toBe('2026-11-04');
+    expect(trend.points.at(-1)!.key).toBe(dayKey(NOW_TREND));
+    expect(trend.since).toBe('4 Nov');
+    expect(trend.windowDays).toBe(30);
+  });
+
+  it('cuenta vencidas con el peldaño de cada día y la antigüedad de ese día', () => {
+    // `a` es un ensayo del 1 de noviembre: el 4 lleva 3 días.
+    // Peldaño `shaky` desde el 1 → umbral 4 días: el 4 aún no, el 6 sí.
+    const events = [statusEvent('a', 'shaky', '2026-11-01T09:00:00+00:00')];
+    const marks = [mark('a', dayKey(NOW_TREND, 13), '2026-11-01T10:00:00+00:00')];
+    const rows = [practicedRow('a', 'shaky', NOW_TREND, 13)];
+
+    const trend = overdueTrend(rows, marks, events, NOW_TREND, 15);
+    const byDay = Object.fromEntries(trend.points.map((point) => [point.key, point]));
+
+    expect(byDay['2026-11-04']).toMatchObject({ overdue: 0, judged: 1 });
+    expect(byDay['2026-11-06']).toMatchObject({ overdue: 1, judged: 1 });
+    expect(byDay[dayKey(NOW_TREND)]).toMatchObject({ overdue: 1, judged: 1 });
+  });
+
+  it('una subida de peldaño cambia el umbral el mismo día del evento', () => {
+    // Ensayo el 1 de noviembre y peldaño `mastered` (30 días) hasta el 8, que
+    // pasa a `learning` (2 días): el 8 ya está vencida, el 7 no.
+    const events = [
+      statusEvent('a', 'mastered', '2026-11-01T09:00:00+00:00'),
+      statusEvent('a', 'learning', '2026-11-08T09:00:00+00:00', 'mastered', 'ui'),
+    ];
+    const marks = [mark('a', dayKey(NOW_TREND, 13), '2026-11-01T10:00:00+00:00')];
+    const rows = [practicedRow('a', 'learning', NOW_TREND, 13)];
+
+    const trend = overdueTrend(rows, marks, events, NOW_TREND, 10);
+    const byDay = Object.fromEntries(trend.points.map((point) => [point.key, point]));
+
+    expect(byDay['2026-11-07'].overdue).toBe(0);
+    expect(byDay['2026-11-08'].overdue).toBe(1);
+  });
+
+  it('no juzga sin ensayo anterior ni sin peldaño conocido', () => {
+    const events = [statusEvent('a', 'shaky', '2026-11-10T09:00:00+00:00')];
+    // `b` tiene ensayo pero ningún evento: no se le supone el peldaño de hoy.
+    const marks = [
+      mark('a', dayKey(NOW_TREND, 20), '2026-10-25T10:00:00+00:00'),
+      mark('b', dayKey(NOW_TREND, 20), '2026-10-25T10:00:00+00:00'),
+    ];
+    const rows = [practicedRow('a', 'shaky', NOW_TREND, 20), practicedRow('b', 'shaky', NOW_TREND, 20)];
+
+    const trend = overdueTrend(rows, marks, events, NOW_TREND, 10);
+
+    // Solo `a` entra en el censo: una tune sin estado entonces no tenía umbral.
+    expect(trend.points.every((point) => point.judged === 1)).toBe(true);
+  });
+
+  it('sin ningún evento de escalera no hay tendencia que enseñar', () => {
+    const trend = overdueTrend([row({ id: 'a' })], [], [], NOW_TREND, 30);
+    expect(trend.points).toEqual([]);
+    expect(trend.since).toBeNull();
   });
 });
 
