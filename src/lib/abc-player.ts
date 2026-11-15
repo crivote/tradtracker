@@ -36,8 +36,12 @@ export const MIN_TEMPO = 40;
 /** Techo del tempo: por encima, el sintetizador suena a cinta acelerada. */
 export const MAX_TEMPO = 200;
 
-/** Paso de los botones −/+. Cuatro pulsos se oyen sin pulsar veinte veces. */
-export const TEMPO_STEP = 4;
+/**
+ * Paso de los botones −/+. Diez pulsos: de 84 a 120 son cuatro toques, no
+ * nueve. Con cuatro —el paso anterior— cruzar el rango útil eran veinte
+ * pulsaciones y el mando se hacía tedioso (#59).
+ */
+export const TEMPO_STEP = 10;
 
 /** La pausa entre vueltas del loop: un compás de aire para volver a entrar. */
 export const LOOP_GAP_MS = 1000;

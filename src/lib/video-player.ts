@@ -2,17 +2,22 @@
  * El reproductor de vídeo del dock (#53): **velocidad propia en % y control
  * desde el mismo ▶/❚❚ de la barra**.
  *
- * Lo puro —escalones, rótulos en %, el estado que llega de YouTube— se prueba
+ * Lo puro —el escalón, el rótulo en %, el estado que llega de YouTube— se prueba
  * sin navegador (`video-player.test.ts`). Lo que monta el reproductor es una
  * capa fina sobre la IFrame API (`youtube-api.ts`) y se prueba con un doble en
  * la suite del dock: en `jsdom` no hay YouTube.
  *
- * **La escalera la manda el reproductor, no una constante.** YouTube sirve
- * velocidades discretas (`0.25 · 0.5 · 0.75 · 1 · 1.25 · 1.5 · 1.75 · 2`) y
- * `setPlaybackRate` las cuantiza: pedir «85 %» no da 85 %. Por eso el control
- * propio es un recorrido de escalones rotulados en %, no un deslizador que
- * prometería un número que el vídeo no va a cumplir. `getAvailablePlaybackRates()`
- * es la fuente; la constante es solo la red cuando el player no contesta.
+ * **La velocidad se mueve en pasos del 5 % (#59), no en la escalera de
+ * YouTube.** Hasta este corte el control recorría `getAvailablePlaybackRates()`
+ * —ocho peldaños, y de 75 % a 100 % había un salto de 25 puntos—, que es
+ * demasiado grueso para ensayar: el paso útil para bajar un reel es pequeño.
+ * Ahora el dominio es continuo entre `MIN` y `MAX` y el mando pide el valor
+ * exacto; el rótulo se corrige con lo que el reproductor confirma por
+ * `onPlaybackRateChange`, así que si YouTube cuantiza, la pantalla lo dice en
+ * vez de mentir.
+ *
+ * El dominio es el de TradTube —0,50 a 1,00, el mismo control que el dueño usa
+ * a diario—: aquí se ralentiza para aprender, no se acelera para escuchar.
  *
  * El dominio del iframe **no cambia**: se monta con `youtube-nocookie.com`.
  * La API (el script) viene de `youtube.com`, que es lo que impone YouTube.
@@ -21,11 +26,17 @@
 import { embedUrl, type TuneSegment } from './tradtube';
 import { loadYoutubeApi, type YoutubePlayerLike } from './youtube-api';
 
-/** Los escalones de referencia, en tanto por uno. */
-export const VIDEO_RATES: readonly number[] = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+/** Suelo de la velocidad: por debajo, el vídeo deja de ser un tempo de ensayo. */
+export const VIDEO_RATE_MIN = 0.5;
+
+/** Techo: 100 %, el vídeo como suena. */
+export const VIDEO_RATE_MAX = 1;
+
+/** El paso del mando: 5 % (una veinteava parte del rango). */
+export const VIDEO_RATE_STEP = 0.05;
 
 /** Arranque natural: el vídeo como suena. */
-export const DEFAULT_VIDEO_RATE = 1;
+export const DEFAULT_VIDEO_RATE = VIDEO_RATE_MAX;
 
 /** El dominio sin cookies del reproductor: el mismo que usaba el iframe plano. */
 const NOCOOKIE_HOST = 'https://www.youtube-nocookie.com';
@@ -44,13 +55,9 @@ export interface VideoPlayerHandle {
   play(): void;
   pause(): void;
   setRate(rate: number): void;
+  /** Salta a un segundo del vídeo (no del tune): el «inicio del tune» lo calcula el store. */
+  seek(sec: number): void;
   destroy(): void;
-}
-
-export interface MountedVideoPlayer {
-  handle: VideoPlayerHandle;
-  /** Los escalones que el reproductor declara, ya normalizados. */
-  rates: readonly number[];
 }
 
 export interface MountVideoPlayerOptions {
@@ -66,45 +73,36 @@ export interface MountVideoPlayerOptions {
 
 // ── puro ────────────────────────────────────────────────────────────
 
-/** `0.75` → `75%`. Un rótulo, no una medida: los escalones son discretos. */
+/** `0.75` → `75%`. Un rótulo, no una medida: los pasos son discretos. */
 export function rateLabel(rate: number): string {
   return `${Math.round(rate * 100)}%`;
 }
 
 /**
- * Una escalera utilizable: números finitos y positivos, sin repetir, de menor a
- * mayor. Si lo que llega no sirve, la de referencia — nunca una vacía, porque
- * el `+`/`−` se quedaría sin destino.
+ * Un valor del dominio: redondeado al 1 % (los pasos son del 5, pero YouTube
+ * puede devolver `0.8500000000000001`) y acotado en los dos extremos. Un número
+ * que no sirve cae al 100 %, que es el arranque natural.
  */
-export function usableRates(rates?: readonly number[] | null): readonly number[] {
-  const source = rates && rates.length > 0 ? rates : VIDEO_RATES;
-  const clean = source.filter((rate) => Number.isFinite(rate) && rate > 0);
-  const unique = [...new Set(clean)].sort((a, b) => a - b);
-  return unique.length > 0 ? unique : VIDEO_RATES;
+export function clampRate(rate: number): number {
+  if (!Number.isFinite(rate) || rate <= 0) return DEFAULT_VIDEO_RATE;
+  const rounded = Math.round(rate * 100) / 100;
+  return Math.min(VIDEO_RATE_MAX, Math.max(VIDEO_RATE_MIN, rounded));
 }
 
-/** El escalón más cercano: la velocidad guardada puede no existir en este player. */
-export function nearestRate(rate: number, rates?: readonly number[] | null): number {
-  const ladder = usableRates(rates);
-  const target = Number.isFinite(rate) && rate > 0 ? rate : DEFAULT_VIDEO_RATE;
-  return ladder.reduce(
-    (best, candidate) => (Math.abs(candidate - target) < Math.abs(best - target) ? candidate : best),
-    ladder[0]
-  );
+/** El paso siguiente (`delta > 0`) o anterior, acotado en los dos extremos. */
+export function stepRate(rate: number, delta: number): number {
+  const current = clampRate(rate);
+  if (delta === 0) return current;
+  const motion = delta > 0 ? 1 : -1;
+  // Se redondea a 2 decimales en cada paso: sumar 0,05 veinte veces acumula
+  // error de coma flotante y el rótulo acabaría enseñando `84%`.
+  const next = Math.round((current + motion * VIDEO_RATE_STEP) * 100) / 100;
+  return clampRate(next);
 }
 
-/** El escalón siguiente (`delta > 0`) o anterior, acotado en los dos extremos. */
-export function stepRate(rate: number, delta: number, rates?: readonly number[] | null): number {
-  const ladder = usableRates(rates);
-  const index = ladder.indexOf(nearestRate(rate, ladder));
-  const motion = delta === 0 ? 0 : delta > 0 ? 1 : -1;
-  const next = Math.min(ladder.length - 1, Math.max(0, index + motion));
-  return ladder[next];
-}
-
-/** ¿Queda escalón en esa dirección? Es lo que deshabilita el botón en los extremos. */
-export function canStepRate(rate: number, delta: number, rates?: readonly number[] | null): boolean {
-  return stepRate(rate, delta, rates) !== nearestRate(rate, rates);
+/** ¿Queda paso en esa dirección? Es lo que deshabilita el botón en los extremos. */
+export function canStepRate(rate: number, delta: number): boolean {
+  return stepRate(rate, delta) !== clampRate(rate);
 }
 
 /** `1` → `playing`, `2` → `paused`… Los números son los de `YT.PlayerState`. */
@@ -128,19 +126,22 @@ function wrapPlayer(player: YoutubePlayerLike): VideoPlayerHandle {
     play: () => player.playVideo(),
     pause: () => player.pauseVideo(),
     setRate: (rate) => player.setPlaybackRate(rate),
+    /* `seekTo` con `allowSeekAhead` en `true`: sin él, YouTube se queda
+       buffereando y el ▶ parece muerto unos segundos. */
+    seek: (sec) => player.seekTo(Math.max(0, sec), true),
     destroy: () => player.destroy(),
   };
 }
 
 /**
- * Monta el reproductor sobre `host` y resuelve **cuando está listo**, con sus
- * escalones de velocidad. Rechaza si la API no carga o si no dice «listo» a
- * tiempo: el dock lo trata como «sin control» y deja el iframe plano.
+ * Monta el reproductor sobre `host` y resuelve **cuando está listo**. Rechaza si
+ * la API no carga o si no dice «listo» a tiempo: el dock lo trata como «sin
+ * control» y deja el iframe plano.
  */
-export function mountVideoPlayer(options: MountVideoPlayerOptions): Promise<MountedVideoPlayer> {
+export function mountVideoPlayer(options: MountVideoPlayerOptions): Promise<VideoPlayerHandle> {
   return loadYoutubeApi().then(
     (api) =>
-      new Promise<MountedVideoPlayer>((resolve, reject) => {
+      new Promise<VideoPlayerHandle>((resolve, reject) => {
         let settled = false;
         let player: YoutubePlayerLike | null = null;
 
@@ -182,10 +183,7 @@ export function mountVideoPlayer(options: MountVideoPlayerOptions): Promise<Moun
                 if (settled) return;
                 settled = true;
                 clearTimeout(timer);
-                resolve({
-                  handle: wrapPlayer(event.target),
-                  rates: usableRates(event.target.getAvailablePlaybackRates()),
-                });
+                resolve(wrapPlayer(event.target));
               },
               onStateChange: (event) => options.onState(videoEventFromState(event.data)),
               onPlaybackRateChange: (event) => options.onRate(event.data),

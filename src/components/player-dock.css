@@ -279,16 +279,91 @@
   background: #000;
 }
 
-/* La velocidad propia (#53): vive aquí porque la bandeja no se pinta con el
-   vídeo abierto. Los escalones son los del player, rotulados en %. */
-.player-dock__speed {
+/* La barra de mandos del vídeo (#59): vuelta al inicio del tune, velocidad en
+   pasos del 5 %, loop del tune y salida al sintetizador. Vive aquí porque la
+   bandeja no se pinta con el vídeo abierto. */
+.player-dock__video-controls {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 8px 14px;
   padding: 8px 12px;
   border-top: 1px solid var(--dock-line);
   background: var(--dock-bg);
+}
+
+.player-dock__speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* El check de loop: cuadrado nativo teñido con el ocre del ▶ cuando está
+   marcado, sin inventar un control que no se pueda tocar con el teclado. */
+.player-dock__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dock-meta);
+  cursor: pointer;
+  user-select: none;
+}
+
+.player-dock__check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--dock-ochre);
+  cursor: pointer;
+}
+
+.player-dock__check input:focus-visible {
+  outline: 2px solid var(--dock-ochre-light);
+  outline-offset: 2px;
+}
+
+/* El selector de versión del ABC (#59): una fila propia, solo cuando hay más
+   de una versión entre las que elegir. */
+.player-dock__versions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 0 14px 12px;
+}
+
+.player-dock__versions-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--dock-meta);
+}
+
+.player-dock__versions-field select {
+  border: 1px solid var(--dock-line);
+  border-radius: 6px;
+  background: var(--dock-bg);
+  color: var(--dock-ink);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: normal;
+  text-transform: none;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.player-dock__versions-field select:focus-visible {
+  outline: 2px solid var(--dock-ochre-light);
+  outline-offset: 2px;
+}
+
+.player-dock__versions-error {
+  font-size: 11.5px;
+  color: var(--dock-ochre-light);
 }
 
 .player-dock__speed-caption {

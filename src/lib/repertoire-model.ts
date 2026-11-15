@@ -92,6 +92,14 @@ export interface RepertoireRow {
    * que el reproductor de `/practice` (#38) toca antes de pedir nada a la red.
    */
   customAbc: string | null;
+  /**
+   * Versión de ABC preferida para esta tune (#59, columna `preferred_setting`):
+   * el id de setting de TheSession (`setting4521`) o `n<índice>` cuando el
+   * bloque no lo trae. `null` = no hay preferencia y manda la primera, que es
+   * el comportamiento anterior. Es del usuario, no del catálogo, y sobrevive a
+   * la recarga porque vive en la base.
+   */
+  preferredSetting: string | null;
   notes: string | null;
   added_at: string;
   /**
@@ -247,6 +255,11 @@ export function mapRepertoireRow(
     // antes del corte que la pide (#38) o un doble de test pueden no traerla.
     // Solo un texto es un ABC; `undefined` y `null` son «no hay».
     customAbc: typeof row.custom_abc === 'string' ? row.custom_abc : null,
+    // Versión preferida (#59): tolerante como las anteriores — una fila anterior
+    // a la migración 020, un doble de test o un `null` son «sin preferencia».
+    preferredSetting: typeof row.preferred_setting === 'string' && row.preferred_setting.trim().length > 0
+      ? row.preferred_setting
+      : null,
     notes: row.notes ?? null,
     added_at: row.added_at,
     // Día local `YYYY-MM-DD` o nada: un doble de test, una fila anterior a la

@@ -1,6 +1,7 @@
 import { createSignal } from 'solid-js';
-import { abcFromRow, resolveAbc } from './abc-source';
-import { LOOP_GAP_MS, TEMPO_STEP, clampTempo, tempoFor } from './abc-player';
+import { pickVersion, type AbcVersion } from './abc-settings';
+import { loadVersions, versionsFromRow } from './abc-source';
+import { LOOP_GAP_MS, clampTempo, tempoFor } from './abc-player';
 import {
   ABORTED,
   renderScore,
@@ -13,6 +14,7 @@ import {
   canPlay,
   dockReserve,
   metaParts,
+  pickSegment,
   statusText,
   type DockMeta,
   type DockState,
@@ -26,15 +28,14 @@ import {
   type PracticeInstrument,
 } from './practice-storage';
 import { cardKey, displayRhythm, displayTitle, type RepertoireRow } from './repertoire-model';
+import { savePreferredSetting } from './repertoire';
 import { fetchSegments, type TuneSegment } from './tradtube';
 import {
   DEFAULT_VIDEO_RATE,
-  VIDEO_RATES,
   canStepRate,
-  nearestRate,
+  clampRate,
   rateLabel,
   stepRate,
-  usableRates,
   type VideoEvent,
   type VideoPlayerHandle,
 } from './video-player';
@@ -50,6 +51,12 @@ import {
  * **Cerrar no es pausar.** `pause()` deja la tune cargada y el ▶ listo;
  * `close()` sube el token, para el motor, cancela el loop, olvida la tune y
  * desmonta el vídeo. Después de cerrar, el siguiente disparador empieza de cero.
+ *
+ * **El vídeo manda cuando lo hay (#59).** Al abrir una tune se miran sus
+ * segmentos de TradTube y, si hay uno disponible, suena el vídeo; el
+ * sintetizador es la segunda opción y se recupera con el botón `ABC` del panel.
+ * Antes el ▶ arrancaba siempre `abcjs` y el vídeo era un botón que había que
+ * descubrir.
  *
  * El `sink` es el blanco donde `abcjs` dibuja el `TuneObject` que necesita el
  * sintetizador. Lo pone el dock al montarse (y vive tanto como el layout): aquí
@@ -67,13 +74,21 @@ const [instrument, setInstrument] = createSignal<PracticeInstrument>(storedInstr
 const [looping, setLooping] = createSignal(false);
 const [durationSec, setDurationSec] = createSignal<number | null>(null);
 /**
+ * Las versiones de ABC de la tune cargada (#59): primero las que trae la fila y,
+ * en cuanto llega la red, **todas** las de TheSession. La primera de la lista es
+ * la que suena si no hay preferencia.
+ */
+const [versions, setVersions] = createSignal<readonly AbcVersion[]>([]);
+/** El id de la versión que está sonando (o dibujada). */
+const [setting, setSetting] = createSignal<string | null>(null);
+/** La preferencia no se pudo guardar: se dice en la bandeja, no se finge. */
+const [settingError, setSettingError] = createSignal<string | null>(null);
+/**
  * La velocidad del vídeo (#53), en tanto por uno. Es **estado de sesión**, no
  * preferencia: vive mientras la tune está en el dock y vuelve a 100 % al
  * cambiar de tune o cerrar. No va a `localStorage` ni a Supabase.
  */
 const [videoRate, setVideoRate] = createSignal(DEFAULT_VIDEO_RATE);
-/** Los escalones que el reproductor declara; la red es `VIDEO_RATES`. */
-const [videoRates, setVideoRates] = createSignal<readonly number[]>(VIDEO_RATES);
 /** El reproductor montado, o `null` mientras carga (o si no hay control). */
 const [video, setVideo] = createSignal<VideoPlayerHandle | null>(null);
 /** La API no cargó: el vídeo se ve como iframe plano y el dock no lo gobierna. */
@@ -86,10 +101,12 @@ const [videoFallback, setVideoFallback] = createSignal(false);
  */
 let lastVideoEvent: VideoEvent | null = null;
 
-/** El ABC ya resuelto de la tune cargada; la red solo se toca si la fila no lo traía. */
+/** El ABC ya resuelto de la versión en curso; la red solo se toca si hace falta. */
 let abcText: string | null = null;
 /** El blanco de `renderAbc`. Lo pone el dock. */
 let sink: HTMLElement | null = null;
+/** El nodo de la partitura, para volver a dibujarla al cambiar de versión. */
+let scoreHost: HTMLElement | null = null;
 /** El temporizador del loop. `null` = no hay vuelta pendiente. */
 let loopTimer: number | null = null;
 /** Token de la operación en vuelo: un `resolveAbc` lento no puede reabrir un dock cerrado. */
@@ -143,12 +160,54 @@ function onTuneEnded(): void {
   }, LOOP_GAP_MS);
 }
 
-/** El ABC de la tune cargada, resolviendo la red la primera vez. */
+/**
+ * Las versiones que la fila no trae, pedidas de fondo. No toca el sonido: la
+ * tune ya está en marcha con la versión que hubiera; esto solo puebla el
+ * selector. Si la versión en curso no aparece en la lista nueva —el id local es
+ * `n1` y el de TheSession `setting4521`—, se adopta la primera sin reiniciar:
+ * es la misma música.
+ */
+async function refreshVersions(row: RepertoireRow): Promise<void> {
+  if (versionsFromRow(row).origin === 'custom') return;
+  const full = await loadVersions(row);
+  if (track()?.id !== row.id || full.versions.length === 0) return;
+  setVersions(full.versions);
+  const current = setting();
+  if (current && full.versions.some((version) => version.id === current)) return;
+  setSetting(full.versions[0].id);
+}
+
+/**
+ * El ABC de la tune cargada, en la versión que toca.
+ *
+ * Con preferencia guardada se espera a tener las versiones: la preferida puede
+ * vivir en un setting que el catálogo no guarda, y arrancar con otra para
+ * cambiarla medio segundo después sería peor que esperar una petición cacheada.
+ * Sin preferencia se suena lo que la fila tenga, y las demás llegan de fondo.
+ */
 async function ensureAbc(): Promise<string | null> {
   if (abcText) return abcText;
   const row = track();
   if (!row) return null;
-  abcText = await resolveAbc(row);
+
+  const local = versionsFromRow(row);
+  setVersions(local.versions);
+  const preferred = row.preferredSetting;
+  const chosen = pickVersion(local.versions, preferred);
+
+  if (chosen && (preferred === null || chosen.id === preferred)) {
+    abcText = chosen.abc;
+    setSetting(chosen.id);
+    void refreshVersions(row);
+    return abcText;
+  }
+
+  const full = await loadVersions(row);
+  if (track()?.id !== row.id) return null;
+  setVersions(full.versions);
+  const picked = pickVersion(full.versions, preferred);
+  abcText = picked?.abc ?? null;
+  setSetting(picked?.id ?? null);
   return abcText;
 }
 
@@ -238,6 +297,9 @@ export function openFrom(row: RepertoireRow): void {
   abcText = null;
   setTrack(row);
   setSegments([]);
+  setVersions([]);
+  setSetting(null);
+  setSettingError(null);
   setVideoOpen(false);
   setScoreOpen(false);
   setPanelOpen(false);
@@ -245,9 +307,30 @@ export function openFrom(row: RepertoireRow): void {
   setDurationSec(null);
   setTempo(tempoFor(displayRhythm(row)));
   resetVideoRate();
-  setState('idle');
+  /*
+   * `loading` mientras se sabe si hay vídeo: con el ▶ vivo, el usuario arranca
+   * el sintetizador y el vídeo lo corta medio segundo después. Sin segmentos no
+   * hay espera perceptible —la petición es una y cacheada— y si falla, se suena.
+   */
+  setState('loading');
 
-  void loadSegments(row);
+  void startTune(row);
+}
+
+/**
+ * La primera decisión de la tune (#59): **vídeo si lo hay**. El segmento caído
+ * (`unavailable`) no cuenta como vídeo disponible; ahí se suena y el control
+ * sigue pintado para que se sepa por qué no hay imagen.
+ */
+async function startTune(row: RepertoireRow): Promise<void> {
+  const list = await loadSegments(row);
+  if (track()?.id !== row.id) return;
+  const segment = pickSegment(list);
+  if (segment && !segment.unavailable) {
+    openVideo();
+    return;
+  }
+  setState('idle');
   void play();
 }
 
@@ -257,8 +340,12 @@ export function close(): void {
   stopEngine();
   clearLoop();
   abcText = null;
+  scoreHost = null;
   setTrack(null);
   setSegments([]);
+  setVersions([]);
+  setSetting(null);
+  setSettingError(null);
   setState('closed');
   setVideoOpen(false);
   setScoreOpen(false);
@@ -273,16 +360,19 @@ export function close(): void {
  * pantalla: una petición por tune abierta (el adaptador cachea por sesión) en
  * vez de una por lista. Sin segmento, el control de vídeo no se pinta.
  */
-async function loadSegments(row: RepertoireRow): Promise<void> {
+async function loadSegments(row: RepertoireRow): Promise<readonly TuneSegment[]> {
   const ref = row.tune?.origin_ref;
-  if (!ref) return;
+  if (!ref) return [];
   try {
     const map = await fetchSegments([ref]);
-    if (track()?.id !== row.id) return;
-    setSegments(map.get(ref) ?? []);
+    if (track()?.id !== row.id) return [];
+    const list = map.get(ref) ?? [];
+    setSegments(list);
+    return list;
   } catch {
     // TradTube caído no es un fallo del reproductor: se sigue sin vídeo.
     if (track()?.id === row.id) setSegments([]);
+    return [];
   }
 }
 
@@ -298,6 +388,9 @@ export function openVideo(): void {
   clearLoop();
   lastVideoEvent = null;
   setVideoFallback(false);
+  // El vídeo se abre **visible**: si el panel quedara plegado sonaría una
+  // imagen que no se ve, y el panel es donde viven sus mandos (#59).
+  setPanelOpen(true);
   setState('loading');
   setVideoOpen(true);
 }
@@ -311,12 +404,21 @@ export function closeVideo(): void {
   setVideoOpen(false);
 }
 
+/**
+ * Cambiar de motor sin cerrar el dock (#59): el botón `ABC` del panel del vídeo.
+ * Desmonta el vídeo por la puerta de siempre y arranca el sintetizador.
+ */
+export function switchToAbc(): void {
+  if (!videoOpen()) return;
+  closeVideo();
+  void play();
+}
+
 /* ── vídeo: control desde el dock (#53) ────────────────────────────────── */
 
-/** Vuelve al 100 % y a la escalera de referencia. Cambio de tune o cierre. */
+/** Vuelve al 100 %. Cambio de tune o cierre. */
 function resetVideoRate(): void {
   setVideoRate(DEFAULT_VIDEO_RATE);
-  setVideoRates(VIDEO_RATES);
   setVideo(null);
   setVideoFallback(false);
   lastVideoEvent = null;
@@ -330,13 +432,26 @@ function applyVideoEvent(event: VideoEvent): void {
   else setState('idle');
 }
 
+/**
+ * El final del segmento (#59). El `<iframe>` lleva `end` en los `playerVars`, así
+ * que YouTube se para solo al terminar la tune; aquí solo queda volver a
+ * empezarla si el loop está marcado. `seek` + `play`, no `loadVideoById`: no hay
+ * que recargar el reproductor ni perder la velocidad elegida.
+ */
+function onVideoEnded(): void {
+  if (!videoOpen() || !looping()) return;
+  const segment = pickSegment(segments());
+  const player = video();
+  if (!segment || !player) return;
+  player.seek(segment.startSec);
+  player.play();
+}
+
 /** El reproductor está montado: se registra y se le aplica la velocidad vigente. */
-export function attachVideo(handle: VideoPlayerHandle, rates: readonly number[]): void {
-  const ladder = usableRates(rates);
-  setVideoRates(ladder);
+export function attachVideo(handle: VideoPlayerHandle): void {
   setVideo(handle);
   setVideoFallback(false);
-  handle.setRate(nearestRate(videoRate(), ladder));
+  handle.setRate(clampRate(videoRate()));
   if (lastVideoEvent) applyVideoEvent(lastVideoEvent);
   else if (state() === 'loading') setState('idle');
 }
@@ -357,12 +472,15 @@ export function videoUncontrolled(): void {
 export function videoStateChanged(event: VideoEvent): void {
   lastVideoEvent = event;
   applyVideoEvent(event);
+  if (event === 'ended') onVideoEnded();
 }
 
 /** `onPlaybackRateChange`: el usuario tocó la velocidad en el menú nativo de YouTube. */
 export function videoRateChanged(rate: number): void {
   if (!Number.isFinite(rate) || rate <= 0) return;
-  setVideoRate(nearestRate(rate, videoRates()));
+  // Se acepta lo que el reproductor confirma, no lo que se le pidió: si YouTube
+  // cuantiza el valor, el rótulo tiene que decir la verdad.
+  setVideoRate(clampRate(rate));
 }
 
 /** `onError` del reproductor: vídeo borrado, privado o sin permiso de inserción. */
@@ -371,12 +489,25 @@ export function videoFailed(): void {
   setState('failed');
 }
 
-/** `−` / `+` de la velocidad: recorre los escalones del player y los aplica en caliente. */
+/** `−` / `+` de la velocidad: pasos del 5 % aplicados en caliente (#59). */
 export function shiftVideoRate(delta: number): void {
-  const next = stepRate(videoRate(), delta, videoRates());
+  const next = stepRate(videoRate(), delta);
   if (next === videoRate()) return;
   setVideoRate(next);
   video()?.setRate(next);
+}
+
+/**
+ * Volver al inicio **del tune**, no del vídeo (#59): el segmento suele empezar a
+ * mitad del vídeo, así que un `seekTo(0)` devolvería al set anterior o al
+ * principio de la grabación. Si estaba sonando, sigue sonando desde ahí.
+ */
+export function seekToTuneStart(): void {
+  const segment = pickSegment(segments());
+  const player = video();
+  if (!segment || !player) return;
+  player.seek(segment.startSec);
+  if (state() === 'playing') player.play();
 }
 
 export function togglePanel(): void {
@@ -409,7 +540,34 @@ export function cycleInstrument(): void {
   if (state() === 'playing' || state() === 'loading') void restart();
 }
 
-/** Vuelve a montar el motor con el tempo o el instrumento actuales. */
+/**
+ * Elegir versión (#59). Se pinta al instante —la lista y la partitura— y se
+ * guarda como preferencia de la fila; si el guardado falla, la fila vuelve a su
+ * valor anterior y la bandeja lo dice. No se finge un guardado.
+ */
+export function chooseSetting(id: string): void {
+  const row = track();
+  if (!row) return;
+  const version = versions().find((candidate) => candidate.id === id);
+  if (!version) return;
+
+  const previous = row.preferredSetting;
+  setSetting(id);
+  abcText = version.abc;
+  setTrack({ ...row, preferredSetting: id });
+  setSettingError(null);
+
+  void savePreferredSetting(row.id, id).catch(() => {
+    if (track()?.id !== row.id) return;
+    setTrack({ ...row, preferredSetting: previous });
+    setSettingError('could not save');
+  });
+
+  if (state() === 'playing' || state() === 'loading') void restart();
+  if (scoreOpen() && scoreHost) void paintScore(scoreHost);
+}
+
+/** Vuelve a montar el motor con el tempo, el instrumento y la versión actuales. */
 async function restart(): Promise<void> {
   const abc = abcText;
   if (!abc) return;
@@ -454,6 +612,7 @@ export function toggleScore(): void {
 
 /** La partitura se dibuja al desplegarla, nunca antes. */
 export async function paintScore(host: HTMLElement): Promise<void> {
+  scoreHost = host;
   const abc = await ensureAbc();
   if (!abc) {
     setState('no-abc');
@@ -481,6 +640,14 @@ export const currentInstrument = instrument;
 export const isLooping = looping;
 export const currentDuration = durationSec;
 export const currentStatus = () => statusText(state());
+/** Las versiones disponibles de la tune en el dock. */
+export const currentVersions = versions;
+/** El id de la versión en curso; `null` mientras no hay ninguna. */
+export const currentSetting = setting;
+/** Hay más de una versión entre las que elegir: sin esto el selector no se pinta. */
+export const canPickSetting = () => versions().length > 1;
+/** La preferencia no se pudo guardar: texto para la bandeja, `null` si todo fue bien. */
+export const currentSettingError = settingError;
 /**
  * El ▶ está disponible. En ABC, según el estado del motor. En vídeo, cuando el
  * reproductor existe y no está cargando; **sin control** (la IFrame API no
@@ -493,11 +660,13 @@ export const currentPlayable = () => {
 };
 export const currentVideoRate = videoRate;
 export const currentVideoRateLabel = () => rateLabel(videoRate());
-export const canShiftVideoRate = (delta: number) => canStepRate(videoRate(), delta, videoRates());
+export const canShiftVideoRate = (delta: number) => canStepRate(videoRate(), delta);
 /** Hay reproductor y por tanto el dock lo gobierna. */
 export const isVideoControllable = () => video() !== null;
 /** La API no cargó: el vídeo se ve como iframe plano, sin control del dock. */
 export const isVideoUncontrolled = videoFallback;
+/** Hay un segmento al que volver: el botón «inicio del tune» no se pinta si no. */
+export const canSeekVideo = () => video() !== null && pickSegment(segments()) !== null;
 export const reserve = () => dockReserve(state(), panelOpen());
 
 /** «Play <tune>» / «Pause <tune>» / «Loading <tune>». En vídeo, el vídeo es el sujeto. */

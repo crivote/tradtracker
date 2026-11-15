@@ -2,68 +2,62 @@ import { describe, expect, it } from 'vitest';
 import type { TuneSegment } from './tradtube';
 import {
   DEFAULT_VIDEO_RATE,
-  VIDEO_RATES,
+  VIDEO_RATE_MAX,
+  VIDEO_RATE_MIN,
   canStepRate,
+  clampRate,
   fallbackEmbedUrl,
-  nearestRate,
   rateLabel,
   stepRate,
-  usableRates,
   videoEventFromState,
 } from './video-player';
 
 /**
- * Lo puro del reproductor de vídeo (#53), sin navegador: los escalones de
- * velocidad, su rótulo en % y la traducción de los estados de YouTube.
+ * Lo puro del reproductor de vídeo (#53, pasos del 5 % en #59), sin navegador:
+ * el escalón de velocidad, su rótulo en % y la traducción de los estados de
+ * YouTube.
  */
 
-describe('escalones de velocidad', () => {
+describe('velocidad en pasos del 5 %', () => {
   it('rotula en % sobre el tanto por uno', () => {
     expect(rateLabel(1)).toBe('100%');
     expect(rateLabel(0.75)).toBe('75%');
-    expect(rateLabel(1.25)).toBe('125%');
-    expect(rateLabel(2)).toBe('200%');
+    expect(rateLabel(0.55)).toBe('55%');
   });
 
-  it('la escalera por defecto es la de YouTube, de menor a mayor', () => {
-    expect(usableRates()).toEqual([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
-    expect(VIDEO_RATES).toEqual([0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
+  it('el dominio es el de TradTube: 50 % a 100 %, arranque al 100 %', () => {
+    expect(VIDEO_RATE_MIN).toBe(0.5);
+    expect(VIDEO_RATE_MAX).toBe(1);
     expect(DEFAULT_VIDEO_RATE).toBe(1);
   });
 
-  it('limpia lo que declara el player: sin ceros, sin negativos, sin repetidos', () => {
-    expect(usableRates([2, 1, 1, 0.5, 0, -1, Number.NaN])).toEqual([0.5, 1, 2]);
+  it('baja en veinte pasos de 5 puntos, no en ocho escalones de YouTube', () => {
+    expect(stepRate(1, -1)).toBe(0.95);
+    expect(stepRate(0.95, -1)).toBe(0.9);
+    expect(stepRate(0.85, -1)).toBe(0.8);
+    // Sumar 0,05 veinte veces no puede dejar error de coma flotante.
+    let rate = 1;
+    for (let i = 0; i < 20; i += 1) rate = stepRate(rate, -1);
+    expect(rate).toBe(VIDEO_RATE_MIN);
+    expect(rateLabel(rate)).toBe('50%');
   });
 
-  it('una escalera inservible cae en la de referencia, nunca en vacío', () => {
-    expect(usableRates([])).toEqual(VIDEO_RATES);
-    expect(usableRates([0, -0.5])).toEqual(VIDEO_RATES);
-    expect(usableRates(null)).toEqual(VIDEO_RATES);
+  it('se acota en los dos extremos y el botón del extremo se deshabilita', () => {
+    expect(stepRate(VIDEO_RATE_MIN, -1)).toBe(VIDEO_RATE_MIN);
+    expect(stepRate(VIDEO_RATE_MAX, 1)).toBe(VIDEO_RATE_MAX);
+    expect(canStepRate(VIDEO_RATE_MIN, -1)).toBe(false);
+    expect(canStepRate(VIDEO_RATE_MAX, 1)).toBe(false);
+    expect(canStepRate(VIDEO_RATE_MIN, 1)).toBe(true);
+    expect(canStepRate(VIDEO_RATE_MAX, -1)).toBe(true);
   });
 
-  it('el escalón más cercano existe aunque la velocidad pedida no', () => {
-    expect(nearestRate(0.8)).toBe(0.75);
-    expect(nearestRate(1.9)).toBe(2);
-    expect(nearestRate(0.8, [0.5, 1, 2])).toBe(1);
-    // Una velocidad imposible no rompe el arranque: se cae al 100 %.
-    expect(nearestRate(Number.NaN)).toBe(1);
-  });
-
-  it('sube y baja un escalón, y se acota en los dos extremos', () => {
-    expect(stepRate(1, 1)).toBe(1.25);
-    expect(stepRate(1, -1)).toBe(0.75);
-    expect(stepRate(0.25, -1)).toBe(0.25);
-    expect(stepRate(2, 1)).toBe(2);
-    expect(canStepRate(0.25, -1)).toBe(false);
-    expect(canStepRate(2, 1)).toBe(false);
-    expect(canStepRate(1, 1)).toBe(true);
-    expect(canStepRate(1, -1)).toBe(true);
-  });
-
-  it('respeta la escalera que declara el player, no la de referencia', () => {
-    expect(stepRate(0.5, 1, [0.5, 1, 2])).toBe(1);
-    expect(stepRate(1, 1, [0.5, 1, 2])).toBe(2);
-    expect(stepRate(0.5, -1, [0.5, 1, 2])).toBe(0.5);
+  it('un valor inservible cae al 100 % en vez de propagarse al reproductor', () => {
+    expect(clampRate(Number.NaN)).toBe(1);
+    expect(clampRate(0)).toBe(1);
+    expect(clampRate(-1)).toBe(1);
+    // Lo que YouTube confirma se redondea al 1 %: `0.8500000000000001` es 85 %.
+    expect(clampRate(0.8500000000000001)).toBe(0.85);
+    expect(clampRate(3)).toBe(1);
   });
 });
 

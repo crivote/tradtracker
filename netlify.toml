@@ -30,6 +30,17 @@
   to = "/404.html"
   status = 404
 
+# Proxy same-origin a TheSession (#59). Su API **no manda** `Access-Control-Allow-Origin`
+# (medido 2026-11-15: 200 sin la cabecera, con Origen y en el preflight), así que el navegador
+# no puede leerla directamente: el fallback de ABC a la red nunca funcionó en producción y las
+# tunes sin `pr_tunes.abc` decían «no ABC». Servida desde este dominio, la petición de la app
+# es del mismo origen y no hay CORS que negociar.
+[[redirects]]
+  from = "/ts/*"
+  to = "https://thesession.org/:splat"
+  status = 200
+  force = true
+
 # Cualquier otra ruta es de la app: index.html y el router de SolidJS decide.
 [[redirects]]
   from = "/*"
