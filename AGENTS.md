@@ -92,7 +92,7 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
 | D3 | Multiusuario público desde v1, RLS completa desde el primer esquema |
 | D4 | **Identidad propia**: `pr_tunes.id` uuid + `origin` + `origin_ref`. Sin esquema prefijado `ts:`/`loc:` |
 
-## Esquema (migraciones `001`–`022`)
+## Esquema (migraciones `001`–`023`)
 
 - **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `composer` (010), `created_by`, `created_at`. Único `(origin, origin_ref)`.
   RLS: lectura para autenticados; alta/edición/borrado solo del creador.
@@ -124,6 +124,11 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
     id de setting de TheSession (`setting12342`, sacado de la línea `S:` del bloque) o `n<índice>` cuando el
     texto no lo trae; `NULL` = no hay preferencia y manda la primera. No la interpreta ningún trigger: es
     texto opaco para el esquema y lo escribe el cliente desde el dock.
+  - **`preferred_media text`** (023, #64): el vídeo que el dueño fija para esa tune, entre los varios que
+    TradTube devuelve. Guarda el `tune_media.id` de TradTube —uuid que este esquema no interpreta ni valida—;
+    `NULL` = sin preferencia y manda el **primer vídeo disponible**. Lo escribe el cliente desde el dock, sin
+    trigger ni CHECK. Un id que ya no exista en TradTube **se ignora al leer** (se cae al primero disponible)
+    y no se limpia: si el vídeo reaparece, la elección sigue ahí.
   - **`learned_on date`** (019): día aproximado en que se **aprendió** la tune, `NULL` = no se sabe. No es
     `added_at` —que dice cuándo entró en tuneshed— y no se rellena con él: hay tunes que se sabían años antes
     (importaciones; el histórico de Folk Companion). Lo escribe el cliente desde el cajón del alta; ningún
