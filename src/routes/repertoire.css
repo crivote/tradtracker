@@ -171,37 +171,9 @@
   stroke-width: 1.7;
 }
 
-/*
- * La puerta a la búsqueda (#9): ocupa el hueco que tenía el campo de la home.
- * No es un campo —aquí no se teclea—, así que se pinta como texto con la lupa y
- * el mismo subrayado de la herramienta que sustituye.
- */
-.repertoire-home .search--door {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--muted);
-  background: none;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  cursor: pointer;
-  padding: 6px 0 5px;
-  text-align: left;
-  text-decoration: none;
-}
-.repertoire-home .search--door:hover {
-  color: var(--accent);
-}
-.repertoire-home .search--door:hover svg {
-  stroke: var(--accent);
-}
-.repertoire-home .search--door:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-  border-radius: 2px;
-}
+/* La puerta a la búsqueda que vivía aquí (`.search--door`) se retiró en #65: la
+   búsqueda tiene su entrada en el menú principal y una segunda puerta en la
+   cabecera era duplicarla. */
 
 /* ── vista de búsqueda (#9) ──────────────────────────────────────
    Mismo papel y misma carta que la home: la pantalla solo añade su barra de
