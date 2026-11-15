@@ -48,6 +48,7 @@ function row(overrides: Partial<RepertoireRow> & { id: string }): RepertoireRow 
     custom_key: null,
     customAbc: null,
     preferredSetting: null,
+    preferredMedia: null,
     notes: null,
     added_at: '2020-01-01T00:00:00+00:00',
     learnedOn: null,

@@ -1,18 +1,24 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
-import { hasVideoControl, pickSegment } from '../lib/player-model';
+import { hasVideoControl } from '../lib/player-model';
 import { TEMPO_STEP } from '../lib/abc-player';
 import { fallbackEmbedUrl, mountVideoPlayer, type VideoPlayerHandle } from '../lib/video-player';
 import type { TuneSegment } from '../lib/tradtube';
 import {
   attachVideo,
+  canPickMedia,
   canPickSetting,
   canSeekVideo,
   canShiftVideoRate,
+  chooseMedia,
   chooseSetting,
   close,
   closeVideo,
   currentInstrumentLabel,
+  currentMediaError,
+  currentMediaNotice,
+  currentMediaOptions,
   currentPlayable,
+  currentSegment,
   currentSegments,
   currentSetting,
   currentSettingError,
@@ -24,6 +30,7 @@ import {
   cycleInstrument,
   detachVideo,
   dockState,
+  isCurrentPinned,
   isLooping,
   isPanelOpen,
   isScoreOpen,
@@ -43,6 +50,7 @@ import {
   switchToAbc,
   toggleLoop,
   togglePanel,
+  togglePinMedia,
   toggleScore,
   videoFailed,
   videoRateChanged,
@@ -130,6 +138,72 @@ function VideoPanel(props: { segment: TuneSegment }) {
           <span aria-hidden="true">✕</span>
         </button>
       </div>
+
+      {/* El selector y el pin (#64): con un solo vídeo no se pinta nada —una
+          lista de un elemento es ruido—. Elegir es fijar, igual que en
+          «Version»: la preferencia vive en la fila y sigue al usuario. */}
+      <Show when={canPickMedia()}>
+        <div class="player-dock__media">
+          <label class="player-dock__versions-field">
+            <span>Video</span>
+            <select
+              value={currentSegment()?.mediaId ?? undefined}
+              onChange={(event) => chooseMedia(event.currentTarget.value)}
+            >
+              <For each={currentMediaOptions()}>
+                {(option) => (
+                  <option value={option.mediaId} disabled={option.segment.unavailable}>
+                    {option.label}
+                    {option.segment.unavailable ? ' · unavailable' : ''}
+                  </option>
+                )}
+              </For>
+            </select>
+          </label>
+
+          <button
+            type="button"
+            class="player-dock__pin"
+            aria-pressed={isCurrentPinned() ? 'true' : 'false'}
+            aria-label={
+              isCurrentPinned() ? 'Unpin this video' : 'Pin this video as preferred'
+            }
+            title={
+              isCurrentPinned()
+                ? 'Pinned: this video opens first'
+                : 'Pin this video as the one that opens first'
+            }
+            onClick={togglePinMedia}
+          >
+            {/* Chincheta, en el trazo del resto del dock: nada de emoji a color
+                en una barra monocroma. */}
+            <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+              <path
+                class="player-dock__pin-head"
+                d="M9.9 1.1 14.9 6.1 13.3 7.7 12.1 7.5 9.5 10.1 9.7 12.4 8.5 13.6 2.4 7.5 3.6 6.3 5.9 6.5 8.5 3.9 8.3 2.7 Z"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M5.7 10.3 1.6 14.4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+
+          <Show when={currentMediaNotice()}>
+            {(text) => <span class="player-dock__versions-error">{text()}</span>}
+          </Show>
+          <Show when={currentMediaError()}>
+            {(text) => <span class="player-dock__versions-error">{text()}</span>}
+          </Show>
+        </div>
+      </Show>
 
       {/* Sin player no hay velocidad ni salto que gobernar: la barra no se pinta. */}
       <Show when={!isVideoUncontrolled()}>
@@ -273,7 +347,7 @@ export function PlayerDock() {
     root.style.setProperty('--dock-space-paper', `${Math.max(0, space - 90)}px`);
   });
 
-  const segment = () => pickSegment(currentSegments());
+  const segment = () => currentSegment();
 
   return (
     <>

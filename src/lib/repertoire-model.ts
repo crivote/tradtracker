@@ -119,6 +119,17 @@ export interface RepertoireRow {
    * la recarga porque vive en la base.
    */
   preferredSetting: string | null;
+  /**
+   * Vídeo preferido de la tune (#64, columna `preferred_media`): el
+   * `tune_media.id` de TradTube, que es un uuid y aquí se guarda como texto
+   * porque esta base no lo interpreta. `null` = no hay preferencia y manda el
+   * primer vídeo disponible, que es el comportamiento anterior.
+   *
+   * Un id que ya no exista en TradTube **no se limpia**: se ignora al leer y
+   * vuelve a mandar el primero. Borrarlo sería escribir en la base por un
+   * fallo de la otra, y si el vídeo reaparece, la elección sigue ahí.
+   */
+  preferredMedia: string | null;
   notes: string | null;
   added_at: string;
   /**
@@ -278,6 +289,12 @@ export function mapRepertoireRow(
     // a la migración 020, un doble de test o un `null` son «sin preferencia».
     preferredSetting: typeof row.preferred_setting === 'string' && row.preferred_setting.trim().length > 0
       ? row.preferred_setting
+      : null,
+    // Vídeo preferido (#64): tolerante por la misma razón que las anteriores —
+    // fila anterior a la migración 023, doble de test o `null` son «sin
+    // preferencia», y entonces manda el primer vídeo disponible.
+    preferredMedia: typeof row.preferred_media === 'string' && row.preferred_media.trim().length > 0
+      ? row.preferred_media
       : null,
     notes: row.notes ?? null,
     added_at: row.added_at,

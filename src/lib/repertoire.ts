@@ -35,6 +35,10 @@ const REPERTOIRE_SELECT = [
   // Versión preferida del ABC (#59, migración 020): sin esta columna en el
   // `select`, la elección de versión no sobrevive a la recarga.
   'preferred_setting',
+  // Vídeo preferido (#64, migración 023): sin esta columna en el `select`, el
+  // pin del reproductor no sobrevive a la recarga y el dock abre siempre el
+  // primero, que es justo lo que el corte viene a evitar.
+  'preferred_media',
   'notes',
   'added_at',
   // Último día ensayado (`YYYY-MM-DD` local, migración 017). La antigüedad de la
@@ -488,6 +492,30 @@ export async function savePreferredSetting(
 
   if (error) throw new Error(`Could not save the ABC version: ${error.message}`);
   if (!data?.id) throw new Error('Could not save the ABC version: that tune is not yours.');
+}
+
+/**
+ * El vídeo preferido de una tune (#64): el `tune_media.id` de TradTube, o
+ * `null` para volver a «el primero disponible».
+ *
+ * Un UPDATE que no toca ninguna fila responde sin error, así que se verifica
+ * que la fila era del usuario — misma guarda que la versión de ABC— o el pin se
+ * perdería en silencio y el dock volvería al primer vídeo en la siguiente
+ * recarga sin decir nada.
+ */
+export async function savePreferredMedia(
+  repertoireId: string,
+  mediaId: string | null
+): Promise<void> {
+  const { data, error } = await supabase
+    .from('pr_repertoire')
+    .update({ preferred_media: mediaId })
+    .eq('id', repertoireId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not save the video: ${error.message}`);
+  if (!data?.id) throw new Error('Could not save the video: that tune is not yours.');
 }
 
 /* ── import del tunebook de The Session (#32, corte 2) ─────────────── */

@@ -36,6 +36,7 @@ function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
     custom_key: null,
     customAbc: null,
     preferredSetting: null,
+    preferredMedia: null,
     notes: null,
     added_at: '2026-09-01T10:00:00Z',
     // El campo viaja en toda fila (migración 019); `null` = no se sabe.

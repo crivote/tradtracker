@@ -119,13 +119,83 @@ export function metaParts(meta: DockMeta): string[] {
 }
 
 /**
- * El segmento que abre el vídeo: el primero **disponible**. Una entrada caída
- * no debe tapar otra que sí se puede ver; si no hay ninguna disponible queda la
- * primera y el control sale deshabilitado (aquí las caídas se enseñan, a
- * diferencia del frontal de TradTube).
+ * El segmento que abre el vídeo: el **fijado** por el usuario si sigue
+ * disponible, y si no el primero disponible. Una entrada caída no debe tapar
+ * otra que sí se puede ver; si no hay ninguna disponible queda la primera y el
+ * control sale deshabilitado (aquí las caídas se enseñan, a diferencia del
+ * frontal de TradTube).
+ *
+ * Un `preferredMedia` que no está en la lista —vídeo retirado de TradTube, o
+ * preferencia de una fila que ya no lo trae— se ignora en silencio: la tune
+ * sigue sonando con el primero, que es lo que hacía antes de existir el pin.
  */
-export function pickSegment(segments: readonly TuneSegment[]): TuneSegment | null {
+export function pickSegment(
+  segments: readonly TuneSegment[],
+  preferredMedia: string | null = null
+): TuneSegment | null {
+  if (preferredMedia) {
+    const pinned = segments.find(
+      (segment) => segment.mediaId === preferredMedia && !segment.unavailable
+    );
+    if (pinned) return pinned;
+  }
   return segments.find((segment) => !segment.unavailable) ?? segments[0] ?? null;
+}
+
+/**
+ * El vídeo fijado **aunque esté caído**: sirve para saber si el pin apunta a
+ * algo que todavía existe. `pickSegment` no vale para esto, porque un fijado
+ * caído cae al primero disponible y la UI diría que el pin no está puesto.
+ */
+export function pinnedSegment(
+  segments: readonly TuneSegment[],
+  preferredMedia: string | null | undefined
+): TuneSegment | null {
+  if (!preferredMedia) return null;
+  return segments.find((segment) => segment.mediaId === preferredMedia) ?? null;
+}
+
+/** Una entrada del selector de vídeo: un `tune_media`, con el tramo que lo abre. */
+export interface MediaOption {
+  mediaId: string;
+  /** El tramo que se abre al elegir este vídeo (el primero del `mediaId`). */
+  segment: TuneSegment;
+  label: string;
+}
+
+/**
+ * El rótulo de un vídeo en el selector: su título y, si el tramo no empieza en
+ * cero, desde dónde suena. Se recorta porque los títulos de YouTube son largos
+ * y un `<select>` no envuelve: es un rótulo, no la ficha del vídeo.
+ */
+export function mediaOptionLabel(segment: TuneSegment, index: number): string {
+  const name = segment.title?.trim() || `Video ${index + 1}`;
+  const start = formatDuration(segment.startSec);
+  const end = formatDuration(segment.endSec);
+  const range = start && end ? `${start}–${end}` : start ? `from ${start}` : null;
+  const label = range ? `${name} · ${range}` : name;
+  return label.length > 72 ? `${label.slice(0, 71)}…` : label;
+}
+
+/**
+ * Un vídeo por `tune_media`, no un tramo por fila: una misma grabación puede
+ * tener dos cortes de la tune y en el selector debe salir **una vez**. Conserva
+ * el orden canónico de `parseSegmentRows` (posición), así que la primera opción
+ * es la que abría el dock antes de este corte.
+ */
+export function mediaOptions(segments: readonly TuneSegment[]): MediaOption[] {
+  const seen = new Set<string>();
+  const options: MediaOption[] = [];
+  for (const segment of segments) {
+    if (seen.has(segment.mediaId)) continue;
+    seen.add(segment.mediaId);
+    options.push({
+      mediaId: segment.mediaId,
+      segment,
+      label: mediaOptionLabel(segment, options.length),
+    });
+  }
+  return options;
 }
 
 /**

@@ -292,6 +292,51 @@
   background: var(--dock-bg);
 }
 
+/* Selector y pin del vídeo preferido (#64): el campo reutiliza la tipografía de
+   «Version» —es el mismo gesto— y el pin se rellena cuando está puesto. */
+.player-dock__media {
+  display: flex;
+  align-items: center;
+  gap: 8px 10px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-top: 1px solid var(--dock-line);
+  background: var(--dock-bg);
+}
+
+.player-dock__pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--dock-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dock-meta);
+  cursor: pointer;
+}
+
+.player-dock__pin:hover {
+  color: var(--dock-ink);
+}
+
+.player-dock__pin[aria-pressed='true'] {
+  color: var(--dock-ochre-light);
+  border-color: currentColor;
+}
+
+/* La cabeza de la chincheta se rellena al fijar; la aguja sigue a trazo. */
+.player-dock__pin[aria-pressed='true'] .player-dock__pin-head {
+  fill: currentColor;
+}
+
+.player-dock__pin:focus-visible {
+  outline: 2px solid var(--dock-ochre-light);
+  outline-offset: 2px;
+}
+
 .player-dock__speed {
   display: inline-flex;
   align-items: center;

@@ -4,8 +4,11 @@ import {
   dockReserve,
   formatDuration,
   hasVideoControl,
+  mediaOptionLabel,
+  mediaOptions,
   metaParts,
   pickSegment,
+  pinnedSegment,
   statusText,
   type DockState,
 } from './player-model';
@@ -117,6 +120,62 @@ describe('vídeo', () => {
   it('sin ningún segmento el control no existe', () => {
     expect(pickSegment([])).toBeNull();
     expect(hasVideoControl([])).toBe(false);
+  });
+});
+
+describe('vídeo preferido (#64)', () => {
+  it('el fijado manda sobre el primero disponible', () => {
+    const segments = [segment({ mediaId: 'a' }), segment({ mediaId: 'b' })];
+    expect(pickSegment(segments, 'b')?.mediaId).toBe('b');
+  });
+
+  it('un pin a un vídeo caído no deja la tune muda: suena el primero sano', () => {
+    const segments = [
+      segment({ mediaId: 'a' }),
+      segment({ mediaId: 'b', unavailable: true }),
+    ];
+    expect(pickSegment(segments, 'b')?.mediaId).toBe('a');
+    // El pin sigue ahí y la UI lo puede decir: el fijado existe, está caído.
+    expect(pinnedSegment(segments, 'b')?.unavailable).toBe(true);
+  });
+
+  it('un pin huérfano —vídeo retirado de TradTube— se ignora en silencio', () => {
+    const segments = [segment({ mediaId: 'a' })];
+    expect(pickSegment(segments, 'ya-no-existe')?.mediaId).toBe('a');
+    expect(pinnedSegment(segments, 'ya-no-existe')).toBeNull();
+  });
+
+  it('sin preferencia se comporta como antes: primer disponible', () => {
+    const segments = [segment({ mediaId: 'a', unavailable: true }), segment({ mediaId: 'b' })];
+    expect(pickSegment(segments, null)?.mediaId).toBe('b');
+    expect(pinnedSegment(segments, null)).toBeNull();
+  });
+});
+
+describe('selector de vídeo (#64)', () => {
+  it('un `mediaId` sale una vez aunque tenga dos tramos de la tune', () => {
+    const segments = [
+      segment({ mediaId: 'a', position: 0 }),
+      segment({ mediaId: 'a', position: 1, startSec: 60, endSec: 120 }),
+      segment({ mediaId: 'b', position: 2 }),
+    ];
+    const options = mediaOptions(segments);
+    expect(options.map((option) => option.mediaId)).toEqual(['a', 'b']);
+    // El tramo que abre el vídeo es el primero del media, no el segundo.
+    expect(options[0].segment.position).toBe(0);
+  });
+
+  it('sin título el rótulo numera el vídeo y añade el rango del tramo', () => {
+    expect(mediaOptionLabel(segment({ title: null, startSec: 65, endSec: 125 }), 1)).toBe(
+      'Video 2 · 1:05–2:05'
+    );
+  });
+
+  it('con título corto no lo toca; con uno largo lo recorta', () => {
+    expect(mediaOptionLabel(segment({ title: 'Kesh on fiddle' }), 0)).toBe('Kesh on fiddle');
+    const long = mediaOptionLabel(segment({ title: 'x'.repeat(120) }), 0);
+    expect(long.length).toBe(72);
+    expect(long.endsWith('…')).toBe(true);
   });
 });
 

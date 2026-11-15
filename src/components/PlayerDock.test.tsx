@@ -48,10 +48,25 @@ vi.mock('../lib/video-player', async (importOriginal) => {
   return { ...actual, mountVideoPlayer: vi.fn() };
 });
 
+/*
+ * Guardar una preferencia escribe en Supabase (`pr_repertoire`): en `jsdom` eso
+ * sería una salida a internet. Se sustituyen solo las dos escrituras; el resto
+ * del módulo se queda real.
+ */
+vi.mock('../lib/repertoire', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/repertoire')>();
+  return {
+    ...actual,
+    savePreferredSetting: vi.fn(async () => undefined),
+    savePreferredMedia: vi.fn(async () => undefined),
+  };
+});
+
 import { startEngine, stopEngine } from '../lib/player-engine';
 import { loadVersions } from '../lib/abc-source';
 import { fetchSegments, type TuneSegment } from '../lib/tradtube';
 import { mountVideoPlayer, type VideoPlayerHandle } from '../lib/video-player';
+import { savePreferredMedia } from '../lib/repertoire';
 import {
   resetPlayerForTests,
   toggleLoop,
@@ -67,6 +82,7 @@ const mockedStop = vi.mocked(stopEngine);
 const mockedSegments = vi.mocked(fetchSegments);
 const mockedMount = vi.mocked(mountVideoPlayer);
 const mockedVersions = vi.mocked(loadVersions);
+const mockedSaveMedia = vi.mocked(savePreferredMedia);
 
 type FakePlayer = VideoPlayerHandle & {
   play: ReturnType<typeof vi.fn>;
@@ -103,6 +119,7 @@ function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
     custom_key: null,
     customAbc: null,
     preferredSetting: null,
+    preferredMedia: null,
     notes: null,
     added_at: '2026-09-01T10:00:00Z',
     learnedOn: null,
@@ -546,5 +563,104 @@ describe('bandeja', () => {
     const first = instrument.textContent;
     fireEvent.click(instrument);
     expect(screen.getByRole('button', { name: /^Instrument:/ }).textContent).not.toBe(first);
+  });
+});
+
+describe('vídeo preferido (#64)', () => {
+  /** Dos vídeos de la misma tune: el segundo es el que el usuario quiere fijar. */
+  const twoVideos = () =>
+    mockedSegments.mockResolvedValue(
+      new Map([
+        [
+          '55',
+          [
+            segment({ mediaId: 'm-1', title: 'Kesh on fiddle' }),
+            segment({
+              mediaId: 'm-2',
+              title: 'Kesh in a session',
+              position: 1,
+              startSec: 90,
+              endSec: 150,
+            }),
+          ],
+        ],
+      ])
+    );
+
+  it('con varios vídeos se ofrece el selector y arranca el primero', async () => {
+    twoVideos();
+    render(() => <Harness />);
+    await openDock();
+
+    await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+    const select = screen.getByRole('combobox', { name: 'Video' }) as HTMLSelectElement;
+    expect(select.value).toBe('m-1');
+    // Dos vídeos, un `<option>` cada uno; el título es el rótulo.
+    expect(Array.from(select.options).map((option) => option.value)).toEqual(['m-1', 'm-2']);
+    expect(select.options[1].textContent).toContain('Kesh in a session');
+  });
+
+  it('con un solo vídeo el selector no se pinta: una lista de uno es ruido', async () => {
+    mockedSegments.mockResolvedValue(new Map([['55', [segment()]]]));
+    render(() => <Harness />);
+    await openDock();
+
+    await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+    expect(screen.queryByRole('combobox', { name: 'Video' })).toBeNull();
+  });
+
+  it('elegir en el selector fija el vídeo en la fila, no solo en la pantalla', async () => {
+    twoVideos();
+    render(() => <Harness />);
+    await openDock();
+    await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Video' }), {
+      target: { value: 'm-2' },
+    });
+
+    await waitFor(() => expect(mockedSaveMedia).toHaveBeenCalledWith('row-a', 'm-2'));
+  });
+
+  it('el pin fija el vídeo que suena y se vuelve a pulsar para soltarlo', async () => {
+    twoVideos();
+    render(() => <Harness />);
+    await openDock();
+    await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pin this video as preferred' }));
+    await waitFor(() => expect(mockedSaveMedia).toHaveBeenCalledWith('row-a', 'm-1'));
+
+    // Fijado: el mismo botón ahora suelta y la fila vuelve a «sin preferencia».
+    const unpin = await screen.findByRole('button', { name: 'Unpin this video' });
+    fireEvent.click(unpin);
+    await waitFor(() => expect(mockedSaveMedia).toHaveBeenLastCalledWith('row-a', null));
+  });
+
+  it('un vídeo fijado que se cae no deja la tune muda y el panel lo dice', async () => {
+    mockedSegments.mockResolvedValue(
+      new Map([
+        [
+          '55',
+          [
+            segment({ mediaId: 'm-1', unavailable: true }),
+            segment({ mediaId: 'm-2', title: 'Kesh in a session', position: 1 }),
+          ],
+        ],
+      ])
+    );
+    render(() => (
+      <Harness rows={[row({ preferredMedia: 'm-1' })]} />
+    ));
+    await openDock();
+
+    // Suena el segundo (el primero está caído) y el aviso nombra el fijado.
+    await waitFor(() => expect(document.querySelector('.player-dock__video iframe')).not.toBeNull());
+    await waitFor(() =>
+      expect(dock()!.textContent).toContain('pinned video unavailable')
+    );
+    const select = screen.getByRole('combobox', { name: 'Video' }) as HTMLSelectElement;
+    expect(select.value).toBe('m-2');
+    expect(select.options[0].disabled).toBe(true);
   });
 });

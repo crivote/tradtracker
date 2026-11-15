@@ -13,8 +13,10 @@ import {
   INSTRUMENT_PROGRAM,
   canPlay,
   dockReserve,
+  mediaOptions,
   metaParts,
   pickSegment,
+  pinnedSegment,
   statusText,
   type DockMeta,
   type DockState,
@@ -28,7 +30,7 @@ import {
   type PracticeInstrument,
 } from './practice-storage';
 import { cardKey, displayRhythm, displayTitle, type RepertoireRow } from './repertoire-model';
-import { savePreferredSetting } from './repertoire';
+import { savePreferredMedia, savePreferredSetting } from './repertoire';
 import { fetchSegments, type TuneSegment } from './tradtube';
 import {
   DEFAULT_VIDEO_RATE,
@@ -83,6 +85,8 @@ const [versions, setVersions] = createSignal<readonly AbcVersion[]>([]);
 const [setting, setSetting] = createSignal<string | null>(null);
 /** La preferencia no se pudo guardar: se dice en la bandeja, no se finge. */
 const [settingError, setSettingError] = createSignal<string | null>(null);
+/** El pin del vídeo no se pudo guardar (#64): se dice en el panel, no se finge. */
+const [mediaError, setMediaError] = createSignal<string | null>(null);
 /**
  * La velocidad del vídeo (#53), en tanto por uno. Es **estado de sesión**, no
  * preferencia: vive mientras la tune está en el dock y vuelve a 100 % al
@@ -300,6 +304,7 @@ export function openFrom(row: RepertoireRow): void {
   setVersions([]);
   setSetting(null);
   setSettingError(null);
+  setMediaError(null);
   setVideoOpen(false);
   setScoreOpen(false);
   setPanelOpen(false);
@@ -325,7 +330,7 @@ export function openFrom(row: RepertoireRow): void {
 async function startTune(row: RepertoireRow): Promise<void> {
   const list = await loadSegments(row);
   if (track()?.id !== row.id) return;
-  const segment = pickSegment(list);
+  const segment = pickSegment(list, row.preferredMedia);
   if (segment && !segment.unavailable) {
     openVideo();
     return;
@@ -346,6 +351,7 @@ export function close(): void {
   setVersions([]);
   setSetting(null);
   setSettingError(null);
+  setMediaError(null);
   setState('closed');
   setVideoOpen(false);
   setScoreOpen(false);
@@ -567,6 +573,44 @@ export function chooseSetting(id: string): void {
   if (scoreOpen() && scoreHost) void paintScore(scoreHost);
 }
 
+/**
+ * Elegir vídeo (#64). Igual que la versión de ABC: se pinta al instante y se
+ * guarda como preferencia de la fila; si el guardado falla, la fila vuelve a su
+ * valor anterior y el panel lo dice.
+ *
+ * **Elegir es fijar.** No hay un «vídeo de esta escucha» separado del
+ * preferido: dos estados distintos para lo mismo se contradicen en cuanto el
+ * usuario recarga, y el que manda de verdad es el que sobrevive.
+ */
+export function chooseMedia(mediaId: string | null): void {
+  const row = track();
+  if (!row) return;
+  const previous = row.preferredMedia;
+  if (previous === mediaId) return;
+
+  setTrack({ ...row, preferredMedia: mediaId });
+  setMediaError(null);
+
+  void savePreferredMedia(row.id, mediaId).catch(() => {
+    if (track()?.id !== row.id) return;
+    setTrack({ ...row, preferredMedia: previous });
+    setMediaError('could not save');
+  });
+}
+
+/**
+ * El pin: fija el vídeo que está sonando o, si ya era el fijado, lo suelta para
+ * volver a «el primero disponible». Es el mismo guardado que `chooseMedia`; no
+ * hay una segunda vía de escritura.
+ */
+export function togglePinMedia(): void {
+  const row = track();
+  if (!row) return;
+  const current = pickSegment(segments(), row.preferredMedia);
+  if (!current || current.unavailable) return;
+  chooseMedia(row.preferredMedia === current.mediaId ? null : current.mediaId);
+}
+
 /** Vuelve a montar el motor con el tempo, el instrumento y la versión actuales. */
 async function restart(): Promise<void> {
   const abc = abcText;
@@ -646,6 +690,36 @@ export const currentVersions = versions;
 export const currentSetting = setting;
 /** Hay más de una versión entre las que elegir: sin esto el selector no se pinta. */
 export const canPickSetting = () => versions().length > 1;
+/**
+ * Las opciones del selector de vídeo (#64): **un `tune_media` por entrada**, no
+ * un tramo por fila — la misma grabación con dos cortes de la tune sale una vez.
+ */
+export const currentMediaOptions = () => mediaOptions(segments());
+/** Con un solo vídeo no hay selector: una lista de un elemento es ruido. */
+export const canPickMedia = () => currentMediaOptions().length > 1;
+/** El vídeo fijado por el usuario, o `null` si no hay preferencia. */
+export const currentMediaId = () => track()?.preferredMedia ?? null;
+/**
+ * El segmento que abre el vídeo: el fijado si sigue disponible y, si no, el
+ * primero disponible — el comportamiento anterior a #64.
+ */
+export const currentSegment = () => pickSegment(segments(), track()?.preferredMedia ?? null);
+/** Lo que suena es lo que el usuario fijó: el pin se pinta activo. */
+export const isCurrentPinned = () => {
+  const current = currentSegment();
+  return current !== null && current.mediaId === currentMediaId();
+};
+/**
+ * El vídeo fijado existe en TradTube pero está caído: la tune suena con el
+ * primero y el panel lo dice. Sin este aviso, el usuario vería el pin apagado
+ * sin entender por qué.
+ */
+export const currentMediaNotice = () => {
+  const pinned = pinnedSegment(segments(), currentMediaId());
+  return pinned?.unavailable ? 'pinned video unavailable' : null;
+};
+/** El pin no se pudo guardar: texto para el panel, `null` si todo fue bien. */
+export const currentMediaError = mediaError;
 /** La preferencia no se pudo guardar: texto para la bandeja, `null` si todo fue bien. */
 export const currentSettingError = settingError;
 /**
@@ -666,7 +740,7 @@ export const isVideoControllable = () => video() !== null;
 /** La API no cargó: el vídeo se ve como iframe plano, sin control del dock. */
 export const isVideoUncontrolled = videoFallback;
 /** Hay un segmento al que volver: el botón «inicio del tune» no se pinta si no. */
-export const canSeekVideo = () => video() !== null && pickSegment(segments()) !== null;
+export const canSeekVideo = () => video() !== null && currentSegment() !== null;
 export const reserve = () => dockReserve(state(), panelOpen());
 
 /** «Play <tune>» / «Pause <tune>» / «Loading <tune>». En vídeo, el vídeo es el sujeto. */
