@@ -92,13 +92,26 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
 | D3 | Multiusuario público desde v1, RLS completa desde el primer esquema |
 | D4 | **Identidad propia**: `pr_tunes.id` uuid + `origin` + `origin_ref`. Sin esquema prefijado `ts:`/`loc:` |
 
-## Esquema (migraciones `001`–`020`)
+## Esquema (migraciones `001`–`021`)
 
 - **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `composer` (010), `created_by`, `created_at`. Único `(origin, origin_ref)`.
   RLS: lectura para autenticados; alta/edición/borrado solo del creador.
   - **`meta jsonb`** (019, `{}` por defecto, nunca `NULL`): lo que el catálogo de TheSession no trae y no
-    merece una columna por campo — `trivia`, `structure` (`AABB`), `modes_played[]` (todas las tonalidades
-    de la tune; `key` guarda la primera) y `tradition[]`. Vacío significa «sin datos».
+    merece una columna por campo — `trivia`, `structure` (`AABB`), `modes_played[]` y `tradition[]`. Vacío
+    significa «sin datos».
+  - **`key` y `meta.modes_played` están de salida** (021, #61): la tonalidad no es de la tune, es de cada
+    setting. Las dos columnas siguen vivas mientras el cliente desplegado las lea; su contenido está copiado
+    en `pr_tunes_keys_legacy`. No escribas en ellas, y para leer tonos usa los settings.
+- **`pr_tune_settings`** (021, #61) — una fila por **versión ABC**, pero **sin el ABC**: el texto ya llega al
+  vuelo desde la API (#59) y duplicarlo es peso sin valor. Columnas: `tune_id → pr_tunes`, `setting_ref` (id de
+  setting de TheSession, la identidad que guarda `pr_repertoire.preferred_setting`), `key` (enum `pr_tune_key`
+  con los 23 valores que publica TheSession), `key_raw` (lo que llegue fuera del enum). PK
+  `(tune_id, setting_ref)`; índice por tonalidad. Los tonos de una tune son `select distinct key` de aquí. Se
+  puebla con `scripts/extract-thesession-settings.py --tune <origin_ref de pr_tunes>` (478 tunes → 5.726
+  filas, ~250 KB): el volcado entero (55.774) no entra en Supabase ni se sirve al navegador, y una tune nueva
+  se resuelve granular contra la API. RLS: lectura para autenticados; escritura del creador de la tune.
+- **`pr_tunes_keys_legacy`** (021) — archivo: copia de `pr_tunes.key` y `meta.modes_played` (los 271 valores
+  del import de Folk Companion) antes de retirarlos. Sin políticas: solo `service_role`.
 - **`pr_repertoire`** — lo personal. `user_id`, `tune_id → pr_tunes`, overrides (`custom_title/rhythm/key/abc`), `status`, `rating`, `image_path`, `notes`, marcas de tiempo, `shelved` (006) y `favorite` (008) y `learned_on` (019). Único `(user_id, tune_id)`.
   - **`preferred_setting text`** (020, #59): la versión de ABC que el dueño prefiere de esa tune. Guarda el
     id de setting de TheSession (`setting12342`, sacado de la línea `S:` del bloque) o `n<índice>` cuando el
