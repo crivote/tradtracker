@@ -50,6 +50,7 @@ function row(overrides: Partial<RepertoireRow> = {}): RepertoireRow {
       rhythm: 'Jig',
       meter: '6/8',
       key: 'D',
+      keys: [],
       abc: null,
       composer: null,
     },

@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import {
   alphabeticalRows,
+  displayTitle,
   fetchRepertoire,
   rhythmOptions,
   searchRepertoire,
@@ -13,7 +14,7 @@ import {
   type TagFacetInfo,
 } from '../lib/tags';
 import { fetchTuneTags, loadVocabulary, type TagVocabulary } from '../lib/tags-db';
-import { logPractice } from '../lib/practice';
+import { openPractice } from '../lib/practice-mark';
 import TuneCard from '../components/TuneCard';
 import './repertoire.css';
 
@@ -182,17 +183,15 @@ export default function Search() {
   };
 
   /**
-   * «Practise» del kebab: mismo gesto que en la home —apunta el ensayo de un
-   * clic, sin puntuarlo— y misma recarga. La calidad se puntúa en el detalle.
+   * «Practise» del kebab: el **mismo** camino que en la home, el taller, el
+   * listado y la ficha —abre el popup de ensayo, que es donde se puntúa y se
+   * comenta—. Antes escribía la marca directamente y por eso en esta pantalla no
+   * salía el popup de valoración. La recarga la aporta `onLogged`.
    */
-  const practise = async (row: RepertoireRow) => {
-    setError(null);
-    try {
-      await logPractice(row.id, { quality: null, comment: null });
-      await reload();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
+  const practise = (row: RepertoireRow) => {
+    openPractice({ repertoireId: row.id, title: displayTitle(row) }, () => {
+      void reload();
+    });
   };
 
   onMount(() => {
