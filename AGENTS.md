@@ -60,8 +60,18 @@ el botón del taller, el menú del listado, la ficha y el botón «Rate» de la 
 `pr_practice` por `(user_id, repertoire_id, day)` — así que marcar y luego valorar la misma tune el mismo día
 **actualiza la marca**, no crea otra. Desde la lista del día, «Mark all» viaja en un solo `markPracticeDay`.
 
-El alta de tunes es un **cajón lateral** (`src/components/AddTuneAside.tsx`) desde `/` y `/learning`: no empuja la
-pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The Session vive plegado dentro.
+El alta de tunes es un **cajón lateral** (`src/components/AddTuneAside.tsx`) montado **una sola vez** en el armazón
+(`AddTuneHost`, con su estado en `src/lib/add-tune.ts`), como el popup de ensayo: no empuja la pantalla y deja elegir
+el nivel antes de añadir. El import del tunebook de The Session vive plegado dentro. Su disparador es el botón
+«+ Add a tune» del **menú principal**, presente en todas las rutas (#65); al abrirse pide un contexto ligero
+—refs ya poseídas y ocupación del banco— con `fetchAddTuneContext`, y al añadir publica `repertoire:changed` para
+que la pantalla de debajo recargue (cada `createRepertoireStore` escucha).
+
+El **panel de estado** de la home (#22, revisado en #65) vive en `src/components/insights/`: `LevelShare` (donut por
+nivel, con leyenda-puerta), `StatStrip` (vencidas, vivas, racha y sin registro), `OverdueHistogram` (tramos de
+antigüedad, sin la barra de «sin registro») y `OverdueTrendChart` (vencidas por día desde la primera transición de
+escalera). Su modelo puro está en `src/lib/insights.ts` y su carga en `insights-data.ts`. La cabecera de la home no
+lleva herramientas: la búsqueda vive en el menú y no se duplica como puerta.
 
 ## Supabase
 
