@@ -92,7 +92,7 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
 | D3 | Multiusuario público desde v1, RLS completa desde el primer esquema |
 | D4 | **Identidad propia**: `pr_tunes.id` uuid + `origin` + `origin_ref`. Sin esquema prefijado `ts:`/`loc:` |
 
-## Esquema (migraciones `001`–`019`)
+## Esquema (migraciones `001`–`020`)
 
 - **`pr_tunes`** — definición compartida del tune. `id uuid`, `origin` (por defecto `'thesession'`), `origin_ref` (id de TheSession), `name`, `rhythm`, `meter`, `key`, `abc`, `composer` (010), `created_by`, `created_at`. Único `(origin, origin_ref)`.
   RLS: lectura para autenticados; alta/edición/borrado solo del creador.
@@ -100,6 +100,10 @@ pantalla, y deja elegir el nivel antes de añadir. El import del tunebook de The
     merece una columna por campo — `trivia`, `structure` (`AABB`), `modes_played[]` (todas las tonalidades
     de la tune; `key` guarda la primera) y `tradition[]`. Vacío significa «sin datos».
 - **`pr_repertoire`** — lo personal. `user_id`, `tune_id → pr_tunes`, overrides (`custom_title/rhythm/key/abc`), `status`, `rating`, `image_path`, `notes`, marcas de tiempo, `shelved` (006) y `favorite` (008) y `learned_on` (019). Único `(user_id, tune_id)`.
+  - **`preferred_setting text`** (020, #59): la versión de ABC que el dueño prefiere de esa tune. Guarda el
+    id de setting de TheSession (`setting12342`, sacado de la línea `S:` del bloque) o `n<índice>` cuando el
+    texto no lo trae; `NULL` = no hay preferencia y manda la primera. No la interpreta ningún trigger: es
+    texto opaco para el esquema y lo escribe el cliente desde el dock.
   - **`learned_on date`** (019): día aproximado en que se **aprendió** la tune, `NULL` = no se sabe. No es
     `added_at` —que dice cuándo entró en tuneshed— y no se rellena con él: hay tunes que se sabían años antes
     (importaciones; el histórico de Folk Companion). Lo escribe el cliente desde el cajón del alta; ningún
@@ -168,7 +172,16 @@ parece válida). Los bloques `$$` también hay que respetarlos.
   estado compartido por las tres pantallas del repertorio); catálogo (`catalogue.ts` con la consulta FTS5 y el orden,
   `catalogue-db.ts` con la apertura del artefacto por SQLite WASM); práctica (`practice*.ts`); imágenes
   (`image-sources.ts` puro, `image-search.ts` de red); etiquetas (`tags.ts`, `tags-db.ts`); reproductor
-  (`player-*.ts`, `abc*.ts`).
+  (`player-store.ts` —estado único del dock—, `player-engine.ts` —`abcjs`—, `player-model.ts` puro,
+  `abc-player.ts` con tempo y loop, `abc-settings.ts` con las versiones de ABC puro, `abc-source.ts` con la
+  cadena `custom > catálogo > TheSession` y su caché, `video-player.ts` con el reproductor de YouTube y su
+  velocidad, `youtube-api.ts` con la carga de la IFrame API).
+  **El vídeo manda cuando lo hay**: al abrir una tune con segmento de TradTube suena el vídeo y el
+  sintetizador queda detrás del botón `ABC` del panel.
+  **TheSession no manda CORS** (`/tunes/{id}/abc` responde 200 sin `Access-Control-Allow-Origin`, medido
+  también en el preflight), así que se pide por el proxy del mismo origen `/ts/*`: `[[redirects]]` en
+  `netlify.toml` en producción y `server.proxy`/`preview.proxy` de `vite.config.ts` en local. Pedirla
+  directamente a `thesession.org` desde el navegador **no funciona** y el fallo se lee como «no hay ABC».
 - `src/routes/` — `Repertoire` (biblioteca), `Learning` (banco de trabajo), `LevelList` (listado de un peldaño),
   `Practice` (lista del día), `History` (historial por días), `Search`, `TuneDetail`, `Login` y `About`.
 - `src/components/` — `Layout` (armazón, guard de rutas y popup de ensayo), `TuneCard`, `PlayTrigger`, `PlayerDock`,
