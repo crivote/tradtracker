@@ -325,7 +325,24 @@ export function displayRhythm(item: RepertoireRow): string {
 }
 
 export function displayKey(item: RepertoireRow): string {
-  return item.custom_key?.trim() || preferredKey(item) || tuneKeys(item)[0]?.key || item.tune.key || '—';
+  const preferred = preferredKey(item);
+  const fromCatalogue = preferred ?? tuneKeys(item)[0]?.key ?? null;
+  return (
+    item.custom_key?.trim() ||
+    (fromCatalogue ? formatTuneKey(fromCatalogue) : '') ||
+    item.tune.key ||
+    '—'
+  );
+}
+
+/**
+ * «Edorian» → «E dorian». El valor guardado no se toca: el vocabulario del enum
+ * es el de TheSession y así se guarda y se compara; esto es solo su lectura. Un
+ * tono que no case con tónica + modo se devuelve tal cual.
+ */
+export function formatTuneKey(value: string): string {
+  const match = /^([A-G][#b]?)([A-Za-z]+)$/.exec(value.trim());
+  return match ? `${match[1]} ${match[2].toLowerCase()}` : value;
 }
 
 /**
@@ -358,9 +375,10 @@ export function catalogueKeys(item: RepertoireRow): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const version of tuneKeys(item)) {
-    if (seen.has(version.key)) continue;
-    seen.add(version.key);
-    out.push(version.key);
+    const label = formatTuneKey(version.key);
+    if (seen.has(label)) continue;
+    seen.add(label);
+    out.push(label);
   }
   return out;
 }
@@ -1356,6 +1374,8 @@ export function capRows<T>(rows: readonly T[], limit: number): T[] {
  * `key not set` en vez de un guion. La tabla sigue usando `displayKey`.
  */
 export function cardKey(row: RepertoireRow): string | null {
-  const key = (row.custom_key?.trim() || preferredKey(row) || tuneKeys(row)[0]?.key || row.tune.key || '').trim();
+  const preferred = preferredKey(row);
+  const fromCatalogue = preferred ?? tuneKeys(row)[0]?.key ?? null;
+  const key = (row.custom_key?.trim() || (fromCatalogue ? formatTuneKey(fromCatalogue) : '') || row.tune.key || '').trim();
   return key.length > 0 ? key : null;
 }

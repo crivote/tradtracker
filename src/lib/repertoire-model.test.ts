@@ -16,6 +16,7 @@ import {
   displayKey,
   displayRhythm,
   displayTitle,
+  formatTuneKey,
   // Tonalidades desde los settings (migración 021, #61).
   catalogueKeys,
   preferredKey,
@@ -236,7 +237,7 @@ describe('tonalidades desde los settings', () => {
   it('prefiere el tono de la versión que el dueño eligió', () => {
     const row = makeRow({ id: 'x', versions, preferred: 'setting12342' });
     expect(preferredKey(row)).toBe('Eminor');
-    expect(displayKey(row)).toBe('Eminor');
+    expect(displayKey(row)).toBe('E minor');
   });
 
   it('cruza los dos formatos del id de setting', () => {
@@ -249,7 +250,7 @@ describe('tonalidades desde los settings', () => {
 
   it('sin preferencia usa el primer tono del catálogo, no la columna antigua', () => {
     const row = makeRow({ id: 'x', versions, key: 'Gmajor' });
-    expect(displayKey(row)).toBe('Edorian');
+    expect(displayKey(row)).toBe('E dorian');
   });
 
   it('el tono escrito a mano manda sobre todo lo demás', () => {
@@ -265,17 +266,27 @@ describe('tonalidades desde los settings', () => {
   it('ignora una preferencia que no existe en el catálogo', () => {
     const row = makeRow({ id: 'x', versions, preferred: 'setting404' });
     expect(preferredKey(row)).toBeNull();
-    expect(displayKey(row)).toBe('Edorian');
+    expect(displayKey(row)).toBe('E dorian');
   });
 
-  it('lista las tonalidades sin repetir', () => {
-    expect(catalogueKeys(makeRow({ id: 'x', versions }))).toEqual(['Edorian', 'Eminor']);
+  it('lista las tonalidades sin repetir y en formato legible', () => {
+    expect(catalogueKeys(makeRow({ id: 'x', versions }))).toEqual(['E dorian', 'E minor']);
     expect(catalogueKeys(makeRow({ id: 'x' }))).toEqual([]);
+  });
+
+  it('separa tónica y modo solo al leer, sin tocar el valor del enum', () => {
+    expect(formatTuneKey('Edorian')).toBe('E dorian');
+    expect(formatTuneKey('Dmajor')).toBe('D major');
+    expect(formatTuneKey('Gmixolydian')).toBe('G mixolydian');
+    expect(formatTuneKey('F#phrygian')).toBe('F# phrygian');
+    // Un texto que no es «tónica + modo» se deja tal cual: no se inventa.
+    expect(formatTuneKey('D Maj')).toBe('D Maj');
+    expect(formatTuneKey('')).toBe('');
   });
 
   it('la carta omite la tonalidad en vez de pintar un guion', () => {
     expect(cardKey(makeRow({ id: 'x' }))).toBeNull();
-    expect(cardKey(makeRow({ id: 'x', versions }))).toBe('Edorian');
+    expect(cardKey(makeRow({ id: 'x', versions }))).toBe('E dorian');
   });
 });
 

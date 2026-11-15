@@ -574,7 +574,7 @@ describe('TuneDetail', () => {
 
     renderAt('/repertoire/row-a');
 
-    expect(await screen.findByText('Catalogue: Edorian, Eminor')).toBeTruthy();
+    expect(await screen.findByText('Catalogue: E dorian, E minor')).toBeTruthy();
   });
 
   it('does not repeat a single catalogue key', async () => {
@@ -584,7 +584,7 @@ describe('TuneDetail', () => {
 
     renderAt('/repertoire/row-a');
 
-    await screen.findByText('Edorian');
+    await screen.findByText('E dorian');
     expect(screen.queryByText(/Catalogue:/)).toBeNull();
   });
 });
