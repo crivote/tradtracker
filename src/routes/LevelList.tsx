@@ -37,6 +37,7 @@ import { createRepertoireStore } from '../lib/repertoire-store';
 import { facetTree } from '../lib/tags';
 import { addTuneTags, loadVocabulary, type TagVocabulary } from '../lib/tags-db';
 import PlayTrigger from '../components/PlayTrigger';
+import { useTuneHref } from '../lib/tune-back';
 import TagPicker from '../components/TagPicker';
 import './repertoire.css';
 
@@ -598,6 +599,9 @@ function RepertoireRowView(props: {
   learningFull: boolean;
 }) {
   const [menuOpen, setMenuOpen] = createSignal(false);
+  // Cada enlace a la ficha lleva el listado de origen —con su filtro— para que
+  // «Back» devuelva aquí y no a la home.
+  const tuneHref = useTuneHref();
   const [subOpen, setSubOpen] = createSignal(false);
   const [menuUp, setMenuUp] = createSignal(false);
   let menuEl: HTMLDivElement | undefined;
@@ -694,7 +698,7 @@ function RepertoireRowView(props: {
           {/* El disparador va aquí, **fuera** del enlace: un botón dentro de un
               `<a>` es marcado inválido y el clic acabaría navegando (#29). */}
           <PlayTrigger row={props.row} />
-          <A href={`/repertoire/${props.row.id}`}>{title()}</A>
+          <A href={tuneHref(props.row.id)}>{title()}</A>
         </div>
         {/* Los invariantes de la pieza. Lo que falte se omite: ni «trad.» ni un
             guion, porque un guion aquí se lee como un dato. */}
@@ -847,10 +851,10 @@ function RepertoireRowView(props: {
               </div>
             </div>
             <div class="sep" />
-            <A role="menuitem" href={`/repertoire/${props.row.id}`} onClick={closeMenu}>
+            <A role="menuitem" href={tuneHref(props.row.id)} onClick={closeMenu}>
               View details
             </A>
-            <A role="menuitem" href={`/repertoire/${props.row.id}`} onClick={closeMenu}>
+            <A role="menuitem" href={tuneHref(props.row.id)} onClick={closeMenu}>
               Edit details
             </A>
             {/* «Add to set» no tiene destino todavía: los sets llegan en F7. Se

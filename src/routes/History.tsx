@@ -15,6 +15,7 @@ import {
 import { fetchRepertoire } from '../lib/repertoire';
 import type { RepertoireRow } from '../lib/repertoire-model';
 import { readPrefs } from '../lib/practice-storage';
+import { useTuneHref } from '../lib/tune-back';
 import {
   compositionByWeek,
   revisits,
@@ -271,6 +272,8 @@ export default function History() {
 
 /** Un día: su fecha, su recuento y las tunes que se tocaron. */
 function HistoryDayBlock(props: { day: HistoryDay; nowMs: number }) {
+  // Cada título vuelve a la ficha con su origen: el historial, con su rango.
+  const tuneHref = useTuneHref();
   return (
     <article class="history-day">
       <header>
@@ -288,7 +291,7 @@ function HistoryDayBlock(props: { day: HistoryDay; nowMs: number }) {
           {(entry) => (
             <li>
               <div class="history-line">
-                <A class="history-title" href={`/repertoire/${entry.repertoireId}`}>
+                <A class="history-title" href={tuneHref(entry.repertoireId)}>
                   {entry.title}
                 </A>
                 <Rating quality={entry.quality} />

@@ -549,4 +549,27 @@ describe('TuneDetail', () => {
     expect(screen.getByText('Could not add the tags: boom').getAttribute('role')).toBe('alert');
     expect(mockedSaveStatus).not.toHaveBeenCalled();
   });
+
+  /**
+   * El «Back» de la ficha nombraba siempre la home (#59): quien llegaba
+   * filtrando una lista o mirando el historial perdía su sitio al volver. El
+   * origen viaja en `?from=` y la consulta se conserva entera.
+   */
+  it('goes back to the list it was opened from, filter included', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+
+    renderAt('/repertoire/row-a?from=%2Flevel%2Fall%3Fq%3Dcooley');
+
+    const link = await screen.findByText('Back to all tunes');
+    expect(link.getAttribute('href')).toBe('/level/all?q=cooley');
+  });
+
+  it('goes back to the home when it has no origin', async () => {
+    mockedFetch.mockResolvedValue(makeRow() as any);
+
+    renderAt('/repertoire/row-a');
+
+    const link = await screen.findByText('Back to repertoire');
+    expect(link.getAttribute('href')).toBe('/');
+  });
 });

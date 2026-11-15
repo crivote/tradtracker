@@ -14,6 +14,7 @@ import {
 import { LEARNING_SLOTS_MAX, LEARNING_SLOTS_MIN, readPrefs, writePrefs } from '../lib/practice-storage';
 import { createRepertoireStore } from '../lib/repertoire-store';
 import PlayTrigger from '../components/PlayTrigger';
+import { useTuneHref } from '../lib/tune-back';
 import AddTuneAside from '../components/AddTuneAside';
 import './repertoire.css';
 import './learning.css';
@@ -41,6 +42,8 @@ import './learning.css';
  */
 export default function Learning() {
   const store = createRepertoireStore();
+  // La ficha vuelve al banco de trabajo, no a la home.
+  const tuneHref = useTuneHref();
   const [addOpen, setAddOpen] = createSignal(false);
 
   /** El tope vive en las preferencias del navegador, junto al objetivo diario. */
@@ -146,7 +149,7 @@ export default function Learning() {
                         pasar por la ficha para oírla. */}
                     <PlayTrigger row={row} />
                     <div class="wb-name">
-                      <A href={`/repertoire/${row.id}`}>{displayTitle(row)}</A>
+                      <A href={tuneHref(row.id)}>{displayTitle(row)}</A>
                       <Show when={invariantsText(row)}>
                         <small>{invariantsText(row)}</small>
                       </Show>

@@ -38,6 +38,7 @@ import {
   type PracticePrefs,
 } from '../lib/practice-storage';
 import { fetchDayMarks, markPracticeDay, unmarkPractice } from '../lib/practice';
+import { useTuneHref } from '../lib/tune-back';
 import { openPractice } from '../lib/practice-mark';
 import PlayTrigger from '../components/PlayTrigger';
 import './repertoire.css';
@@ -96,6 +97,8 @@ function tuneCountLabel(count: number): string {
 
 export default function Practice() {
   const session = useSession();
+  // La ficha se abre desde la lista del día y vuelve a ella, no a la home.
+  const tuneHref = useTuneHref();
 
   /**
    * El instante se captura **una vez**: el día, la semilla y el tag de abandono
@@ -524,7 +527,7 @@ export default function Practice() {
                   <span class="practice-row__pos">{index() + 1}</span>
 
                   <div class="practice-row__main">
-                    <A class="practice-row__title" href={`/repertoire/${row.id}`}>
+                    <A class="practice-row__title" href={tuneHref(row.id)}>
                       {displayTitle(row)}
                     </A>
                     <p class="practice-row__meta">
