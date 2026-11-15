@@ -14,6 +14,7 @@ import {
 } from '../lib/repertoire-model';
 import { focalPosition } from '../lib/image-sources';
 import PlayTrigger from './PlayTrigger';
+import { useTuneHref } from '../lib/tune-back';
 
 /**
  * La carta del repertorio (#29): la foto ocupa toda la carta y todos los datos
@@ -57,6 +58,8 @@ let activeMenu: (() => void) | null = null;
 
 export default function TuneCard(props: TuneCardProps) {
   const [menuOpen, setMenuOpen] = createSignal(false);
+  // La ficha se abre desde la banda de la home y su «Back» vuelve a la home.
+  const tuneHref = useTuneHref();
 
   const title = createMemo(() => displayTitle(props.row));
   const days = createMemo(() => stalenessDays(props.row, props.now));
@@ -172,14 +175,14 @@ export default function TuneCard(props: TuneCardProps) {
         aria-label={`Actions for ${title()}`}
         onClick={(event) => event.stopPropagation()}
       >
-        <A role="menuitem" href={`/repertoire/${props.row.id}`} onClick={closeMenu}>
+        <A role="menuitem" href={tuneHref(props.row.id)} onClick={closeMenu}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <circle cx="11" cy="11" r="7" />
             <path d="M20 20l-3.5-3.5" />
           </svg>
           View details
         </A>
-        <A role="menuitem" href={`/repertoire/${props.row.id}`} onClick={closeMenu}>
+        <A role="menuitem" href={tuneHref(props.row.id)} onClick={closeMenu}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 20h4L19 9a2 2 0 0 0-3-3L5 17v3z" />
           </svg>
@@ -215,7 +218,7 @@ export default function TuneCard(props: TuneCardProps) {
 
       <div class="body">
         <h2>
-          <A href={`/repertoire/${props.row.id}`} title={title()}>
+          <A href={tuneHref(props.row.id)} title={title()}>
             {title()}
           </A>
         </h2>

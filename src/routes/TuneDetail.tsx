@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
-import { A, useNavigate, useParams } from '@solidjs/router';
+import { A, useLocation, useNavigate, useParams } from '@solidjs/router';
 import {
   BANDS,
   LEVEL_OPTIONS,
@@ -30,6 +30,7 @@ import {
 } from '../lib/repertoire';
 import { focalPosition } from '../lib/image-sources';
 import { formatDate, formatDay } from '../lib/format';
+import { FROM_PARAM, resolveBackTarget } from '../lib/tune-back';
 import { facetTree, tagsForTune } from '../lib/tags';
 import {
   addTuneTags,
@@ -65,6 +66,14 @@ const OVERRIDE_STANDARD_CLASS =
 export default function TuneDetail() {
   const params = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  /**
+   * La pantalla desde la que se abrió la ficha, leída de `?from=`. Sin ella la
+   * vuelta es la home: el enlace no puede quedarse en un `/` fijo cuando el
+   * dueño venía filtrando una lista o miraba el historial.
+   */
+  const back = createMemo(() => resolveBackTarget(new URLSearchParams(location.search).get(FROM_PARAM)));
 
   // Un único instante por carga: la etiqueta de días y la fecha de alta no pueden
   // discrepar por un cambio de día a media carga. Se refresca al cambiar de tune.
@@ -138,7 +147,9 @@ export default function TuneDetail() {
     setError(null);
     try {
       await removeFromRepertoire(item.id);
-      navigate('/');
+      // La ficha ya no existe: se vuelve a la pantalla de la que se llegó, no
+      // necesariamente a la home.
+      navigate(back().href);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -182,8 +193,8 @@ export default function TuneDetail() {
 
   return (
     <div class="space-y-6">
-      <A href="/" class="text-sm text-gray-400 hover:text-amber-300">
-        Back to repertoire
+      <A href={back().href} class="text-sm text-gray-400 hover:text-amber-300">
+        {back().label}
       </A>
 
       <Show when={error()}>
@@ -204,8 +215,8 @@ export default function TuneDetail() {
             <Show when={!error()}>
               <div class="rounded-lg border border-dashed border-gray-700 bg-gray-800/50 p-8 text-center">
                 <p class="text-gray-300">That tune is not in your repertoire.</p>
-                <A href="/" class="mt-2 inline-block text-sm text-amber-300 hover:text-amber-200">
-                  Back to repertoire
+                <A href={back().href} class="mt-2 inline-block text-sm text-amber-300 hover:text-amber-200">
+                  {back().label}
                 </A>
               </div>
             </Show>
@@ -827,8 +838,8 @@ export default function TuneDetail() {
                 />
 
                 <div class="flex items-center justify-between gap-3 border-t border-gray-800 pt-4">
-                  <A href="/" class="text-sm text-gray-400 hover:text-amber-300">
-                    Back to repertoire
+                  <A href={back().href} class="text-sm text-gray-400 hover:text-amber-300">
+                    {back().label}
                   </A>
                   <div class="flex flex-wrap items-center gap-3">
                     {/* El mismo popup de ensayo que la carta, el taller y la
