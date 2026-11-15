@@ -26,6 +26,14 @@ vi.mock('../lib/practice', () => ({
 }));
 
 /**
+ * El popup de ensayo tiene un único estado global (`practice-mark`). Aquí solo
+ * se comprueba que la pantalla lo abre; quién lo pinta es `Layout`.
+ */
+vi.mock('../lib/practice-mark', () => ({
+  openPractice: vi.fn(),
+}));
+
+/**
  * #48: el vocabulario y las asignaciones cruzan la red, y la vista pide las dos
  * cosas al montar. Se simula `fetchVocabulary` y el doble de `loadVocabulary`
  * reproduce su contrato sobre él —la caché real cerraría sobre el
@@ -44,10 +52,14 @@ vi.mock('../lib/tags-db', async (importOriginal) => {
 });
 
 import { fetchRepertoire } from '../lib/repertoire';
+import { logPractice } from '../lib/practice';
+import { openPractice } from '../lib/practice-mark';
 import { fetchTuneTags, fetchVocabulary } from '../lib/tags-db';
 import Search from './Search';
 
 const mockedFetch = vi.mocked(fetchRepertoire);
+const mockedLogPractice = vi.mocked(logPractice);
+const mockedOpenPractice = vi.mocked(openPractice);
 const mockedVocabulary = vi.mocked(fetchVocabulary);
 const mockedFetchTuneTags = vi.mocked(fetchTuneTags);
 
@@ -186,6 +198,8 @@ beforeEach(() => {
   mockedVocabulary.mockResolvedValue(VOCABULARY as any);
   mockedFetchTuneTags.mockReset();
   mockedFetchTuneTags.mockResolvedValue(TAG_ASSIGNMENTS as any);
+  mockedOpenPractice.mockReset();
+  mockedLogPractice.mockReset();
 });
 
 afterEach(() => cleanup());
@@ -345,5 +359,26 @@ describe('filtro por facetas (#48)', () => {
     expect(screen.getByRole('button', { name: 'Tags' })).toBeTruthy();
     // La casilla se apaga con la selección.
     expect((screen.getByLabelText('Ireland') as HTMLInputElement).checked).toBe(false);
+  });
+
+  /**
+   * Bug medido: el «Practise» del kebab escribía la marca directamente y no
+   * abría el popup, así que en esta pantalla no había forma de puntuar el
+   * ensayo. Ahora pasa por el mismo `openPractice` que las demás.
+   */
+  it('abre el popup de ensayo desde el kebab en vez de apuntar la marca a ciegas', async () => {
+    renderSearch();
+    typeTerm('cooley');
+    await waitFor(() => expect(cards()).toHaveLength(1));
+
+    const card = cardFor('Cooley’s Reel');
+    fireEvent.click(card.querySelector('[aria-haspopup="menu"]') as HTMLElement);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Practise' }));
+
+    expect(mockedOpenPractice).toHaveBeenCalledWith(
+      { repertoireId: 'row-cooley', title: 'Cooley’s Reel' },
+      expect.any(Function)
+    );
+    expect(mockedLogPractice).not.toHaveBeenCalled();
   });
 });
