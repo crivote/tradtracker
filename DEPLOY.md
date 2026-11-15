@@ -72,6 +72,14 @@ la app queda en negro sin recuperación —ni F5 la arregla, porque no vuelve a 
   to = "/404.html"
   status = 404
 
+# El proxy a TheSession va también DELANTE del catch-all, y con `force = true`
+# porque su destino es otro dominio. Ver «Proxy de ABC» abajo.
+[[redirects]]
+  from = "/ts/*"
+  to = "https://thesession.org/:splat"
+  status = 200
+  force = true
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
@@ -80,6 +88,27 @@ la app queda en negro sin recuperación —ni F5 la arregla, porque no vuelve a 
 
 Los ficheros que existen ganan a las redirecciones (`force = false` por defecto), así que los assets
 reales se sirven intactos y sólo el hueco cae en `public/404.html` (404 seco, página propia).
+
+## Proxy de ABC (`/ts/*`): TheSession no manda CORS
+
+`GET https://thesession.org/tunes/{id}/abc` responde **200 sin `Access-Control-Allow-Origin`** —medido con
+tres orígenes distintos y también en el preflight `OPTIONS`—, así que el navegador no puede leerla: el
+`fetch` directo muere con `Failed to fetch` y el fallback de ABC a la red **nunca funcionó**. Por eso la app
+pide `/ts/tunes/{id}/abc`, que es del mismo origen, y Netlify lo reenvía a TheSession sin tocar la respuesta
+(`content-type: text/abc` incluido). En local lo hace `server.proxy`/`preview.proxy` de `vite.config.ts`;
+`vite preview` **sí** aplica esa configuración, pero `_headers` no.
+
+Sondeo (producción):
+
+```bash
+curl -s -D - -o /tmp/abc.txt https://tuneshed.netlify.app/ts/tunes/1/abc   # 200, text/abc, 33 bloques X:
+curl -s -o /dev/null -w '%{http_code}\n' https://tuneshed.netlify.app/ts/tunes/999999/abc  # 404 de TheSession
+```
+
+Si el proxy desaparece, el síntoma no es un error visible sino «no ABC» en las tunes sin ABC en el
+catálogo: es indistinguible de un tune sin transcripción. Compruébalo antes de buscar el fallo en el
+reproductor.
+
 
 **Residuo conocido:** Netlify aplica la cabecera `immutable` de `/assets/*` también al 404 de esa ruta, de
 modo que un asset inexistente queda cacheado. Es mucho menos grave que el #40 —un 404 no ejecuta nada—,
