@@ -38,18 +38,31 @@ import {
   type RepertoireRow,
 } from './repertoire-model';
 
+import {
+  DEFAULT_OVERDUE_BASE,
+  MAINTENANCE_BANDS,
+  intervalDays,
+  type MaintenanceStatus,
+} from './overdue';
+
+// La vara vive en `overdue.ts` para que las preferencias puedan leerla sin
+// cerrar un ciclo de módulos; se reexporta desde aquí, que es donde el panel la
+// busca.
+export {
+  DEFAULT_OVERDUE_BASE,
+  MAINTENANCE_BANDS,
+  intervalDays,
+  type MaintenanceStatus,
+} from './overdue';
+
 /**
- * Días que una tune puede pasar sin tocarse en cada peldaño antes de contar
- * como vencida. El orden de magnitud es el de la escalera: lo que se está
- * aprendiendo se cae en dos días, lo que ya se toca solo aguanta dos semanas y
- * una cima se mantiene con un repaso al mes.
+ * Días base por peldaño, incluido `learning`, que solo usa la gráfica de
+ * revisitas (el hueco entre dos ensayos de la misma tune). El vencimiento del
+ * panel no lee esta tabla: lee `DEFAULT_OVERDUE_BASE` ponderada por tamaño.
  */
 export const TARGET_DAYS_BY_BAND: Record<LadderStatus, number> = {
   learning: 2,
-  shaky: 4,
-  playing_along: 7,
-  solo_ready: 14,
-  mastered: 30,
+  ...DEFAULT_OVERDUE_BASE,
 };
 
 /** Los cinco peldaños en orden de escalera: `BANDS` ya los tiene así. */
@@ -98,7 +111,7 @@ export interface HistogramBucket {
 }
 
 export interface BandOverdue {
-  band: LadderStatus;
+  band: MaintenanceStatus;
   /** Filas del peldaño **con** día de último ensayo legible. */
   practiced: number;
   overdue: number;
@@ -107,7 +120,7 @@ export interface BandOverdue {
 }
 
 export interface OverdueHistogram {
-  /** Filas en rotación: con peldaño y sin aparcar. */
+  /** Filas del **repertorio de mantenimiento**: cuatro escalones, sin aparcar. */
   universe: number;
   /** Filas del universo sin día de último ensayo: **aparte**, nunca en «60+». */
   sinRegistro: number;
@@ -116,10 +129,22 @@ export interface OverdueHistogram {
   overdue: number;
   /** Vencidas sobre las que tienen día (`universe - sinRegistro`); 0 si no hay. */
   overduePct: number;
+  /**
+   * Lo que **no** es repertorio de mantenimiento, contado aparte y nunca sumado:
+   * el taller (`learning`), el backlog (`to_learn`) y el cajón. Una cifra sola
+   * que los junte con el repertorio falsea el tamaño y la tasa.
+   */
+  aside: {
+    learning: number;
+    backlog: number;
+    shelved: number;
+  };
+  /** Intervalo en días aplicado a cada peldaño, ya ponderado por tamaño. */
+  intervals: Record<MaintenanceStatus, number>;
 }
 
 export interface BandDelta {
-  band: LadderStatus;
+  band: MaintenanceStatus;
   currentPct: number;
   previousPct: number;
   deltaPp: number;
@@ -178,14 +203,51 @@ export interface RevisitSummary {
  * Piezas compartidas
  * ──────────────────────────────────────────────────────────────── */
 
-/** Fila en rotación: tiene peldaño y no está en el cajón. Guarda de tipo. */
-function isRotationRow(row: RepertoireRow): row is RepertoireRow & { status: LadderStatus } {
-  return !row.shelved && isLadderStatus(row.status);
+/**
+ * Fila del **repertorio de mantenimiento**: uno de los cuatro escalones y no
+ * aparcada. `learning` es taller y el backlog no se ha empezado: ninguno de los
+ * dos se suma nunca al repertorio en las gráficas ni en las cifras.
+ */
+function isMaintenanceRow(
+  row: RepertoireRow,
+): row is RepertoireRow & { status: MaintenanceStatus } {
+  return !row.shelved && (MAINTENANCE_BANDS as readonly string[]).includes(row.status);
+}
+
+/** Tamaño de la base: cuántas tunes hay que sostener. Ponderador de los umbrales. */
+export function maintenanceSize(rows: readonly RepertoireRow[]): number {
+  let count = 0;
+  for (const row of rows) if (isMaintenanceRow(row)) count += 1;
+  return count;
+}
+
+/** La vara de un peldaño: sus días base y el tamaño de la base que la escala. */
+interface OverdueScale {
+  base: Record<MaintenanceStatus, number>;
+  size: number;
+}
+
+/** Vencida = pasarse del intervalo ponderado del peldaño, no llegar justo. */
+function isOverdue(band: MaintenanceStatus, days: number, scale: OverdueScale): boolean {
+  return days > intervalDays(scale.base, band, scale.size);
 }
 
 /** Un texto que es un peldaño, o `null`. Los eventos llegan como `string`. */
 function asLadderStatus(value: string): LadderStatus | null {
   return (LADDER_BANDS as readonly string[]).includes(value) ? (value as LadderStatus) : null;
+}
+
+/**
+ * Un texto que es un peldaño **de mantenimiento**, o `null`.
+ *
+ * Hace falta además de `asLadderStatus` porque un evento histórico puede decir
+ * `learning`: la tune estuvo en el taller, y esa foto no entra en el repertorio
+ * aunque hoy esté en `shaky`.
+ */
+function asMaintenanceStatus(value: string): MaintenanceStatus | null {
+  return (MAINTENANCE_BANDS as readonly string[]).includes(value)
+    ? (value as MaintenanceStatus)
+    : null;
 }
 
 /** Porcentaje sin redondear. Denominador 0 no es un 0 %: es «no hay». */
@@ -308,24 +370,26 @@ function overdueRangeIndex(days: number): number {
 
 /** Recuento de un peldaño: cuántas tienen día y cuántas ya se han pasado. */
 interface BandTally {
-  band: LadderStatus;
+  band: MaintenanceStatus;
   practiced: number;
   overdue: number;
 }
 
 /** Una observación: el peldaño de la fila y los días que lleva sin tocarse. */
 interface BandRecord {
-  band: LadderStatus;
+  band: MaintenanceStatus;
   days: number;
 }
 
 /**
- * Recuento por peldaño de un conjunto de observaciones. Las cinco bandas salen
- * siempre, en orden de escalera, aunque estén a cero: el panel pinta la fila
- * entera y un peldaño que desaparece mueve el eje.
+ * Recuento por peldaño de un conjunto de observaciones. Las cuatro bandas de
+ * mantenimiento salen siempre, en orden de escalera, aunque estén a cero: el
+ * panel pinta la fila entera y un peldaño que desaparece mueve el eje. Una
+ * observación de `learning` que llegue por error no se cuenta aquí: no es
+ * repertorio.
  */
-function tallyBands(records: readonly BandRecord[]): BandTally[] {
-  const tallies: BandTally[] = LADDER_BANDS.map((band) => ({
+function tallyBands(records: readonly BandRecord[], scale: OverdueScale): BandTally[] {
+  const tallies: BandTally[] = MAINTENANCE_BANDS.map((band) => ({
     band,
     practiced: 0,
     overdue: 0,
@@ -336,8 +400,7 @@ function tallyBands(records: readonly BandRecord[]): BandTally[] {
     const tally = byBand.get(record.band);
     if (!tally) continue; // un peldaño que no conocemos no se cuenta
     tally.practiced += 1;
-    // Vencida = pasarse del intervalo del peldaño, no llegar justo.
-    if (record.days > TARGET_DAYS_BY_BAND[record.band]) tally.overdue += 1;
+    if (isOverdue(record.band, record.days, scale)) tally.overdue += 1;
   }
 
   return tallies;
@@ -353,25 +416,37 @@ function sumOverdue(tallies: readonly BandTally[]): number {
 
 /**
  * Foto del vencimiento **de hoy**: histograma de antigüedades y vencidas por
- * peldaño, sobre las filas en rotación.
+ * peldaño, sobre el **repertorio de mantenimiento** —los cuatro escalones, sin
+ * aparcadas—. El taller (`learning`) y el backlog no entran: van en `aside`.
+ *
+ * Los umbrales **no son fijos**: cada peldaño usa `base × (tamaño / 100)`, así
+ * que la vara se estira cuando la base crece. Sin eso, un repertorio de 356
+ * tunes con umbrales de 4/7/14/30 días está condenado a dos tercios vencidos.
  *
  * El día sale de `pr_repertoire.last_practiced_day`, que mantiene el trigger de
  * `pr_practice` y nunca retrocede; una fila con la columna a `null` (o con un
  * texto que no se puede leer) es `sinRegistro` y se cuenta aparte —no se
  * disfraza de «60+» ni se rescata de las marcas: la columna es la foto y una
  * ventana de marcas recortada no puede hacer que una tune parezca más fresca—.
- *
- * `marks` queda en la firma por simetría con `overdueDelta` y porque el panel
- * carga las dos cosas del mismo viaje; hoy no se consume.
  */
 export function overdueHistogram(
   rows: readonly RepertoireRow[],
   nowMs: number,
+  base: Record<MaintenanceStatus, number> = DEFAULT_OVERDUE_BASE,
 ): OverdueHistogram {
-  const universe = rows.filter(isRotationRow);
+  const universe = rows.filter(isMaintenanceRow);
+  const size = universe.length;
+  const scale: OverdueScale = { base, size };
   const counts = OVERDUE_RANGES.map(() => 0);
   const records: BandRecord[] = [];
   let sinRegistro = 0;
+
+  const aside = { learning: 0, backlog: 0, shelved: 0 };
+  for (const row of rows) {
+    if (row.shelved) aside.shelved += 1;
+    else if (row.status === 'learning') aside.learning += 1;
+    else if (row.status === 'to_learn') aside.backlog += 1;
+  }
 
   for (const row of universe) {
     const days = daysSinceDay(row.last_practiced_day, nowMs);
@@ -383,18 +458,18 @@ export function overdueHistogram(
     records.push({ band: row.status, days });
   }
 
-  const byBand = tallyBands(records);
+  const byBand = tallyBands(records, scale);
   const overdue = sumOverdue(byBand);
   const practiced = sumPracticed(byBand);
 
   return {
-    universe: universe.length,
+    universe: size,
     sinRegistro,
     // El denominador de los tramos es lo que **tienen registro**, no el universo
-    // entero: `sin registro` ya no se pinta en la gráfica (#65) y una barra que
-    // se mide contra un total que no aparece se lee como si faltaran tunes.
-    // Así los siete tramos suman el 100 % de lo pintado; `sinRegistro` conserva
-    // su participación sobre el universo en la tarjeta.
+    // entero: `sin registro` no se pinta en la gráfica (#65) y una barra que se
+    // mide contra un total que no aparece se lee como si faltaran tunes. Así los
+    // siete tramos suman el 100 % de lo pintado; `sinRegistro` conserva su
+    // participación sobre el universo en la tarjeta.
     buckets: OVERDUE_RANGES.map((range, index) => ({
       key: range.key,
       label: range.label,
@@ -412,6 +487,13 @@ export function overdueHistogram(
     // cuántas se han pasado». Una tune sin registro no está vencida, está sin
     // empezar, y ya se cuenta en `sinRegistro`.
     overduePct: round1(percentOf(overdue, practiced)),
+    aside,
+    intervals: {
+      shaky: intervalDays(base, 'shaky', size),
+      playing_along: intervalDays(base, 'playing_along', size),
+      solo_ready: intervalDays(base, 'solo_ready', size),
+      mastered: intervalDays(base, 'mastered', size),
+    },
   };
 }
 
@@ -471,6 +553,7 @@ export function overdueTrend(
   events: readonly InsightEvent[],
   nowMs: number,
   days: number,
+  base: Record<MaintenanceStatus, number> = DEFAULT_OVERDUE_BASE,
 ): OverdueTrend {
   const windowDays = Math.max(1, Math.floor(days));
   const todayKey = todayKeyFor(nowMs);
@@ -489,7 +572,11 @@ export function overdueTrend(
   const startKey = firstKey > windowStart ? firstKey : windowStart;
   if (startKey > todayKey) return { points: [], since: null, windowDays };
 
-  const rotation = rows.filter(isRotationRow);
+  const rotation = rows.filter(isMaintenanceRow);
+  // La vara se pondera con el tamaño **de hoy** y se aplica a todos los días:
+  // una línea con una escala distinta por día no se puede comparar consigo
+  // misma. El peldaño y la antigüedad sí son los de cada día.
+  const scale: OverdueScale = { base, size: rotation.length };
 
   // Días de ensayo por tune, ascendentes: se avanza un puntero por tune según
   // avanza el calendario, sin recorrer la lista entera en cada día.
@@ -510,7 +597,7 @@ export function overdueTrend(
     let judged = 0;
 
     for (const row of rotation) {
-      const band = bandThen.get(row.id);
+      const band = asMaintenanceStatus(bandThen.get(row.id) ?? '');
       if (!band) continue;
       const list = daysByTune.get(row.id);
       if (!list || list[0] > key) continue;
@@ -522,7 +609,7 @@ export function overdueTrend(
       const elapsed = daysBetween(list[index], key);
       if (elapsed === null) continue;
       judged += 1;
-      if (elapsed > TARGET_DAYS_BY_BAND[band]) overdue += 1;
+      if (isOverdue(band, elapsed, scale)) overdue += 1;
     }
 
     points.push({ key, label: weekLabel(key), overdue, judged });
@@ -591,10 +678,14 @@ export function overdueDelta(
   marks: readonly InsightMark[],
   events: readonly InsightEvent[],
   nowMs: number,
+  base: Record<MaintenanceStatus, number> = DEFAULT_OVERDUE_BASE,
 ): OverdueDelta {
   const previousSunday = shiftDayKey(weekStartKey(nowMs), -1);
   const boundary = dayBoundaryAfter(previousSunday);
   const statusThen = statusMapAt(events, boundary);
+  // Misma vara en las dos fotos: el tamaño de la base de hoy, aplicado también
+  // al domingo, o el delta mediría dos escalas distintas.
+  const scale: OverdueScale = { base, size: maintenanceSize(rows) };
 
   // Último ensayo de cada tune hasta ese domingo (el domingo entra).
   const lastMark = new Map<string, string>();
@@ -614,7 +705,7 @@ export function overdueDelta(
 
   for (const row of rows) {
     if (row.shelved) continue; // aparcar no cambia el peldaño, pero sí la rotación
-    const bandThen = statusThen.get(row.id);
+    const bandThen = asMaintenanceStatus(statusThen.get(row.id) ?? '');
     if (!bandThen) continue;
     const addedAt = instantOf(row.added_at);
     if (addedAt !== null && addedAt >= boundary) continue; // todavía no existía
@@ -624,15 +715,15 @@ export function overdueDelta(
     const daysBefore = daysBetween(dayThen, previousSunday);
     // Hoy: el último día que consta (la columna si está, y si no el del domingo).
     const daysNow = daysSinceDay(row.last_practiced_day ?? dayThen, nowMs);
-    const bandNow = asLadderStatus(row.status);
+    const bandNow = asMaintenanceStatus(row.status);
     if (daysBefore === null || daysNow === null || !bandNow) continue;
 
     previousRecords.push({ band: bandThen, days: daysBefore });
     currentRecords.push({ band: bandNow, days: daysNow });
   }
 
-  const previous = tallyBands(previousRecords);
-  const current = tallyBands(currentRecords);
+  const previous = tallyBands(previousRecords, scale);
+  const current = tallyBands(currentRecords, scale);
 
   const currentPct = round1(percentOf(sumOverdue(current), sumPracticed(current)));
   const previousPct = round1(percentOf(sumOverdue(previous), sumPracticed(previous)));
@@ -647,7 +738,7 @@ export function overdueDelta(
     currentOverdue: sumOverdue(current),
     previousOverdue: sumOverdue(previous),
     census: sumPracticed(current),
-    byBand: LADDER_BANDS.map((band, index) => {
+    byBand: MAINTENANCE_BANDS.map((band, index) => {
       const now = current[index];
       const then = previous[index];
       const nowPct = round1(percentOf(now.overdue, now.practiced));

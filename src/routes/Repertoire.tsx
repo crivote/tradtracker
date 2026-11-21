@@ -5,6 +5,7 @@ import {
   LIBRARY_BANDS,
   RUNG_BARS,
   SHELVED_SCOPE,
+  STATUS_LABELS,
   backlogCount,
   capForColumns,
   capRows,
@@ -25,6 +26,13 @@ import {
 } from '../lib/insights';
 import { fetchInsightEvents, fetchInsightMarks } from '../lib/insights-data';
 import { aliveInRange, streakFromMarks } from '../lib/insights-view';
+import {
+  DEFAULT_OVERDUE_BASE,
+  MAINTENANCE_BANDS,
+  normalizeOverdueBase,
+  type MaintenanceStatus,
+} from '../lib/overdue';
+import { readPrefs, writePrefs, type PracticePrefs } from '../lib/practice-storage';
 import TuneCard from '../components/TuneCard';
 import StatStrip from '../components/insights/StatStrip';
 import OverdueHistogram from '../components/insights/OverdueHistogram';
@@ -161,16 +169,15 @@ export default function Repertoire() {
 
   /**
    * El reparto por nivel del donut (#65): los mismos recuentos que la línea de
-   * texto que sustituye, y cada fila es la puerta que esa línea tenía. El
-   * backlog y las aparcadas no se pintan como bandas en esta pantalla, pero sí
-   * cuentan en el donut: es el reparto **del repertorio entero**, y esconder 122
-   * tunes en el backlog convertiría el gráfico en un tercio de la verdad.
+   * texto que sustituye, y cada fila es la puerta que esa línea tenía.
+   *
+   * El donut es **solo el repertorio de mantenimiento**: los cuatro escalones.
+   * El backlog, el taller y el cajón no se suman aquí —van en `aside`— porque
+   * mezclarlos falsea el reparto por altura y el total del centro.
    */
   const share = createMemo<LevelShareEntry[]>(() => {
     const c = counts();
     return [
-      { key: 'to_learn', label: 'To learn', count: c.to_learn, href: listingHref(BACKLOG_SCOPE) },
-      { key: 'learning', label: 'Learning', count: c.learning, href: '/learning' },
       { key: 'shaky', label: 'Shaky', count: c.shaky, href: listingHref('shaky') },
       {
         key: 'playing_along',
@@ -180,6 +187,19 @@ export default function Repertoire() {
       },
       { key: 'solo_ready', label: 'Solo-ready', count: c.solo_ready, href: listingHref('solo_ready') },
       { key: 'mastered', label: 'Mastered', count: c.mastered, href: listingHref('mastered') },
+    ];
+  });
+
+  const shareTotal = createMemo(() =>
+    share().reduce((total, entry) => total + entry.count, 0),
+  );
+
+  /** Fuera del repertorio: el backlog, el taller y el cajón, con sus puertas. */
+  const aside = createMemo<LevelShareEntry[]>(() => {
+    const c = counts();
+    return [
+      { key: 'to_learn', label: 'To learn', count: c.to_learn, href: listingHref(BACKLOG_SCOPE) },
+      { key: 'learning', label: 'Learning', count: c.learning, href: '/learning' },
       { key: 'shelved', label: 'Shelved', count: shelvedTotal(), href: listingHref(SHELVED_SCOPE) },
     ];
   });
@@ -224,9 +244,16 @@ export default function Repertoire() {
    * store, que se refresca al cargar y al recargar.
    */
   const insightsNow = createMemo(() => store.now());
-  const histogram = createMemo(() => overdueHistogram(store.rows(), insightsNow()));
+  /**
+   * La vara del panel, configurable: días base por peldaño **sobre 100 tunes**.
+   * El intervalo real se pondera por el tamaño del repertorio de mantenimiento,
+   * así que crecer no convierte el panel en una lista de morosos.
+   */
+  const [prefs, setPrefs] = createSignal<PracticePrefs>(readPrefs(localStorage));
+  const overdueBase = () => prefs().overdueBase;
+  const histogram = createMemo(() => overdueHistogram(store.rows(), insightsNow(), overdueBase()));
   const overdue = createMemo(() =>
-    overdueDelta(store.rows(), insightMarks(), insightEvents(), insightsNow())
+    overdueDelta(store.rows(), insightMarks(), insightEvents(), insightsNow(), overdueBase())
   );
   /**
    * La tendencia (#65): ventana de 30 días, recortada por la propia función al
@@ -235,10 +262,39 @@ export default function Repertoire() {
    * octubre: pedir más días no añadiría puntos, añadiría la ilusión de ellos.
    */
   const trend = createMemo(() =>
-    overdueTrend(store.rows(), insightMarks(), insightEvents(), insightsNow(), 30)
+    overdueTrend(store.rows(), insightMarks(), insightEvents(), insightsNow(), 30, overdueBase())
   );
   const alive = createMemo(() => aliveInRange(insightMarks(), insightsNow(), 14));
   const streak = createMemo(() => streakFromMarks(insightMarks(), insightsNow()));
+
+  // ── ajustes de la vara ────────────────────────────────────────────
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [draft, setDraft] = createSignal<Record<MaintenanceStatus, number>>({
+    ...DEFAULT_OVERDUE_BASE,
+  });
+
+  const openSettings = () => {
+    setDraft({ ...overdueBase() });
+    setSettingsOpen(true);
+  };
+
+  const saveSettings = (event: Event) => {
+    event.preventDefault();
+    const next: PracticePrefs = { ...prefs(), overdueBase: normalizeOverdueBase(draft()) };
+    writePrefs(localStorage, next);
+    setPrefs(next);
+    setSettingsOpen(false);
+  };
+
+  /**
+   * El intervalo que resultaría con lo que hay en el formulario: días base ×
+   * tamaño / 100. Se enseña al lado del campo para que el número que se teclea
+   * no sea abstracto.
+   */
+  const effectiveDays = (band: MaintenanceStatus): string => {
+    const days = (draft()[band] * shareTotal()) / 100;
+    return (Math.round(Math.max(1, days) * 10) / 10).toString();
+  };
 
   onMount(() => {
     void store.load();
@@ -274,7 +330,54 @@ export default function Repertoire() {
             when={!insightsLoading() && !store.loading()}
             fallback={<p class="notice">Loading the figures…</p>}
           >
-            <LevelShare entries={share()} total={store.rows().length} />
+            <div class="insights-tools">
+              <button
+                type="button"
+                class="insight-settings-toggle"
+                aria-expanded={settingsOpen()}
+                onClick={() => (settingsOpen() ? setSettingsOpen(false) : openSettings())}
+              >
+                Overdue settings
+              </button>
+            </div>
+
+            <Show when={settingsOpen()}>
+              <form class="insight-settings" onSubmit={saveSettings}>
+                <p class="insight-settings__lead">
+                  Days a tune may sit untouched <b>per 100 tunes</b> of repertoire. The panel
+                  scales each one by the size of your repertoire — {shareTotal()} tunes today —
+                  so growing the collection does not turn the panel red.
+                </p>
+                <div class="insight-settings__grid">
+                  <For each={MAINTENANCE_BANDS}>
+                    {(band) => (
+                      <label>
+                        <span>{STATUS_LABELS[band]}</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="365"
+                          step="1"
+                          value={draft()[band]}
+                          onInput={(event) =>
+                            setDraft({ ...draft(), [band]: Number(event.currentTarget.value) })
+                          }
+                        />
+                        <small>= {effectiveDays(band)} days</small>
+                      </label>
+                    )}
+                  </For>
+                </div>
+                <div class="insight-settings__actions">
+                  <button type="submit">Save</button>
+                  <button type="button" onClick={() => setDraft({ ...DEFAULT_OVERDUE_BASE })}>
+                    Reset to defaults
+                  </button>
+                </div>
+              </form>
+            </Show>
+
+            <LevelShare entries={share()} total={shareTotal()} aside={aside()} />
             <StatStrip histogram={histogram()} alive={alive()} streak={streak()} />
             <div class="insights-charts">
               <OverdueHistogram histogram={histogram()} delta={overdue()} nowMs={insightsNow()} />

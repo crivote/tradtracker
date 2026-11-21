@@ -59,6 +59,7 @@ vi.mock('../lib/session', () => ({
 import { fetchRepertoire, fetchRepertoireRow, saveFavorite } from '../lib/repertoire';
 import { fetchDayMarks, markPracticeDay, unmarkPractice } from '../lib/practice';
 import {
+  DEFAULT_PREFS,
   readPlan,
   readPrefs,
   todayKeyFor,
@@ -519,7 +520,7 @@ describe('lista del día (#36)', () => {
   });
 
   it('el objetivo diario respeta los topes del esquema', async () => {
-    writePrefs(localStorage, { instrument: 'fiddle', dailyTarget: 20, learningSlots: 6 });
+    writePrefs(localStorage, { ...DEFAULT_PREFS, dailyTarget: 20 });
 
     renderPractice();
     await waitForRows(12);

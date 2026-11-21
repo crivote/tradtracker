@@ -287,9 +287,11 @@ describe('home: la biblioteca (#29)', () => {
 
     await waitFor(() => expect(screen.getByText('Repertoire')).toBeTruthy());
 
-    // El total es el repertorio entero y las partes lo suman: 3 en rotación + 1 aparcada.
+    // El donut es **solo el repertorio de mantenimiento**: de las cuatro filas
+    // de la prueba, una está en solo-ready y el resto fuera (backlog, taller,
+    // aparcada), así que el centro dice 1 y no 4.
     await waitFor(() =>
-      expect(document.querySelector('.level-share .level-total b')!.textContent).toBe('4')
+      expect(document.querySelector('.level-share .level-total b')!.textContent).toBe('1')
     );
 
     const legend = Array.from(document.querySelectorAll('.level-legend a')).map((link) => ({
@@ -299,16 +301,24 @@ describe('home: la biblioteca (#29)', () => {
       pct: link.querySelector('.pct')!.textContent!.trim(),
     }));
 
-    // Las siete filas, con su cifra y su porcentaje, y la puerta que tenía el
-    // número en la línea de texto que el donut sustituye (#65).
     expect(legend).toEqual([
-      { href: '/level/to_learn', label: 'To learn', count: '1', pct: '25.0%' },
-      { href: '/learning', label: 'Learning', count: '1', pct: '25.0%' },
       { href: '/level/shaky', label: 'Shaky', count: '0', pct: '0.0%' },
       { href: '/level/playing_along', label: 'Playing along', count: '0', pct: '0.0%' },
-      { href: '/level/solo_ready', label: 'Solo-ready', count: '1', pct: '25.0%' },
+      { href: '/level/solo_ready', label: 'Solo-ready', count: '1', pct: '100.0%' },
       { href: '/level/mastered', label: 'Mastered', count: '0', pct: '0.0%' },
-      { href: '/level/shelved', label: 'Shelved', count: '1', pct: '25.0%' },
+    ]);
+
+    // Y lo que no es repertorio va aparte, con sus puertas: nunca suma en el donut.
+    const aside = Array.from(document.querySelectorAll('.level-aside a')).map((link) => ({
+      href: link.getAttribute('href'),
+      label: link.querySelector('.lvl')!.textContent!.trim(),
+      count: link.querySelector('b')!.textContent!.trim(),
+    }));
+
+    expect(aside).toEqual([
+      { href: '/level/to_learn', label: 'To learn', count: '1' },
+      { href: '/learning', label: 'Learning', count: '1' },
+      { href: '/level/shelved', label: 'Shelved', count: '1' },
     ]);
   });
 

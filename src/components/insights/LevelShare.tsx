@@ -41,8 +41,13 @@ function colorOf(key: string): string {
  */
 export default function LevelShare(props: {
   entries: LevelShareEntry[];
-  /** Total del repertorio: el número del centro. */
+  /** Total del repertorio de mantenimiento: el número del centro. */
   total: number;
+  /**
+   * Lo que **no** es repertorio —backlog, taller, cajón—: se pinta aparte, con
+   * su propio rótulo y sin entrar en el donut ni en el total del centro.
+   */
+  aside?: LevelShareEntry[];
 }) {
   const drawn = createMemo(() =>
     props.entries.filter((entry) => entry.count > 0).map((entry) => ({
@@ -117,6 +122,24 @@ export default function LevelShare(props: {
             )}
           </For>
         </ul>
+      </Show>
+      <Show when={props.aside && props.aside.length > 0}>
+        <div class="level-aside">
+          <p class="level-aside__title">Outside the repertoire</p>
+          <ul>
+            <For each={props.aside}>
+              {(entry) => (
+                <li>
+                  <A href={entry.href}>
+                    <i style={{ background: colorOf(entry.key) }} aria-hidden="true" />
+                    <span class="lvl">{entry.label}</span>
+                    <b>{entry.count}</b>
+                  </A>
+                </li>
+              )}
+            </For>
+          </ul>
+        </div>
       </Show>
     </figure>
   );

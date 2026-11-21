@@ -1957,3 +1957,154 @@
     width: 100%;
   }
 }
+
+/* ── La vara del vencimiento: ajustes y lo que queda fuera del repertorio ── */
+
+.repertoire-home .insights-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 10px;
+}
+
+.repertoire-home .insight-settings-toggle {
+  font: inherit;
+  font-size: 11.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.repertoire-home .insight-settings-toggle:hover,
+.repertoire-home .insight-settings-toggle:focus-visible,
+.repertoire-home .insight-settings-toggle[aria-expanded='true'] {
+  color: var(--accent);
+  border-color: currentColor;
+}
+
+.repertoire-home .insight-settings {
+  background: #fbf8f1;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 14px 16px 12px;
+  margin: 0 0 18px;
+}
+
+.repertoire-home .insight-settings__lead {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 72ch;
+}
+
+.repertoire-home .insight-settings__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 20px;
+}
+
+.repertoire-home .insight-settings__grid label {
+  display: grid;
+  grid-template-columns: 1fr 60px;
+  align-items: center;
+  gap: 2px 8px;
+  font-size: 13.5px;
+}
+
+.repertoire-home .insight-settings__grid small {
+  grid-column: 1 / -1;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.repertoire-home .insight-settings input[type='number'] {
+  font: inherit;
+  font-size: 14px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.repertoire-home .insight-settings__actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.repertoire-home .insight-settings__actions button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 3px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #f7f2e8;
+  cursor: pointer;
+}
+
+.repertoire-home .insight-settings__actions button[type='button'] {
+  background: none;
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+/* Fuera del repertorio: backlog, taller y cajón. Con su rótulo y en su bloque,
+   sin sumarse nunca al donut ni al total del centro; ocupan la fila entera
+   porque `.level-share` es una rejilla de dos columnas. */
+.repertoire-home .level-aside {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.repertoire-home .level-aside__title {
+  margin: 0 0 8px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.repertoire-home .level-aside ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 24px;
+}
+
+.repertoire-home .level-aside a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.repertoire-home .level-aside a:hover,
+.repertoire-home .level-aside a:focus-visible {
+  color: var(--accent);
+}
+
+.repertoire-home .level-aside i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.repertoire-home .level-aside b {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}

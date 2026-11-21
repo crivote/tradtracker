@@ -39,14 +39,15 @@ const HISTOGRAM: Histogram = {
     { key: '90+', label: '90+', count: 0, pct: 0 },
   ],
   byBand: [
-    { band: 'learning', practiced: 3, overdue: 2, pct: 66.7 },
-    { band: 'shaky', practiced: 3, overdue: 2, pct: 66.7 },
-    { band: 'playing_along', practiced: 3, overdue: 1, pct: 33.3 },
-    { band: 'solo_ready', practiced: 3, overdue: 1, pct: 33.3 },
+    { band: 'shaky', practiced: 4, overdue: 2, pct: 50 },
+    { band: 'playing_along', practiced: 4, overdue: 1, pct: 25 },
+    { band: 'solo_ready', practiced: 4, overdue: 1, pct: 25 },
     { band: 'mastered', practiced: 3, overdue: 1, pct: 33.3 },
   ],
-  overdue: 7,
-  overduePct: 46.7,
+  overdue: 5,
+  overduePct: 33.3,
+  aside: { learning: 3, backlog: 0, shelved: 0 },
+  intervals: { shaky: 4, playing_along: 7, solo_ready: 14, mastered: 30 },
 };
 
 const DELTA: OverdueDelta = {

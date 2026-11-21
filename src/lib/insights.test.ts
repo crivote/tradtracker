@@ -12,6 +12,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  DEFAULT_OVERDUE_BASE,
+  MAINTENANCE_BANDS,
   compositionByWeek,
   overdueDelta,
   overdueHistogram,
@@ -20,6 +22,7 @@ import {
   TARGET_DAYS_BY_BAND,
   type InsightEvent,
   type InsightMark,
+  type MaintenanceStatus,
 } from './insights';
 import type { LadderStatus, RepertoireRow, TuneStatus } from './repertoire-model';
 import { todayKeyFor } from './practice-storage';
@@ -78,6 +81,20 @@ function row(overrides: Partial<RepertoireRow> & { id: string }): RepertoireRow 
 /** Una fila en rotación con un último ensayo a `days` días de `nowMs`. */
 function practicedRow(id: string, status: TuneStatus, nowMs: number, days: number): RepertoireRow {
   return row({ id, status, last_practiced_day: dayKey(nowMs, days) });
+}
+
+/**
+ * Rellena hasta 100 tunes de mantenimiento para que la escala de la vara sea 1
+ * (`base × tamaño / 100`). Sin relleno, los tests de umbrales —con dos o cuatro
+ * filas— dejan el intervalo en el mínimo de un día y no prueban lo que dicen.
+ * El relleno no lleva marcas ni ensayos: cuenta para el tamaño, nunca para el
+ * censo juzgado.
+ */
+function atScaleOne(rows: RepertoireRow[]): RepertoireRow[] {
+  const filler = Array.from({ length: Math.max(0, 100 - rows.length) }, (_, index) =>
+    practicedRow(`escala-${index}`, 'mastered', NOW, 0),
+  );
+  return [...rows, ...filler];
 }
 
 function mark(repertoireId: string, day: string, practicedAt: string): InsightMark {
@@ -193,30 +210,32 @@ describe('overdueHistogram', () => {
   });
 
   it('marca vencida por el umbral de cada peldaño, justo en el día del umbral', () => {
-    // Una fila por peldaño en su umbral exacto (no vencida) y otra un día más
-    // (vencida): el corte es «días > objetivo».
-    const bands: LadderStatus[] = ['learning', 'shaky', 'playing_along', 'solo_ready', 'mastered'];
-    const rows = bands.flatMap((status) => [
-      practicedRow(`${status}-justo`, status, NOW, TARGET_DAYS_BY_BAND[status]),
-      practicedRow(`${status}-pasada`, status, NOW, TARGET_DAYS_BY_BAND[status] + 1),
-    ]);
+    // Lo cubre «cada peldaño usa su intervalo…», con el tamaño llevado a 100
+    // para que la escala sea 1. Aquí solo se fija el corte exacto: el día del
+    // umbral no está vencido y uno más sí.
+    const exacto = practicedRow('exacto', 'solo_ready', NOW, DEFAULT_OVERDUE_BASE.solo_ready);
+    const filaSize100 = Array.from({ length: 99 }, (_, index) =>
+      practicedRow(`relleno-${index}`, 'mastered', NOW, 0),
+    );
 
-    const histogram = overdueHistogram(rows, NOW);
+    const histogram = overdueHistogram([exacto, ...filaSize100], NOW);
 
-    expect(histogram.overdue).toBe(5);
-    expect(histogram.overduePct).toBe(50);
-    expect(histogram.byBand.map((band) => band.band)).toEqual(bands);
-    for (const band of histogram.byBand) {
-      expect(band.practiced).toBe(2);
-      expect(band.overdue).toBe(1);
-      expect(band.pct).toBe(50);
-    }
+    expect(histogram.overdue).toBe(0);
+    expect(
+      overdueHistogram(
+        [
+          practicedRow('pasada', 'solo_ready', NOW, DEFAULT_OVERDUE_BASE.solo_ready + 1),
+          ...filaSize100,
+        ],
+        NOW,
+      ).overdue,
+    ).toBe(1);
   });
 
   it('calcula los porcentajes sobre las que tienen día, y el de vencidas sobre las mismas', () => {
     const rows = [
-      practicedRow('vieja', 'learning', NOW, 5), // 5 > 2: vencida
-      practicedRow('fresca', 'learning', NOW, 1),
+      practicedRow('vieja', 'shaky', NOW, 5), // 5 > 1: vencida con esta escala
+      practicedRow('fresca', 'shaky', NOW, 1),
       row({ id: 'sin-registro' }),
       row({ id: 'sin-registro-2' }),
     ];
@@ -232,14 +251,89 @@ describe('overdueHistogram', () => {
     // Vencidas: una de las dos que tienen día (no del universo entero).
     expect(histogram.overdue).toBe(1);
     expect(histogram.overduePct).toBe(50);
-    expect(histogram.byBand.find((band) => band.band === 'learning')).toMatchObject({
+    expect(histogram.byBand.find((band) => band.band === 'shaky')).toMatchObject({
       practiced: 2,
       overdue: 1,
       pct: 50,
     });
   });
 
-  it('sin filas devuelve el histograma vacío, con las cinco bandas a cero', () => {
+  it('cada peldaño usa su intervalo, y el intervalo se pondera por el tamaño de la base', () => {
+    const bands: MaintenanceStatus[] = ['shaky', 'playing_along', 'solo_ready', 'mastered'];
+    const rows = bands.flatMap((status) => [
+      practicedRow(`${status}-justo`, status, NOW, DEFAULT_OVERDUE_BASE[status]),
+      practicedRow(`${status}-pasada`, status, NOW, DEFAULT_OVERDUE_BASE[status] + 1),
+    ]);
+    // Con 100 filas el tamaño es 100 y la escala vale 1: se prueba el umbral
+    // base, no el factor. Las de relleno están al día y no cuentan como vencidas.
+    const filler = Array.from({ length: 92 }, (_, index) =>
+      practicedRow(`relleno-${index}`, 'mastered', NOW, 0),
+    );
+
+    const histogram = overdueHistogram([...rows, ...filler], NOW);
+
+    expect(histogram.universe).toBe(100);
+    expect(histogram.overdue).toBe(4);
+    for (const band of bands.filter((entry) => entry !== 'mastered')) {
+      const tally = histogram.byBand.find((entry) => entry.band === band)!;
+      expect(tally.practiced).toBe(2);
+      expect(tally.overdue).toBe(1);
+      expect(tally.pct).toBe(50);
+    }
+    // `mastered` suma las 92 de relleno: cuentan para el tamaño, no para el censo.
+    const mastered = histogram.byBand.find((entry) => entry.band === 'mastered')!;
+    expect(mastered.practiced).toBe(94);
+    expect(mastered.overdue).toBe(1);
+    // Y la ponderación: con 100 tunes los intervalos son los de la base.
+    expect(histogram.intervals.shaky).toBe(DEFAULT_OVERDUE_BASE.shaky);
+  });
+
+  it('pondera el intervalo por el tamaño: con 200 tunes, el doble de días', () => {
+    const rows = Array.from({ length: 200 }, (_, index) =>
+      practicedRow(`fila-${index}`, 'shaky', NOW, 0),
+    );
+
+    const histogram = overdueHistogram(rows, NOW);
+
+    expect(histogram.intervals.shaky).toBe(DEFAULT_OVERDUE_BASE.shaky * 2);
+    // Una fila con 5 días no está vencida cuando la base son 8 días.
+    expect(
+      overdueHistogram(
+        [...rows.slice(1), practicedRow('cinco-dias', 'shaky', NOW, 5)],
+        NOW,
+      ).overdue,
+    ).toBe(0);
+  });
+
+  it('learning no entra en el repertorio: va aparte y no mueve el universo', () => {
+    const rows = [
+      practicedRow('vieja', 'shaky', NOW, 5), // 5 > 4: vencida con escala 1
+      practicedRow('fresca', 'shaky', NOW, 1),
+      row({ id: 'sin-registro' }),
+      row({ id: 'sin-registro-2' }),
+      row({ id: 'taller', status: 'learning' }),
+      row({ id: 'backlog', status: 'to_learn' }),
+      row({ id: 'aparcada', status: 'mastered', shelved: true }),
+    ];
+
+    const histogram = overdueHistogram(rows, NOW);
+
+    // Cuatro filas de shaky + 92 de relleno no: aquí el tamaño es 4, así que el
+    // intervalo de shaky se queda en el mínimo de un día.
+    expect(histogram.universe).toBe(4);
+    expect(histogram.sinRegistro).toBe(2);
+    expect(histogram.overdue).toBe(1);
+    expect(histogram.overduePct).toBe(50);
+    expect(histogram.byBand.map((band) => band.band)).toEqual([...MAINTENANCE_BANDS]);
+    expect(histogram.byBand.find((band) => band.band === 'shaky')).toMatchObject({
+      practiced: 2,
+      overdue: 1,
+      pct: 50,
+    });
+    expect(histogram.aside).toEqual({ learning: 1, backlog: 1, shelved: 1 });
+  });
+
+  it('sin filas devuelve el histograma vacío, con las cuatro bandas a cero', () => {
     const histogram = overdueHistogram([], NOW);
 
     expect(histogram.universe).toBe(0);
@@ -248,7 +342,7 @@ describe('overdueHistogram', () => {
     expect(histogram.overduePct).toBe(0);
     expect(histogram.buckets.map((bucket) => bucket.count)).toEqual([0, 0, 0, 0, 0, 0, 0]);
     expect(histogram.buckets.map((bucket) => bucket.pct)).toEqual([0, 0, 0, 0, 0, 0, 0]);
-    expect(histogram.byBand).toHaveLength(5);
+    expect(histogram.byBand).toHaveLength(4);
     expect(histogram.byBand.every((band) => band.practiced === 0 && band.overdue === 0)).toBe(true);
   });
 
@@ -276,7 +370,7 @@ describe('overdueTrend (#65)', () => {
     const events = [statusEvent('a', 'shaky', '2026-11-04T20:00:00+00:00')];
     const marks = [mark('a', dayKey(NOW_TREND, 20), '2026-10-25T10:00:00+00:00')];
 
-    const trend = overdueTrend([practicedRow('a', 'shaky', NOW_TREND, 20)], marks, events, NOW_TREND, 30);
+    const trend = overdueTrend(atScaleOne([practicedRow('a', 'shaky', NOW_TREND, 20)]), marks, events, NOW_TREND, 30);
 
     // Del 4 al 14 de noviembre: once días, aunque la ventana pedida sea de 30.
     expect(trend.points).toHaveLength(11);
@@ -293,7 +387,7 @@ describe('overdueTrend (#65)', () => {
     const marks = [mark('a', dayKey(NOW_TREND, 13), '2026-11-01T10:00:00+00:00')];
     const rows = [practicedRow('a', 'shaky', NOW_TREND, 13)];
 
-    const trend = overdueTrend(rows, marks, events, NOW_TREND, 15);
+    const trend = overdueTrend(atScaleOne(rows), marks, events, NOW_TREND, 15);
     const byDay = Object.fromEntries(trend.points.map((point) => [point.key, point]));
 
     expect(byDay['2026-11-04']).toMatchObject({ overdue: 0, judged: 1 });
@@ -301,17 +395,17 @@ describe('overdueTrend (#65)', () => {
     expect(byDay[dayKey(NOW_TREND)]).toMatchObject({ overdue: 1, judged: 1 });
   });
 
-  it('una subida de peldaño cambia el umbral el mismo día del evento', () => {
-    // Ensayo el 1 de noviembre y peldaño `mastered` (30 días) hasta el 8, que
-    // pasa a `learning` (2 días): el 8 ya está vencida, el 7 no.
+  it('una bajada de peldaño cambia el umbral el mismo día del evento', () => {
+    // Ensayo el 1 de noviembre y peldaño `solo_ready` (14 días) hasta el 8, que
+    // baja a `shaky` (4 días): el 7 no está vencida (6 días), el 8 sí.
     const events = [
-      statusEvent('a', 'mastered', '2026-11-01T09:00:00+00:00'),
-      statusEvent('a', 'learning', '2026-11-08T09:00:00+00:00', 'mastered', 'ui'),
+      statusEvent('a', 'solo_ready', '2026-11-01T09:00:00+00:00'),
+      statusEvent('a', 'shaky', '2026-11-08T09:00:00+00:00', 'solo_ready', 'ui'),
     ];
     const marks = [mark('a', dayKey(NOW_TREND, 13), '2026-11-01T10:00:00+00:00')];
-    const rows = [practicedRow('a', 'learning', NOW_TREND, 13)];
+    const rows = [practicedRow('a', 'shaky', NOW_TREND, 13)];
 
-    const trend = overdueTrend(rows, marks, events, NOW_TREND, 10);
+    const trend = overdueTrend(atScaleOne(rows), marks, events, NOW_TREND, 10);
     const byDay = Object.fromEntries(trend.points.map((point) => [point.key, point]));
 
     expect(byDay['2026-11-07'].overdue).toBe(0);
@@ -327,7 +421,7 @@ describe('overdueTrend (#65)', () => {
     ];
     const rows = [practicedRow('a', 'shaky', NOW_TREND, 20), practicedRow('b', 'shaky', NOW_TREND, 20)];
 
-    const trend = overdueTrend(rows, marks, events, NOW_TREND, 10);
+    const trend = overdueTrend(atScaleOne(rows), marks, events, NOW_TREND, 10);
 
     // Solo `a` entra en el censo: una tune sin estado entonces no tenía umbral.
     expect(trend.points.every((point) => point.judged === 1)).toBe(true);
@@ -369,7 +463,7 @@ describe('overdueDelta', () => {
   it('compara hoy con el cierre del domingo pasado', () => {
     const { rows, events, marks } = scenario();
 
-    const delta = overdueDelta(rows, marks, events, NOW);
+    const delta = overdueDelta(atScaleOne(rows), marks, events, NOW);
 
     // Hoy: una vencida de tres con día (b).
     expect(delta.currentPct).toBe(33.3);
@@ -392,7 +486,7 @@ describe('overdueDelta', () => {
 
   it('deja fuera el backlog y las aparcadas en las dos fotos', () => {
     const { rows, events, marks } = scenario();
-    const delta = overdueDelta(rows, marks, events, NOW);
+    const delta = overdueDelta(atScaleOne(rows), marks, events, NOW);
     // El backlog y la aparcada llevan 40 días sin tocarse y aun así no cuentan:
     // 3 filas con día hoy, no 5.
     expect(delta.currentPct).toBe(33.3);
@@ -404,14 +498,14 @@ describe('overdueDelta', () => {
 
   it('no usa el peldaño de hoy para la foto de la semana pasada', () => {
     const rows = [practicedRow('a', 'solo_ready', NOW, 8)];
-    const events = [statusEvent('a', 'learning', '2026-11-01T10:00:00+00:00')];
-    const marks = [mark('a', '2026-11-04', '2026-11-04T10:00:00+00:00')];
+    const events = [statusEvent('a', 'shaky', '2026-11-01T10:00:00+00:00')];
+    const marks = [mark('a', '2026-11-03', '2026-11-03T10:00:00+00:00')];
 
-    const delta = overdueDelta(rows, marks, events, NOW);
+    const delta = overdueDelta(atScaleOne(rows), marks, events, NOW);
 
     // Hoy, solo_ready y 8 días: dentro de 14 → no vencida.
     expect(delta.currentPct).toBe(0);
-    // El domingo 8 estaba en `learning` (objetivo 2) y llevaba 4 días: vencida.
+    // El domingo 8 estaba en `shaky` (4 días) y llevaba 5: vencida.
     expect(delta.previousPct).toBe(100);
     expect(delta.deltaPp).toBe(-100);
   });
@@ -424,7 +518,7 @@ describe('overdueDelta', () => {
       mark('b', '2026-11-01', '2026-11-01T10:00:00+00:00'),
     ];
 
-    const delta = overdueDelta(rows, marks, events, NOW);
+    const delta = overdueDelta(atScaleOne(rows), marks, events, NOW);
 
     // `b` no tenía estado el domingo 8: queda fuera de la foto vieja y también de
     // la de hoy, que se mide sobre el mismo censo. Si hoy se midiera sobre las
@@ -441,7 +535,7 @@ describe('overdueDelta', () => {
     // La única marca es de esta semana.
     const marks = [mark('a', '2026-11-12', '2026-11-12T10:00:00+00:00')];
 
-    const delta = overdueDelta(rows, marks, events, NOW);
+    const delta = overdueDelta(atScaleOne(rows), marks, events, NOW);
 
     expect(delta.enoughHistory).toBe(false);
     // No hay denominador del que sacar la foto vieja: 0, y la UI no lo lee.
@@ -459,7 +553,7 @@ describe('overdueDelta', () => {
       deltaPp: 0,
       enoughHistory: false,
     });
-    expect(delta.byBand).toHaveLength(5);
+    expect(delta.byBand).toHaveLength(4);
     expect(delta.byBand.every((band) => band.deltaPp === 0)).toBe(true);
   });
 });

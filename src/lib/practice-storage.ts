@@ -10,6 +10,12 @@
  * los valores por defecto.
  */
 
+import {
+  DEFAULT_OVERDUE_BASE,
+  normalizeOverdueBase,
+  type MaintenanceStatus,
+} from './overdue';
+
 export type PracticeInstrument = 'fiddle' | 'whistle' | 'accordion' | 'banjo';
 
 /** Los instrumentos soportados, en el orden en que se muestran. */
@@ -26,9 +32,21 @@ export interface PracticePrefs {
    * el reparto tipo de la spec.
    */
   learningSlots: number;
+  /**
+   * La vara del panel de la home: **días base por peldaño sobre 100 tunes**.
+   * El intervalo aplicado es `base × (tamaño del repertorio / 100)`, así que un
+   * repertorio que crece no condena el panel a dos tercios vencidos. Solo los
+   * cuatro escalones de mantenimiento: `learning` y el backlog no entran.
+   */
+  overdueBase: Record<MaintenanceStatus, number>;
 }
 
-export const DEFAULT_PREFS: PracticePrefs = { instrument: 'fiddle', dailyTarget: 8, learningSlots: 6 };
+export const DEFAULT_PREFS: PracticePrefs = {
+  instrument: 'fiddle',
+  dailyTarget: 8,
+  learningSlots: 6,
+  overdueBase: { ...DEFAULT_OVERDUE_BASE },
+};
 
 export const DAILY_TARGET_MIN = 1;
 export const DAILY_TARGET_MAX = 20;
@@ -159,11 +177,12 @@ function normalizeOverflow(value: unknown): number {
 }
 
 function normalizePrefs(raw: unknown): PracticePrefs {
-  if (!isRecord(raw)) return { ...DEFAULT_PREFS };
+  if (!isRecord(raw)) return { ...DEFAULT_PREFS, overdueBase: { ...DEFAULT_OVERDUE_BASE } };
   return {
     instrument: isInstrument(raw.instrument) ? raw.instrument : DEFAULT_PREFS.instrument,
     dailyTarget: normalizeDailyTarget(raw.dailyTarget),
     learningSlots: normalizeLearningSlots(raw.learningSlots),
+    overdueBase: normalizeOverdueBase(raw.overdueBase),
   };
 }
 
