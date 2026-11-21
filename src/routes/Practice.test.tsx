@@ -24,6 +24,7 @@ vi.mock('../lib/repertoire', async (importOriginal) => {
   return {
     ...actual,
     fetchRepertoire: vi.fn(),
+    fetchRepertoireRow: vi.fn(),
     saveFavorite: vi.fn(),
   };
 });
@@ -55,7 +56,7 @@ vi.mock('../lib/session', () => ({
   }),
 }));
 
-import { fetchRepertoire, saveFavorite } from '../lib/repertoire';
+import { fetchRepertoire, fetchRepertoireRow, saveFavorite } from '../lib/repertoire';
 import { fetchDayMarks, markPracticeDay, unmarkPractice } from '../lib/practice';
 import {
   readPlan,
@@ -67,6 +68,7 @@ import {
 import Practice from './Practice';
 
 const mockedFetch = vi.mocked(fetchRepertoire);
+const mockedFetchRow = vi.mocked(fetchRepertoireRow);
 const mockedFavorite = vi.mocked(saveFavorite);
 const mockedMarks = vi.mocked(fetchDayMarks);
 const mockedMark = vi.mocked(markPracticeDay);
@@ -189,6 +191,7 @@ beforeEach(() => {
   sessionStorage.clear();
 
   mockedFetch.mockResolvedValue(ROWS as any);
+  mockedFetchRow.mockResolvedValue(ROWS[0] as any);
   mockedMarks.mockResolvedValue([]);
   mockedMark.mockResolvedValue(1);
   mockedUnmark.mockResolvedValue(undefined);
@@ -526,5 +529,40 @@ describe('lista del día (#36)', () => {
     // Ya está en el máximo: no escribe ni reconstruye.
     expect(readPrefs(localStorage).dailyTarget).toBe(20);
     expect(document.querySelectorAll('.practice-row')).toHaveLength(12);
+  });
+});
+
+/**
+ * El «last played» de la lista sale de la fila de la tune (`pr_repertoire.
+ * last_practiced_day`, que mantiene el trigger de `pr_practice`) y se mide
+ * contra **hoy**. Los ensayos no planificados —los marcados desde la ficha,
+ * la búsqueda o el listado— también cuentan: al volver, la fila trae su día.
+ */
+describe('el last played se lee de la fila, no de la lista', () => {
+  it('mide los días contra hoy aunque la lista se generara hace días', async () => {
+    // Lista congelada de hace seis días; la tune se ensayó hace dos.
+    seedPlan({ createdAt: Date.now() - 6 * DAY, ids: ['row-01'], overflow: 0 });
+    mockedFetch.mockResolvedValue([row(1, { last_practiced_day: dayAgo(2) })] as any);
+
+    renderPractice();
+    await waitForRows(1);
+
+    // Contra la generación de la lista daría 0 («today»): no es el dato real.
+    expect(document.querySelector('.practice-row__stale')?.textContent).toBe('2 days');
+  });
+
+  it('marcar en la lista actualiza el dato de la fila, no solo el tick', async () => {
+    seedPlan({ createdAt: Date.now(), ids: ['row-01'], overflow: 0 });
+    mockedFetch.mockResolvedValue([row(1, { last_practiced_day: dayAgo(30) })] as any);
+
+    renderPractice();
+    await waitForRows(1);
+    expect(document.querySelector('.practice-row__stale')?.textContent).toBe('30 days');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Tune 01' }));
+
+    await waitFor(() =>
+      expect(document.querySelector('.practice-row__stale')?.textContent).toBe('today'),
+    );
   });
 });

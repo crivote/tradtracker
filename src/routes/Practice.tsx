@@ -7,6 +7,7 @@ import {
   displayRhythm,
   displayTitle,
   fetchRepertoire,
+  fetchRepertoireRow,
   saveFavorite,
   stalenessColor,
   stalenessDays,
@@ -106,7 +107,9 @@ export default function Practice() {
    * la fecha de la cabecera podrían hablar de días distintos.
    */
   const nowMs = Date.now();
-  const dateKey = todayKeyFor(nowMs);
+  /** El día de hoy, **preguntado al usarlo**: una pestaña abierta desde ayer no
+   *  debe leer ni escribir con la fecha de ayer. */
+  const dateKey = () => todayKeyFor(Date.now());
 
   const [rows, setRows] = createSignal<RepertoireRow[]>([]);
   /**
@@ -237,7 +240,7 @@ export default function Practice() {
         const fresh = buildPlan(
           loaded,
           storedPrefs.dailyTarget,
-          previousIds(storage(), dateKey),
+          previousIds(storage(), dateKey()),
           nowMs,
         );
         persistPlan(fresh);
@@ -329,6 +332,34 @@ export default function Practice() {
 
   const addMark = (id: string) => setMarked((previous) => new Set([...previous, id]));
 
+  /**
+   * Refleja en la fila en memoria el día que se acaba de escribir.
+   *
+   * El «last played» de la lista sale de `pr_repertoire.last_practiced_day`, y
+   * esa columna la mueve el trigger de `pr_practice`: tras marcar, la fila que
+   * se cargó al montar sigue diciendo el día anterior. Sin este espejo el tag
+   * de antigüedad no cambia hasta recargar, que es justo lo que no debe pasar.
+   */
+  const applyRowDay = (id: string, day: string | null) =>
+    setRows((previous) =>
+      previous.map((row) => (row.id === id ? { ...row, last_practiced_day: day } : row)),
+    );
+
+  /**
+   * Relee **una** fila y la sustituye. Es lo que hace falta al desmarcar: el
+   * día nuevo es el máximo de las marcas que quedan, y eso no se puede adivinar
+   * en el cliente (`pr_recompute_last_practice` lo calcula en la base).
+   */
+  const refreshRow = async (id: string) => {
+    try {
+      const fresh = await fetchRepertoireRow(id);
+      if (!fresh) return;
+      setRows((previous) => previous.map((row) => (row.id === id ? fresh : row)));
+    } catch (rowError) {
+      setNotice(messageOf(rowError));
+    }
+  };
+
   const dropMark = (id: string) =>
     setMarked((previous) => {
       const next = new Set(previous);
@@ -348,6 +379,7 @@ export default function Practice() {
     try {
       await markPracticeDay([row.id]);
       addMark(row.id);
+      applyRowDay(row.id, dayKey());
     } catch (markError) {
       setNotice(messageOf(markError));
     } finally {
@@ -374,6 +406,8 @@ export default function Practice() {
     try {
       await markPracticeDay(pending);
       setMarked((previous) => new Set([...previous, ...pending]));
+      const today = dayKey();
+      for (const id of pending) applyRowDay(id, today);
     } catch (markError) {
       setNotice(messageOf(markError));
     } finally {
@@ -392,6 +426,7 @@ export default function Practice() {
   const rateOne = (row: RepertoireRow) => {
     openPractice({ repertoireId: row.id, title: displayTitle(row) }, () => {
       addMark(row.id);
+      applyRowDay(row.id, dayKey());
     });
   };
 
@@ -405,6 +440,8 @@ export default function Practice() {
       // operación, para que la fecha pueda retroceder.
       await unmarkPractice(row.id, day);
       dropMark(row.id);
+      // El día retrocede al máximo de las marcas que quedan: lo dice la base.
+      await refreshRow(row.id);
     } catch (unmarkError) {
       setNotice(messageOf(unmarkError));
     }
@@ -517,7 +554,10 @@ export default function Practice() {
         <ol class="practice-list">
           <For each={listRows()}>
             {(row, index) => {
-              const days = () => stalenessDays(row, planAt());
+              // Días desde el último ensayo **hasta hoy**, no hasta la generación
+              // de la lista: el dato es el de la fila y una lista vieja no debe
+              // congelar la antigüedad de lo que se ensayó después.
+              const days = () => stalenessDays(row, Date.now());
               const tag = () => stalenessTag(days());
               const color = () => stalenessColor(days());
               const key = () => cardKey(row);
