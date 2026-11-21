@@ -16,6 +16,8 @@ import {
   historyStats,
   practiceStreak,
   rangeStartKey,
+  sessionAverages,
+  sessionSeries,
   streakSummary,
   type PracticeMark,
 } from './practice-history';
@@ -236,5 +238,61 @@ describe('dayLabel', () => {
 
   it('una fecha anterior se dice con el día de la semana y el mes', () => {
     expect(dayLabel(todayKeyFor(at(2026, 11, 8, 9)), now)).toBe('Sunday 8 November');
+  });
+});
+
+describe('medias por sesión', () => {
+  // Tres sesiones: 2 tunes (4 y 5), 3 tunes (2, 4 y sin valorar) y 1 sin valorar.
+  const marks = [
+    mark('a', '2026-11-20', 4),
+    mark('b', '2026-11-20', 5),
+    mark('c', '2026-11-19', 2),
+    mark('d', '2026-11-19', 4),
+    mark('e', '2026-11-19', null),
+    mark('f', '2026-11-18', null),
+  ];
+  const days = buildHistoryDays(marks);
+
+  it('la serie es una barra por sesión, sin los días vacíos y en orden', () => {
+    const series = sessionSeries(days);
+
+    expect(series.map((session) => session.key)).toEqual([
+      '2026-11-18',
+      '2026-11-19',
+      '2026-11-20',
+    ]);
+    expect(series.map((session) => session.practices)).toEqual([1, 3, 2]);
+    expect(series.map((session) => session.avgQuality)).toEqual([null, 3, 4.5]);
+  });
+
+  it('la media de tunes por sesión divide entre sesiones, no entre días del rango', () => {
+    // 6 marcas en 3 sesiones = 2.0. Si dividiera entre 30 días del rango, daría 0.2.
+    expect(sessionAverages(days)).toMatchObject({
+      sessions: 3,
+      tunesPerSession: 2,
+      ratedSessions: 2,
+      avgQualityPerSession: 3.75,
+    });
+  });
+
+  it('la media de valoración es la media de las medias, no la de todas las marcas', () => {
+    // Por sesión: (4.5 + 3) / 2 = 3.75. Por marca: (4+5+2+4) / 4 = 3.75 — coincide
+    // aquí por casualidad, así que se prueba con una sesión desequilibrada.
+    const uneven = buildHistoryDays([
+      mark('a', '2026-11-20', 5),
+      mark('b', '2026-11-20', 5),
+      mark('c', '2026-11-20', 5),
+      mark('d', '2026-11-19', 1),
+    ]);
+
+    // Por sesión: (5 + 1) / 2 = 3. Por marca: (5+5+5+1) / 4 = 4.
+    expect(sessionAverages(uneven).avgQualityPerSession).toBe(3);
+  });
+
+  it('sin sesiones no hay medias: `null`, no cero', () => {
+    const empty = sessionAverages([]);
+    expect(empty.sessions).toBe(0);
+    expect(empty.tunesPerSession).toBeNull();
+    expect(empty.avgQualityPerSession).toBeNull();
   });
 });

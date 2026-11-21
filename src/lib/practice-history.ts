@@ -178,6 +178,11 @@ function average(values: readonly number[]): number | null {
   return Math.round((total / values.length) * 100) / 100;
 }
 
+/** Un decimal: las medias por sesión no necesitan más precisión. */
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 /**
  * Las marcas agrupadas por su día local, del más reciente al más antiguo. El
  * orden dentro del día es el de la consulta, que ya viene por `practiced_at`.
@@ -361,4 +366,84 @@ export function dayLabel(key: string, nowMs: number): string {
     day: 'numeric',
     month: 'long',
   });
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Medias por sesión
+ * ──────────────────────────────────────────────────────────────── */
+
+/**
+ * Una **sesión** es un día con al menos un ensayo. No es la «sesión» del modelo
+ * retirado (#56): aquello era un contenedor de marcas que la app inventaba en
+ * cada toque; esto es el día, que ya existe en `pr_practice.day`.
+ */
+export interface SessionPoint {
+  /** `YYYY-MM-DD` local. */
+  key: string;
+  /** Etiqueta corta del eje (`19 Nov`). */
+  label: string;
+  /** Tunes tocadas en la sesión. */
+  practices: number;
+  /** Media de las valoraciones de esa sesión; `null` si no se valoró ninguna. */
+  avgQuality: number | null;
+}
+
+/**
+ * Las sesiones del rango, de la más antigua a la más reciente.
+ *
+ * Solo los días **con ensayo**: un hueco no es una sesión y no debe entrar en
+ * una media «por sesión» —hundiría la media de tunes con días que no existen—.
+ * Para el ritmo del calendario está `historySeries`, que sí pinta los ceros.
+ */
+export function sessionSeries(
+  days: readonly HistoryDay[],
+): SessionPoint[] {
+  return [...days]
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map((day) => {
+      const [year, month, date] = day.key.split('-').map(Number);
+      return {
+        key: day.key,
+        label: new Date(year, month - 1, date).toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'short',
+        }),
+        practices: day.practices,
+        avgQuality: day.avgQuality,
+      };
+    });
+}
+
+/** Las dos medias que pide la cabecera del historial. */
+export interface SessionAverages {
+  /** Días con al menos un ensayo en el rango. */
+  sessions: number;
+  /** Tunes por sesión; `null` sin sesiones. */
+  tunesPerSession: number | null;
+  /**
+   * Media de las valoraciones **por sesión**: primero la media de cada día y
+   * después la media de esas medias. No es la media de todas las marcas juntas:
+   * una sesión de dos tunes valoradas pesa lo mismo que una de ocho.
+   */
+  avgQualityPerSession: number | null;
+  /** Sesiones con al menos una valoración. */
+  ratedSessions: number;
+}
+
+export function sessionAverages(days: readonly HistoryDay[]): SessionAverages {
+  const sessions = days.length;
+  const perSession = days
+    .map((day) => day.avgQuality)
+    .filter((quality): quality is number => quality !== null);
+
+  return {
+    sessions,
+    tunesPerSession: sessions > 0 ? round1(sumPractices(days) / sessions) : null,
+    avgQualityPerSession: average(perSession),
+    ratedSessions: perSession.length,
+  };
+}
+
+function sumPractices(days: readonly HistoryDay[]): number {
+  return days.reduce((sum, day) => sum + day.practices, 0);
 }

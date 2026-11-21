@@ -169,15 +169,30 @@
   margin: 0 auto;
 }
 
+/* El día es un `<details>`: la línea de resumen se ve siempre y el detalle se
+   abre a demanda. La rejilla de dos columnas se queda en la línea, y la lista
+   se alinea con la segunda columna. */
 .history .history-day {
+  border-top: 1px solid var(--line);
+  padding: 4px 0;
+}
+
+.history .history-day__summary {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
   gap: 18px;
-  padding: 16px 0 18px;
-  border-top: 1px solid var(--line);
+  align-items: baseline;
+  padding: 12px 0;
+  cursor: pointer;
+  list-style: none;
 }
 
-.history .history-day > header h2 {
+/* El triángulo nativo se quita y se dibuja uno propio, que cambia al abrir. */
+.history .history-day__summary::-webkit-details-marker {
+  display: none;
+}
+
+.history .history-day__summary h2 {
   margin: 0;
   font-family: var(--display);
   font-weight: 400;
@@ -186,8 +201,31 @@
   color: var(--ink);
 }
 
-.history .history-day > header p {
-  margin: 4px 0 0;
+.history .history-day__summary h2::before {
+  content: '▸';
+  display: inline-block;
+  width: 16px;
+  color: var(--accent);
+  font-size: 12px;
+  vertical-align: 1px;
+}
+
+.history .history-day[open] .history-day__summary h2::before {
+  content: '▾';
+}
+
+.history .history-day__summary:hover h2,
+.history .history-day__summary:focus-visible h2 {
+  color: var(--accent);
+}
+
+.history .history-day__summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 3px;
+}
+
+.history .history-day__meta {
   font-family: var(--sans);
   font-size: 11.5px;
   color: var(--muted);
@@ -195,7 +233,7 @@
 
 .history .history-day > ul {
   list-style: none;
-  margin: 0;
+  margin: 0 0 12px 208px;
   padding: 0;
 }
 
@@ -304,10 +342,105 @@
   color: var(--accent);
 }
 
+/* ── medias por sesión ─────────────────────────────────────────── */
+.history .session-averages {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 18px;
+  max-width: 1260px;
+  margin: 6px auto 14px;
+}
+
+.history .session-figure {
+  margin: 0;
+  padding: 12px 14px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.history .session-figure__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.history .session-figure__head b {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 26px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.history .session-figure__head small {
+  font-family: var(--sans);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Las barras son una sesión cada una, no un día del rango: el hueco no ocupa
+   sitio porque no es una sesión. */
+.history .session-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 88px;
+}
+
+.history .session-bar {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 4px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.history .session-bar__fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+.history .session-bars--rating .session-bar__fill {
+  background: var(--ink);
+  opacity: 0.55;
+}
+
+.history .session-bar.is-unrated .session-bar__fill {
+  background: var(--line);
+  opacity: 1;
+}
+
+.history .session-bar:hover .session-bar__fill {
+  opacity: 1;
+}
+
+.history .session-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 6px 0 0;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
 @media (max-width: 720px) {
-  .history .history-day {
+  .history .history-day__summary {
     grid-template-columns: 1fr;
-    gap: 8px;
+    gap: 4px;
+  }
+
+  .history .history-day > ul {
+    margin-left: 0;
   }
 
   .history .chart-bars {

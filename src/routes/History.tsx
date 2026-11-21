@@ -8,6 +8,8 @@ import {
   fetchPracticeHistory,
   historySeries,
   historyStats,
+  sessionAverages,
+  sessionSeries,
   type HistoryDay,
   type HistoryRange,
   type PracticeMark,
@@ -29,6 +31,7 @@ import {
   paceSeries,
 } from '../lib/insights-view';
 import PracticeChart from '../components/PracticeChart';
+import SessionAverages from '../components/SessionAverages';
 import PaceChart from '../components/insights/PaceChart';
 import CompositionChart from '../components/insights/CompositionChart';
 import RevisitsChart from '../components/insights/RevisitsChart';
@@ -92,6 +95,12 @@ export default function History() {
   const days = createMemo(() => buildHistoryDays(marks()));
   const stats = createMemo(() => historyStats(days(), { nowMs: nowMs(), range: range() }));
   const points = createMemo(() => historySeries(days(), { nowMs: nowMs(), range: range() }));
+  /**
+   * Las medias por sesión: una sesión es un día con ensayo, así que esta serie
+   * no lleva ceros —el hueco no es una sesión— y es más corta que la del rango.
+   */
+  const sessionPoints = createMemo(() => sessionSeries(days()));
+  const sessionStats = createMemo(() => sessionAverages(days()));
 
   /**
    * El panel (#22) es otra lectura de las mismas marcas y se carga **una vez al
@@ -219,6 +228,8 @@ export default function History() {
             </div>
           </section>
 
+          <SessionAverages sessions={sessionPoints()} averages={sessionStats()} />
+
           <Show when={points().length > 0}>
             <PracticeChart points={points()} range={range()} />
           </Show>
@@ -270,21 +281,28 @@ export default function History() {
   );
 }
 
-/** Un día: su fecha, su recuento y las tunes que se tocaron. */
+/**
+ * Un día del historial: **plegado por defecto**. La línea de resumen dice la
+ * fecha, cuántas tunes se tocaron y su valoración media; el detalle —cada tune
+ * con su nota y su comentario— se abre a demanda.
+ *
+ * Es un `<details>` y no un acordeón con estado propio: el navegador ya trae el
+ * teclado, el foco y el `aria-expanded`, y la pantalla es de solo lectura.
+ */
 function HistoryDayBlock(props: { day: HistoryDay; nowMs: number }) {
   // Cada título vuelve a la ficha con su origen: el historial, con su rango.
   const tuneHref = useTuneHref();
   return (
-    <article class="history-day">
-      <header>
+    <details class="history-day">
+      <summary class="history-day__summary">
         <h2>{dayLabel(props.day.key, props.nowMs)}</h2>
-        <p>
-          {props.day.practices} {props.day.practices === 1 ? 'practice' : 'practices'}
+        <span class="history-day__meta">
+          {props.day.practices} {props.day.practices === 1 ? 'tune' : 'tunes'}
           <Show when={props.day.avgQuality !== null}>
             <span class="sub-sep">·</span>avg {props.day.avgQuality!.toFixed(1)}
           </Show>
-        </p>
-      </header>
+        </span>
+      </summary>
 
       <ul>
         <For each={props.day.entries}>
@@ -306,7 +324,7 @@ function HistoryDayBlock(props: { day: HistoryDay; nowMs: number }) {
           )}
         </For>
       </ul>
-    </article>
+    </details>
   );
 }
 

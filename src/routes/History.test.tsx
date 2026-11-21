@@ -128,6 +128,43 @@ describe('History', () => {
     expect(document.querySelectorAll('.chart-bar.is-today')).toHaveLength(1);
   });
 
+  it('cada sesión llega plegada, con su línea de resumen a la vista', async () => {
+    mount();
+
+    await waitFor(() =>
+      expect(document.querySelectorAll('details.history-day').length).toBe(2),
+    );
+    const days = [...document.querySelectorAll<HTMLDetailsElement>('details.history-day')];
+
+    // Plegadas por defecto: el detalle existe en el DOM pero no se ve.
+    expect(days.every((day) => day.open === false)).toBe(true);
+
+    // La línea de resumen da fecha, número de tunes y su media.
+    const summary = days[0].querySelector('.history-day__summary')!;
+    expect(summary.querySelector('h2')!.textContent).toBe('Today');
+    expect(summary.textContent).toContain('2 tunes');
+    expect(summary.textContent).toContain('avg 5.0');
+
+    // Y el detalle sigue dentro: es un acordeón, no una lista recortada.
+    expect(days[0].querySelectorAll('ul > li')).toHaveLength(2);
+  });
+
+  it('las medias por sesión van arriba, con sus dos gráficas', async () => {
+    mount();
+
+    await waitFor(() => expect(document.querySelector('.session-averages')).toBeTruthy());
+
+    const figures = [...document.querySelectorAll('.session-figure')];
+    expect(figures).toHaveLength(2);
+    // Dos sesiones de 2 y 1 tunes: 1.5 de media; la valoración, (5 + 3) / 2 = 4.0.
+    expect(figures[0].textContent).toContain('1.5');
+    expect(figures[0].textContent).toContain('tunes per session');
+    expect(figures[1].textContent).toContain('4.0');
+    expect(figures[1].textContent).toContain('rating per session');
+    // Una barra por sesión, no por día del rango: dos, no treinta.
+    expect(figures[0].querySelectorAll('.session-bar')).toHaveLength(2);
+  });
+
   it('cambiar el rango vuelve a leer con el rango nuevo', async () => {
     mount();
     await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(1));
