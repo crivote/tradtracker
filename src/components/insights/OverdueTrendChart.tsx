@@ -1,8 +1,22 @@
 import { Show, createMemo } from 'solid-js';
-import type { OverdueTrend } from '../../lib/insights';
+import type { OverdueTrend, OverdueTrendPoint } from '../../lib/insights';
 import type { InsightChartConfig } from '../../lib/charts';
 import ChartCanvas from './ChartCanvas';
 import { INSIGHT_PALETTE } from './palette';
+
+/**
+ * Tasa de vencimiento del día: `overdue / judged`, con un decimal.
+ *
+ * La serie se pinta en **porcentaje**, no en recuento: el censo crece según se
+ * van conociendo peldaños y ensayos, así que una línea de absolutos mezcla
+ * «envejecen las tunes» con «hay más tunes juzgadas» y una semana de trabajo
+ * serio se lee como una línea plana. El recuento sigue en el tooltip, que es
+ * donde no compite con el eje.
+ */
+function duePct(point: OverdueTrendPoint): number {
+  if (point.judged === 0) return 0;
+  return Math.round((point.overdue / point.judged) * 1000) / 10;
+}
 
 /**
  * La tendencia del vencimiento (#65): cuántas tunes se pasaban de su intervalo
@@ -23,8 +37,8 @@ export default function OverdueTrendChart(props: { trend: OverdueTrend }) {
       labels: props.trend.points.map((point) => point.label),
       datasets: [
         {
-          label: 'Overdue',
-          data: props.trend.points.map((point) => point.overdue),
+          label: 'Overdue %',
+          data: props.trend.points.map(duePct),
           borderColor: INSIGHT_PALETTE.accent,
           backgroundColor: INSIGHT_PALETTE.accent,
           borderWidth: 1.6,
@@ -51,18 +65,24 @@ export default function OverdueTrendChart(props: { trend: OverdueTrend }) {
           beginAtZero: true,
           grid: { color: INSIGHT_PALETTE.line },
           border: { display: false },
-          ticks: { color: INSIGHT_PALETTE.faint, font: { size: 10 }, precision: 0 },
+          ticks: {
+            color: INSIGHT_PALETTE.faint,
+            font: { size: 10 },
+            precision: 0,
+            callback: (value) => `${value}%`,
+          },
         },
       },
       plugins: {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            // «N of M overdue»: el recuento sin el censo es una cifra a medias.
+            // «N of M overdue · X %»: la tasa manda en la línea, pero el recuento
+            // y su censo no se esconden.
             label: (item) => {
               const point = props.trend.points[item.dataIndex];
               if (!point) return '';
-              return `${point.overdue} of ${point.judged} overdue`;
+              return `${point.overdue} of ${point.judged} overdue · ${duePct(point)}%`;
             },
           },
         },
@@ -74,7 +94,9 @@ export default function OverdueTrendChart(props: { trend: OverdueTrend }) {
 
   const summary = () =>
     `Overdue by day: ${props.trend.points.length} days from ${props.trend.since ?? 'today'}` +
-    (last() ? `, ${last()!.overdue} of ${last()!.judged} overdue today.` : '.');
+    (last()
+      ? `, ${last()!.overdue} of ${last()!.judged} overdue today (${duePct(last()!)}%).`
+      : '.');
 
   return (
     <figure class="insight-card insight-card--trend">
